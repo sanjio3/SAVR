@@ -194,23 +194,13 @@ data/owasp_shards/shards/*
 # 只精确放行 README 与交付说明实际引用的文档。
 # ---------------------------------------------------------------------------
 docs/*.md
-!docs/ablation-e11-v2-full-blind.md
-!docs/l1_route_blinding_reconciliation.md
-!docs/l1_blind_route_rerun_reconciliation.md
-!docs/r0prime_invalid_round_postmortem.md
-!docs/r0prime2_effective_round_acceptance.md
-!docs/l1prime_blind_route_acceptance.md
-!docs/l3_run1_reconciliation.md
-!docs/l3_run2_invalid_round_postmortem.md
-!docs/l3_run2prime_reconciliation.md
-!docs/l2_run1_reconciliation.md
 !docs/gate0_release_criteria.md
-!docs/truth_addendum_impact_20261107.md
 !docs/generalization_validation_design.md
 !docs/d1_auth_guard_change.md
 !docs/NAMING_STANDARDS.md
 !docs/architecture.md
-!docs/ablation-e11-layout-prior.md
+# 两篇无效轮复盘归档在此；其余历史对账已从发布树移除。
+!docs/historical/
 # validation_run_plan_ / validation_run_state_ 是本机执行记录，含部署路径与 run_env
 # 具体值，命令必须保留真值才能直接跑，因此本机保留但不随仓库分发。
 

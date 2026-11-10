@@ -11,7 +11,7 @@ config/generalization.yaml 的 execution.pre_registered_exceptions。Gate 0 已
 2026-11-08 评审通过口径变更：本轮（L3 run1）实测复现了同一条已披露
 限制，原「不外溢到 L3 / L2」的隐含假设被证伪，例外范围扩到 L3_stability。
 L2_cross_target 仍绝对不放行；L3 下也必须继续严格匹配特征、每轮 1 条上限，
-且其他任何新红线照旧停链。见 docs/l3_run1_reconciliation.md。
+且其他任何新红线照旧停链。
 """
 from __future__ import annotations
 

@@ -379,7 +379,7 @@ SAVR/
 ├── data/                    # truth tables and shard manifests
 ├── docs/                    # design notes, reconciliation records, run plans
 ├── tests/                   # unit and regression suite
-└── .github/workflows/       # CI: hygiene gate, byte-compile, pytest, frontend build
+└── .github/workflows/       # CI: static / test / frontend required checks
 ```
 
 ---
@@ -393,7 +393,7 @@ Please run these three checks first. They resolve a large share of reports:
 
 1. `python tools/probe_preflight.py --workspace-id <id> --http` — if this is not `ready=true`,
    events are being dropped at ingest and every replay will look like a miss.
-2. `python -m pytest tests/ -q` — confirms the failure is not a local environment problem.
+2. `uv run --frozen python tools/ci_gate.py` — confirms the failure is not a local environment problem.
 3. `python tools/jsc_four_tier.py --task-id <id> --verbose` — prints which tier a regression
    shows up in, which usually localises it before any reading of code.
 

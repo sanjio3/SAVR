@@ -265,7 +265,7 @@ SAVR/
 ├── data/                    # 真值表与分片清单
 ├── docs/                    # 设计说明、对账记录、运行计划
 ├── tests/                   # 单元与回归测试
-└── .github/workflows/       # CI：卫生门禁、字节编译、pytest、前端构建
+└── .github/workflows/       # CI：静态 / 测试 / 前端三项必需检查
 ```
 
 ---
@@ -277,7 +277,7 @@ SAVR/
 请先跑这三个检查，它们能解决很大一部分报告：
 
 1. `python tools/probe_preflight.py --workspace-id <id> --http` —— 如果不是 `ready=true`，事件正在被丢弃，每次重放都会看起来像漏检。
-2. `python -m pytest tests/ -q` —— 确认问题不是本机环境造成的。
+2. `uv run --frozen python tools/ci_gate.py` —— 确认问题不是本机环境造成的。
 3. `python tools/jsc_four_tier.py --task-id <id> --verbose` —— 打印这次回归落在哪一档，通常在读代码之前就定位了。
 
 开 issue 时请附上：

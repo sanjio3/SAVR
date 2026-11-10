@@ -38,6 +38,12 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "--strict-markers -ra"
+markers = [
+    "external: needs a local target, a real database or an external service",
+    "benchmark: expensive benchmark re-run, never part of the PR gate",
+    "slow: long-running regression test",
+]
 
 [tool.uv]
 package = false

@@ -8,18 +8,27 @@ reproducibility matter more than speed of merging.
 ## Development setup
 
 ```bash
-uv sync
-cp .env.example .env
-python -m pytest tests/ -q        # full suite, ~6-7 minutes
+uv sync --frozen --group dev
+uv run --frozen python tools/ci_gate.py
 ```
 
-Requirements: Python 3.12+, Node 20+ for the frontend, CodeQL CLI on `PATH` for the static
-stage. The LLM stage needs either a local Ollama instance or an OpenAI-compatible endpoint.
+Requirements: Python 3.12+ and Node 20+. The gate is a single cross-platform script that
+owns the environment variables and pytest arguments. CI runs the exact same command, split
+into three steps (`--step static`, `--step test`, `--step build`). A full gate takes about
+4 minutes and needs no LLM, no CodeQL CLI and no running target. `cp .env.example .env` is
+only needed when you actually start the services.
+
+For a single step use `uv run --frozen python tools/ci_gate.py --step test`. The test step
+writes `output/ci/junit.xml`; in CI that file is uploaded as an artifact and a pass/fail
+summary is written to the run page.
+
+`uv.lock` is the authority for dependency versions. Never loosen it inside a feature PR;
+dependency bumps arrive as separate PRs via Dependabot.
 
 ## Pull request rules
 
-1. **Tests are mandatory.** Any change to `src/` must keep the full suite green
-   (`python -m pytest tests/ -q`). Do not run only the files you touched — cross-stage
+1. **Tests are mandatory.** Any change to `src/` must keep the full gate green
+   (`uv run --frozen python tools/ci_gate.py`). Do not run only the files you touched — cross-stage
    regressions are common in this codebase and have shipped before.
 2. **Keep the LLM on a leash.** The model may judge and write specs; it must not perform
    actions against a target. New behaviour that touches a target goes through the
@@ -35,12 +44,17 @@ stage. The LLM stage needs either a local Ollama instance or an OpenAI-compatibl
 
 ## Validation tiers
 
-Re-runs against the benchmark are expensive (≈1.5h and ≈600MB of database growth per run).
-Pick the smallest tier that can catch your regression:
+The PR gate is L0 and is the only tier required for a pull request: CI runs
+`uv run --frozen python tools/ci_gate.py` and all three checks must pass before merge.
+
+L1-L3 below are maintainer-only benchmark re-runs. They need a local target, CodeQL CLI,
+an LLM endpoint and a scan database, take roughly 1.5h and add ~600MB of database growth
+per run. They are triggered manually, never block a PR, and their reports go to CI
+artifacts instead of new files in the repository.
 
 | Tier | When | Cost |
 |---|---|---|
-| L0 | docs, comments, tooling, logging | seconds (`pytest -q` on touched files + `py_compile`) |
+| L0 | every pull request | ~4 min (full gate: hygiene, compile, pytest, build) |
 | L1 | small semantic change | ~15 min (20-case smoke shard) |
 | L2 | ≥2 semantic changes, or anything touching registration/confirmation | ~1.5h (130-case shard) |
 | L3 | release | hours (2740 cases) |

@@ -7,16 +7,19 @@
 ## 开发环境
 
 ```bash
-uv sync
-cp .env.example .env
-python -m pytest tests/ -q        # 全量套件，约 6-7 分钟
+uv sync --frozen --group dev
+uv run --frozen python tools/ci_gate.py
 ```
 
-要求 Python 3.12+，前端需要 Node 20+，静态阶段需要 CodeQL CLI 在 `PATH` 上。LLM 阶段需要本地 Ollama 实例或一个 OpenAI 兼容端点。
+要求 Python 3.12+ 与 Node 20+。门禁是一个跨平台脚本，环境变量与 pytest 参数只在脚本里定义；CI 跑的是同一条命令，只是拆成三步执行（`--step static`、`--step test`、`--step build`）。全量门禁约 4 分钟，不需要 LLM、CodeQL CLI 或运行中的靶场。只有真的要启动服务时才需要 `cp .env.example .env`。
+
+只跑某一步用 `uv run --frozen python tools/ci_gate.py --step test`。测试步骤会写出 `output/ci/junit.xml`；在 CI 里该文件会作为 artifact 上传，并把通过/失败统计写到运行页面上。
+
+`uv.lock` 是依赖版本的唯一权威。不要在功能 PR 里放宽它；依赖升级由 Dependabot 以独立 PR 提出。
 
 ## 拉取请求规则
 
-1. 测试是硬要求。任何对 `src/` 的改动都必须保持全量套件全绿（`python -m pytest tests/ -q`）。不要只跑你改到的那几个文件——跨阶段回归在这个代码库里很常见，而且确实发生过。
+1. 测试是硬要求。任何对 `src/` 的改动都必须保持全量门禁全绿（`uv run --frozen python tools/ci_gate.py`）。不要只跑你改到的那几个文件——跨阶段回归在这个代码库里很常见，而且确实发生过。
 2. 把 LLM 拴住。模型可以判定、可以写规格，但不能对靶场执行动作。任何接触靶场的新行为都走确定性重放器。
 3. 不允许新增静默兜底。当某个能力不可用时（缺二进制、CodeQL 建库失败、探针事件缺失），必须显式降级并记录原因。绝不把失败变成「没有发现」。
 4. 指标必须有分母。召回、精确率、误报数要报在具名分片上，不要报「成功率」。如果改动影响检测行为，请说明它对 README 里两行校准结果（常规布局与盲化布局）的预期影响。
@@ -24,9 +27,11 @@ python -m pytest tests/ -q        # 全量套件，约 6-7 分钟
 
 ## 验证分层
 
-对基准重跑是昂贵的（每轮约 1.5 小时，数据库增长约 600MB）。选能抓住你这次回归的最小一层。
+PR 门禁就是 L0，也是拉取请求唯一必需的一层：CI 会跑 `uv run --frozen python tools/ci_gate.py`，三项检查全绿才允许合并。
 
-- L0：文档、注释、工具、日志类改动。耗时数秒，跑改动文件的 `pytest -q` 加 `py_compile` 即可。
+下面的 L1 到 L3 是仅维护者执行的基准重跑，需要本地靶场、CodeQL CLI、LLM 端点和扫描数据库，每轮约 1.5 小时、数据库增长约 600MB。它们由维护者手动触发，不阻塞任何 PR，报告只进 CI artifact，不再往仓库里新增文件。
+
+- L0：每次拉取请求。约 4 分钟，跑全量门禁（卫生检查、字节编译、pytest、前端构建）。
 - L1：小的语义改动。约 15 分钟，20 例冒烟分片。
 - L2：两处及以上语义改动，或任何触及登记/确认链路的改动。约 1.5 小时，130 例分片。
 - L3：发布。数小时，2740 例全量。
