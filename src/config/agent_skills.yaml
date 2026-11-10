@@ -1,0 +1,80 @@
+# Agent技能配置 - 每个Agent的能力定义
+
+# R0 Recon Agent - 信息收集能力
+r0_recon:
+  enabled: true
+  skills:
+    - project_structure_scan
+    - tech_stack_detection
+    - dependency_analysis
+    - http_route_extraction
+    - data_flow_analysis
+    - security_config_scan
+  config:
+    scan_depth: deep
+    include_test_dirs: false
+    max_file_size: 1048576
+
+# P0 Planning Agent - 策略规划能力
+p0_planning:
+  enabled: true
+  skills:
+    - risk_assessment
+    - scan_strategy_decision
+    - rule_selection
+    - resource_allocation
+  config:
+    default_scan_depth: deep
+    default_vuln_priority: all
+    default_a1_rules: all
+    default_d2_scope: all
+
+# A1 Scanner Agent - 规则扫描能力
+a1_scanner:
+  enabled: true
+  skills:
+    - rule_matching
+    - ast_analysis
+    - data_flow_analysis
+    - call_chain_analysis
+    - cross_file_analysis
+  config:
+    # 2026-09-18（B3）：rules_dir 已移除。该键无任何消费者（get_agent_skills 只返回 skills
+    # 列表；code_retriever 只读 a2_analyzer.config.enable_rag），且其指向的四份规则 yaml
+    # 旧规则文件已移除，不在本仓库内。
+    enable_concurrent: true
+    max_workers: 8
+    fuzzy_dedupe_threshold: 0.6
+
+# A2 Analyzer Agent - AI分析能力
+a2_analyzer:
+  enabled: true
+  skills:
+    - semantic_understanding
+    - cross_file_call_chain
+    - context_analysis
+    - false_positive_filtering
+  config:
+    api_provider: qwen
+    model: ark-code-latest
+    max_context_length: 128000
+    enable_rag: true
+
+# D2 Verifier Agent - 动态验证能力
+d2_verifier:
+  enabled: true
+  skills:
+    - docker_management
+    - poc_generation
+    - dynamic_execution
+    - vulnerability_confirmation
+  config:
+    docker:
+      auto_start: true
+      max_container_count: 5
+      container_timeout: 300
+    poc:
+      max_retries: 3
+      timeout: 60
+    verification:
+      require_all_poc: false

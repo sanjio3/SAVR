@@ -1,0 +1,59 @@
+# 整体基调配置 - 共享配置
+
+# 日志配置
+logging:
+  level: INFO
+  format: "%(asctime)s [%(levelname)s] %(message)s"
+  file: "logs/sast.log"
+
+# 并发配置
+concurrency:
+  max_workers: 8
+  timeout_seconds: 300
+
+# API配置
+# 注意：运行期实际读取的是根目录 config.yaml（见 src/core/config.py 的候选路径），
+# 本文件仅为样例模板，改这里不会影响运行行为。
+api:
+  provider: qwen
+  model: ark-code-latest
+  temperature: 0.1
+  max_tokens: 4096
+  # 主用失败后的降级目标；置空串表示不降级（本地 Ollama 场景应置空）
+  fallback_provider: anthropic-compatible
+
+# 本地 Ollama（走原生 /api/chat + think:false，详见根 config.yaml 同名段的说明）
+ollama:
+  base_url: "http://127.0.0.1:11434"
+  model: "qwen3:8b"
+  num_ctx: 8192
+  max_tokens: 400
+  temperature: 0.1
+  # "2m" = 最后一次调用后 2 分钟卸载模型（与根 config.yaml 同步，2026-10-21 r114 实证）。
+  # 根因：Ollama 服务端 keep_alive=Forever 时 qwen3:8b 常驻 ~6GB Commit，下一片 A1 的
+  # CodeQL 必 OOM → build_failed_or_empty → 全片 heuristic 兜底，CodeQL 基线失真。
+  # 置 "0" 太慢（每次调用冷加载 ~20s，a2_poc 慢 10 倍）；"2m" 让 a2_poc 内保持热、
+  # 跨片前（D2+drain ≥5min）必卸。详见根 config.yaml 同键注释。
+  keep_alive: "2m"
+
+# 扫描配置
+scan:
+  max_file_size: 1048576  # 1MB
+  skip_patterns:
+    - "*.min.js"
+    - "*.map"
+    - "node_modules/*"
+    - "vendor/*"
+  supported_languages:
+    - java
+    - python
+    - javascript
+    - go
+
+# 输出配置
+output:
+  dir: "output"
+  formats:
+    - json
+    - markdown
+  keep_temp_files: false

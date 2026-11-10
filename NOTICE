@@ -1,0 +1,25 @@
+SAVR
+Copyright 2026 The SAVR Contributors
+
+Licensed under the Apache License, Version 2.0. See LICENSE for the full text.
+
+Third-party components
+
+This repository does not vendor third-party binaries. The following are external
+tools that a deployment supplies separately; their own licenses apply and are not
+relicensed by this project:
+
+- CodeQL CLI (GitHub) - used to build Java databases during static analysis.
+- Ollama / any OpenAI-compatible LLM endpoint - used by the A2 analyst.
+- OWASP Benchmark, java-sec-code, RuoYi and other test targets - used only as
+  scan subjects. None of their source code is included in this repository.
+- Maven, JDK and ysoserial - used when building targets or gadget payloads.
+
+The IAST/RASP agent source under probe-java/ was merged into this repository on
+2026-09-14 from a separate local codebase; see probe-java/MANIFEST.md for the
+source-fingerprint record. It is distributed under this project's Apache-2.0
+license.
+
+Benchmark truth tables under data/ (java_sec_code_truth*.csv, juliet_truth.csv,
+ruoyi_451_truth.csv, owasp_shards/shards/mini.json) are derived metadata for
+reproducing published measurements, not copies of the target applications.

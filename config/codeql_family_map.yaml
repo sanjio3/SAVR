@@ -1,0 +1,94 @@
+# CodeQL rule_id → 平台漏洞族（canonical，snake_case）
+#
+# 为什么必须有这张表（2026-11-01 实测）
+# ------------------------------------
+# 平台内部有三套族名写法：数据库存 snake_case（`path_traversal`）、
+# `exploit_spec._INJECTION_FAMILIES` 用 kebab-case（`path-traversal`）、
+# 报告里显示中文/英文标题（`路径穿越`、`Cross-Site Scripting`）。
+# CodeQL 的原生 query 名（`java/xss`）之前**完全没有映射**，靠
+# `tail.replace("-"," ").title()` 猜出一个显示名塞进 `type` 字段，
+# 结果 本轮里 21 条 spec 的 family 是 `log injection` / `http response splitting`
+# 这种带空格的字符串 —— D2 的证明模板按族索引，族名不认识就**结构性无法确认**
+# （21 条里 17 条零确认）。
+#
+# 使用约定
+# --------
+# 1. 只登记**语义等价**的映射。语义不对等（比如把 log-injection 硬塞进 xss）一律不登记。
+# 2. 平台没有对应族的，登记到 `unsupported` 并写明原因 —— 它会进报告、但不进动态分母，
+#    这是显式决策，不是静默丢弃。
+# 3. 未登记的 rule_id 一律落 `unmapped` 并打 WARNING，**禁止再靠 Title Case 猜**。
+# 4. 新增规则后跑 `python tools/_wb_family_map_audit.py --task-id <id>` 校验。
+
+rules:
+  # ── 注入类：与平台族一一对应 ──────────────────────────────────────────
+  java/sql-injection: sql_injection
+  java/xss: xss
+  java/path-injection: path_traversal
+  java/command-line-injection: command_execution
+  # 相对路径命令执行：CodeQL 归 command，平台之前误落 path_traversal（本轮实证 2 条）
+  java/relative-path-command: command_execution
+  # GroovyShell 执行 → 命令执行（与 framework_sinks 的 Groovy 规则同族）
+  java/groovy-injection: command_execution
+  # code_injection 不是平台已知族（`is_known_family` 为 False），D2 无模板 ⇒ 归 command_execution。
+  # java-sec-code 的 Rce.java 真值族就是 command_execution，CodeQL 这条 query 命中的也是
+  # ScriptEngine/Groovy/Yaml 这类执行面。
+  java/code-injection: command_execution
+  java/ssrf: ssrf
+  java/xxe: xxe
+  java/unsafe-deserialization: deserialization
+  java/deserialization: deserialization
+  java/ldap-injection: ldap_injection
+  java/xpath-injection: xpath_injection
+  java/expression-injection: expression_injection
+  java/spel-expression-injection: spel_injection
+  java/server-side-template-injection: ssti
+  java/http-response-splitting: crlf_injection
+
+  # ── 重定向 / URL 校验 ────────────────────────────────────────────────
+  java/unvalidated-url-redirection: url_redirect
+  java/unvalidated-url-forward: url_redirect
+
+  # ── 配置属性类 ───────────────────────────────────────────────────────
+  # 2026-11-01 修正（本轮实测回归）：这里必须写**平台已知族**，不是 OWASP 真值 CSV 的类目名。
+  # 之前误写成 crypto / weakrand / hash，`is_known_family` 全为 False ⇒ D2 拿不到模板 ⇒
+  # OWASP 上 no-arrival 从 2 涨到 117、confirmed 从 212 掉到 140（TP/FP 没变，是确认覆盖率掉了）。
+  # 平台已知的是 weak_crypto / weak_random / weak_hash；securecookie 与 trustbound 两个旧 token
+  # 被 `normalize_family` 正常归一，可以保留。
+  java/insecure-cookie: securecookie
+  java/sensitive-cookie-not-httponly: securecookie
+  java/weak-cryptographic-algorithm: weak_crypto
+  java/insecure-randomness: weak_random
+  java/trust-boundary-violation: trustbound
+
+  # ── 信息暴露（属性类，平台无该族模板，`is_d2_supported` 为 False，不进动态分母）──
+  java/error-message-exposure: information_exposure
+  java/sensitive-log: information_exposure
+  # 2026-11-01 补登：这两条此前**完全没登记**，OWASP 上一轮落了 23+4=27 条 unmapped
+  java/stack-trace-exposure: information_exposure
+  java/tainted-format-string: format_string
+  # 日志注入：名字归一到 log_injection（可统计、可对账），但平台暂无该族的 D2 证明模板
+  # ⇒ `family_map.is_d2_supported('log_injection')` 返回 False，不进动态分母。
+  java/log-injection: log_injection
+
+  # ── SAVR 自定义查询（tools/codeql-queries）────────────────────────
+  # 2026-11-01 补登：585 审计出 4 条未登记规则（16 条告警），此前全落 unmapped
+  java/potentially-weak-cryptographic-algorithm: weak_crypto
+  java/xml/xpath-injection: xpathi
+  java/concatenated-command-line: command_execution
+  java/exec-tainted-environment: command_execution
+  # 2026-11-01 补登：585 审计出 4 条未登记规则（16 条告警），此前全落 unmapped
+  java/potentially-weak-cryptographic-algorithm: weak_crypto
+  java/xml/xpath-injection: xpathi
+  java/concatenated-command-line: command_execution
+  java/exec-tainted-environment: command_execution
+  sastai/java/weak-hash-algorithm: weak_hash
+  sastai/java/sql-injection-extended: sql_injection
+  sastai/java/command-injection-extended: command_execution
+  sastai/java/path-injection-extended: path_traversal
+  sastai/java/format-string-controlled: format_string
+  java/csrf-unprotected-request-type: csrf
+
+# 平台暂无对应族 / 无 D2 证明模板的规则：显式登记，进报告但不进动态分母
+unsupported:
+  java/format-string: "格式串：平台无 format_string 族模板"
+  java/unsafe-reflection: "不安全反射：归 code_injection 会与真实命令执行混淆，暂不合并"

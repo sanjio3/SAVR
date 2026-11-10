@@ -1,0 +1,69 @@
+#!/bin/sh
+# Maven shim —— 直启 java + classworlds boot jar，绕过 Git-Bash 下损坏的 mvn 启动脚本
+# （classpath 解析失败导致 ClassNotFoundException: Launcher / exit 1）。
+# 用途：供 CodeQL autobuild（codeql database create --language=java -> mvn compile）调用，
+# 使 A1 注入类对 Java 项目可用（改进清单 P0#1）。
+#
+# 设计原则：路径尽量自动探测，避免硬编码；探测失败才回退常见固定路径。
+
+# 1) 选择 JAVA：优先 JAVA_HOME，其次常见 JDK 位置
+if [ -n "$JAVA_HOME" ] && [ -x "$JAVA_HOME/bin/java" ]; then
+  JAVA="$JAVA_HOME/bin/java"
+else
+  for cand in \
+    "C:/Program Files/Java/jdk-21/bin/java" \
+    "C:/Program Files/Java/jdk-17/bin/java"; do
+    if [ -x "$cand" ]; then JAVA="$cand"; break; fi
+  done
+  if [ -z "$JAVA" ]; then
+    JAVA="java"   # 最后退路：依赖 PATH
+  fi
+fi
+
+# 2) 选择 MAVEN_HOME：优先 MAVEN_HOME/M2_HOME，其次常见安装位置，再用 boot jar 探测
+MH=""
+if [ -n "$MAVEN_HOME" ] && [ -d "$MAVEN_HOME/boot" ]; then
+  MH="$MAVEN_HOME"
+elif [ -n "$M2_HOME" ] && [ -d "$M2_HOME/boot" ]; then
+  MH="$M2_HOME"
+else
+  for cand in \
+    "C:/apache-maven-3.9.11" \
+    "C:/apache-maven-3.9.9" \
+    "D:/apache-maven-3.9.11"; do
+    if [ -d "$cand/boot" ]; then MH="$cand"; break; fi
+  done
+fi
+
+if [ -z "$MH" ]; then
+  echo "mvn_shim: 找不到可用的 Maven 安装（需 MAVEN_HOME 或常见安装路径）" >&2
+  exit 1
+fi
+
+# 3) 定位 boot 下的 classworlds jar（版本号可能变化，用 glob）
+BOOT=$(ls "$MH"/boot/plexus-classworlds-*.jar 2>/dev/null | head -1)
+if [ -z "$BOOT" ]; then
+  echo "mvn_shim: 未找到 $MH/boot/plexus-classworlds-*.jar" >&2
+  exit 1
+fi
+CONF="$MH/bin/m2.conf"
+
+# 4) 直启，绕过损坏的 mvn 启动脚本
+# 注：本沙箱分页文件提交上限偏低，Maven JVM 默认堆会触发 532MB 虚拟内存提交失败
+# （os::commit_memory ... 页面文件太小）。显式压低堆与 GC，使构建可在受限环境跑通（改进清单 P0#1）。
+# 5) 注入「构建副作用」开关（2026-11-01）
+# 两条硬理由，不是图省事：
+#   ① **扫描器绝不能改写被扫项目的源码**。spotless:apply / license:format 这类插件会把
+#      格式化/加头直接写回 src/ —— 那等于分析过程中篡改了证据，还会让源码指纹每轮变化。
+#   ② 这类插件常常需要 git 元数据。解压出来的项目（OWASP Benchmark 就是）没有 .git，
+#      `spotless:apply` 直接 BUILD FAILURE（Cannot find git repository in any parent directory），
+#      整个 CodeQL 建库失败 ⇒ A1 降级启发式（run 583 实测）。
+# 这些 -D 对不用对应插件的项目是 no-op，可以全局加。
+exec "$JAVA" -Xmx192m -Xms32m -XX:+UseSerialGC -XX:MaxMetaspaceSize=128m -cp "$BOOT" \
+  -Dclassworlds.conf="$CONF" \
+  -Dmaven.home="$MH" \
+  -Dmaven.multiModuleProjectDirectory="$PWD" \
+  -Dspotless.check.skip=true -Dspotless.apply.skip=true \
+  -Dlicense.skip=true -Dmaven.gitcommitid.skip=true \
+  -Dspring-boot.repackage.skip=true \
+  org.codehaus.plexus.classworlds.launcher.Launcher "$@"

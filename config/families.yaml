@@ -1,0 +1,53 @@
+# 族白名单配置（2026-10-20 建立）
+#
+# 这些参数决定「值级闸 / 抑制规则对哪些族生效」。
+# 修改前必须用真实数据验证「TP 误杀 = 0」，否则会砍掉真漏洞。
+# 优先级：环境变量 > 本文件 > 代码默认值（见 src/core/config_registry.py）
+
+value_gate:
+  # 值级闸适用族（canonical 族名）。
+  # 依据：r113 实测这些族的 canary 能到达真 sink，值级闸的 at_sink/absent 判定有效。
+  # ldap_injection：r111（run 403 验收）at_sink 精度 27/27=100%、absent 纯度 21/21=100%，
+  #   纳入后 ldapi 精确率 57.4%→100%（20 个 FP 被否决），抑损 0。务必保留，删了 ldapi 会回退。
+  families:
+    - command_execution
+    - sql_injection
+    - trust_boundary_violation
+    - xpath_injection
+    - xss
+    - path_traversal
+    - xxe
+    - ldap_injection
+
+strict_c:
+  # strict-C 否决族：组内 ≥1 absent 且无 at_sink ⇒ 否决（no_event 兄弟不阻挠）。
+  # 依据（r113 离线预演 tools/_wb_preview_strict_c_expand.py）：
+  #   xpathi mixed 组 TP=0/FP=10、xss 0/9、trustbound 0/5 ⇒ 0 误杀。
+  # **硬边界**：path_traversal 的 mixed 组 TP=66，**绝不纳入**（会误杀真漏洞）。
+  # **硬边界**：算法族（weak_hash/weak_crypto/weak_random）absent 判据反向
+  #   （weak_crypto 全 absent 反而是 TP），**绝不纳入**。
+  families:
+    - ldap_injection
+    - sql_injection
+    - command_execution
+    - xpath_injection
+    - xss
+    - trust_boundary_violation
+
+confirm_sink_identity:
+  # 确认态 sink 身份校验：canary 只到旁路 sink（不在族真 sink 实参）⇒ 抑制。
+  # 依据（r113 实测 tools/_wb_diag_confirm_sink_identity.py）：
+  #   xpathi 旁路 TP=0/FP=10、trustbound 旁路 TP=0/FP=5 ⇒ 0 误杀。
+  # **硬边界**：path_traversal(旁路 TP=66)、xss(51)、weak_crypto(56)、weak_hash(2)
+  #   旁路含真 TP，**禁止纳入**。
+  families:
+    - xpath_injection
+    - trust_boundary_violation
+
+non_dataflow:
+  # 算法/属性族：值级闸不适用（其「值」是算法名/flag，不是污点 payload）。
+  families:
+    - weak_hash
+    - weak_crypto
+    - weak_random
+    - secure_cookie

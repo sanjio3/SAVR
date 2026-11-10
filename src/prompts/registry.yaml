@@ -1,0 +1,68 @@
+# 提示词清单（§4.1，2026-09-19）
+#
+# 把 src/prompts/ 下散落的模板收敛为带版本/hash/golden/changelog 的清单。
+# 内容不在此重复，只登记「文件 + key + 版本元数据」，由 prompt_registry 读 yaml 取正文。
+#
+# 选择器（prompt_registry.PromptRegistry.get）：
+#   get(name, version)                       -> 显式版本
+#   get(name, family="sql_injection")        -> 族专属版本（版本名后缀匹配），否则 default
+#   get(name)                                -> default 版本
+#
+# prompt_hash = sha256(name|version|正文) 前 16 位，自动计算，用于缓存 salt 与埋点归因。
+
+prompts:
+  audit_file:
+    default: terminal-first-v1
+    versions:
+      - version: terminal-first-v1
+        file: audit_prompts.yaml
+        key: audit_file
+        golden_ref: java-sec-code@R34
+        changelog: "主线 Java 单文件审计模板（注入类 + 业务逻辑类 + 三类易漏高危形态）"
+
+  audit_batch:
+    default: terminal-first-v1
+    versions:
+      - version: terminal-first-v1
+        file: audit_prompts.yaml
+        key: audit_batch
+        golden_ref: java-sec-code@R34
+        changelog: "批量文件审计模板"
+
+  validate_vulnerability:
+    default: terminal-first-v1
+    versions:
+      - version: terminal-first-v1
+        file: audit_prompts.yaml
+        key: validate_vulnerability
+        golden_ref: java-sec-code@R34
+        changelog: "IAST 观测集对 SAST 假说的二次校验模板"
+
+  # 以下三个族模板此前从未被代码加载（dead），登记进注册表后可由
+  # get("validate_vulnerability", family="sql_injection") 等分级回退选中。
+  sql_injection:
+    default: terminal-first-v1
+    versions:
+      - version: terminal-first-v1
+        file: dynamic_prompts.yaml
+        key: sql_injection
+        golden_ref: ""
+        changelog: "SQL 注入运行时验证模板（D2 族专属，待接线）"
+
+  command_injection:
+    default: terminal-first-v1
+    versions:
+      - version: terminal-first-v1
+        file: dynamic_prompts.yaml
+        key: command_injection
+        golden_ref: ""
+        changelog: "命令注入运行时验证模板（D2 族专属，待接线）"
+
+  ssrf:
+    default: terminal-first-v1
+    versions:
+      - version: terminal-first-v1
+        file: dynamic_prompts.yaml
+        key: ssrf
+        golden_ref: ""
+        changelog: "SSRF 运行时验证模板（D2 族专属，待接线）"

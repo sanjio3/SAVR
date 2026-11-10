@@ -1,0 +1,94 @@
+# D2 动态测试接口映射（默认基线）
+# 注意：本文件是「默认」端点表，对应的是 java-quote（ctf-java-quote）靶场的真实路由。
+# 它只作为 manifest 声明的 config 资源基线；真正注入运行逻辑的反序列化/命令注入等
+# 路由、镜像、标记现已统一从 src/core/workspace_runtime.py 读取（默认值=本文件历史硬编码并集）。
+# 新靶场接入时，通过 workspace.settings['workspace_runtime_config'] 的 endpoints 字段
+# （workspace_runtime.endpoints_override()）覆盖，禁止在本文件继续追加靶场专属对照表。
+
+endpoints:
+  # Java CTF - 实际的路由
+  # DebugController 反序列化漏洞
+  deserialization:
+    - path: "/debug/import"
+      method: "POST"
+      params:
+        - name: "data"
+          test_values:
+            - "test"
+      description: "反序列化漏洞"
+
+  # XSS 漏洞
+  xss:
+    - path: "/api/status"
+      method: "GET"
+      params:
+        - name: "status"
+          test_values:
+            - "<script>alert(1)</script>"
+            - "<img src=x onerror=alert(1)>"
+      description: "XSS漏洞"
+
+  # SQL Injection
+  sql_injection:
+    - path: "/api/quote"
+      method: "GET"
+      params:
+        - name: "id"
+          test_values:
+            - "1 OR 1=1"
+            - "1' OR '1'='1"
+            - "1 UNION SELECT NULL--"
+      description: "SQL注入漏洞"
+
+  # Command Injection
+  command_injection:
+    - path: "/api/quote/random"
+      method: "GET"
+      params:
+        - name: "author"
+          test_values:
+            - "; whoami"
+            - "| whoami"
+            - "&& whoami"
+      description: "命令注入漏洞"
+
+  # SSRF
+  ssrf:
+    - path: "/api/quote"
+      method: "GET"
+      params:
+        - name: "url"
+          test_values:
+            - "http://127.0.0.1:8888"
+            - "http://localhost:8080"
+      description: "SSRF漏洞"
+
+  # Path Traversal
+  path_traversal:
+    - path: "/api/quote"
+      method: "GET"
+      params:
+        - name: "file"
+          test_values:
+            - "../../../etc/passwd"
+            - "..\\..\\..\\windows\\system32\\config\\sam"
+      description: "路径穿越漏洞"
+
+  # 通用端点 - 用于匹配
+  default_get:
+    - path: "/api/quote"
+      method: "GET"
+      params:
+        - name: "q"
+          test_values:
+            - "test"
+      description: "通用GET端点"
+
+  default_post:
+    - path: "/api/quote"
+      method: "POST"
+      params:
+        - name: "data"
+          test_values:
+            - "test"
+      description: "通用POST端点"

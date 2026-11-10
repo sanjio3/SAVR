@@ -1,0 +1,107 @@
+# 运行 profile 模板——可入库的脱敏版本。
+#
+# 目的：把发车命令里手敲的 6 项 run_env、workspace、truth、GPU 闸门参数收敛成
+#       --profile jsc 一条命令，同时不碰 Gate 0 有效轮判据。
+#
+# 三层规则（改这个文件前先读 tools/run_profiles.py 顶部说明）：
+#   A 区 run_env   = 正确性硬依赖，必须恰好 6 项，逐项展开成 --env 落库；
+#   B 区 tuning    = 性能调节，代码里已有默认值，这里只做 drift 校验，
+#                    绝不注入 run_env（否则变成第 7 项，破坏有效轮硬条件）；
+#   gpu            = 发车闸门参数（min_free_mib / max_util_pct）。
+#
+# 敏感/本机相关值一律用 ${ENV_VAR} 占位，从环境变量读；也可以复制本文件为
+# config/run_profiles.local.yaml 写明文（该文件已被 .gitignore 排除），加载器
+# 优先读 local。占位符缺值时 fail-closed，加载器不猜默认值。
+#
+# D1 dump 路径里的 {{name}} 会替换成 --name，保证每轮不复用同一个 dump 文件。
+# 探针 token 不在这里，也不在任何 profile 里：唯一真值源是 DB iast_sessions。
+# --no-replay-env / --allow-degraded / --no-exceptions 等豁免开关禁止进 profile。
+
+version: 1
+
+profiles:
+
+  jsc:
+    workspace_id: 4
+    truth: ""                       # 空 = jsc_four_tier.py 默认真值表
+    probe:
+      app_name: sec-code
+      agent_id: java-sec-code
+    note: >-
+      java-sec-code 冻结基线轮（R0''/L1'/L3/L2 同族）。ws4 历史上存在两个会话
+      (java-sec-code/jsc 与 sec-code/java-sec-code)，权威会话是后者，
+      token 前缀 lHAjnCKR，见 docs/validation_run_state_20261106.md。
+    run_env:
+      SAST_AI_DESER_YSOSERIAL: "1"
+      SAST_AI_SHIRO_KEY: "${SAST_AI_SHIRO_KEY}"
+      YSO_JAVA_HOME: "${YSO_JAVA_HOME}"
+      SAST_AI_D1_DUMP_REQ: "1"
+      SAST_AI_D1_DUMP_PATH: "logs/d1_req_dump_{{name}}.jsonl"
+      SAST_AI_STAGE_CACHE: "0"     # 必须显式 0；代码默认是 1
+    tuning:
+      SAST_AI_A2_LLM_NUM_PREDICT: 1024
+      SAST_AI_A2_LLM_TIMEOUT: 300
+      SAST_AI_A2_LLM_RETRIES: 2
+      SAST_AI_A2_LLM_CIRCUIT_BREAK: 3
+      SAST_AI_A2_PROMPT_TOKENS: 7000
+    gpu:
+      min_free_mib: 6200
+      max_util_pct: 40
+
+  ruoyi:
+    workspace_id: 8
+    truth: "data/ruoyi_451_truth.csv"
+    probe:
+      app_name: ruoyi
+      agent_id: ruoyi
+    note: >-
+      L2 跨靶场基线轮。truth 必须显式给 RuoYi 真值表，否则四档会把 jsc 的
+      31 点真值套到 RuoYi 结果上。
+    run_env:
+      SAST_AI_DESER_YSOSERIAL: "1"
+      SAST_AI_SHIRO_KEY: "${SAST_AI_SHIRO_KEY}"
+      YSO_JAVA_HOME: "${YSO_JAVA_HOME}"
+      SAST_AI_D1_DUMP_REQ: "1"
+      SAST_AI_D1_DUMP_PATH: "logs/d1_req_dump_{{name}}.jsonl"
+      SAST_AI_STAGE_CACHE: "0"
+    tuning:
+      SAST_AI_A2_LLM_NUM_PREDICT: 1024
+      SAST_AI_A2_LLM_TIMEOUT: 300
+      SAST_AI_A2_LLM_RETRIES: 2
+      SAST_AI_A2_LLM_CIRCUIT_BREAK: 3
+      SAST_AI_A2_PROMPT_TOKENS: 7000
+    gpu:
+      min_free_mib: 6200
+      max_util_pct: 40
+
+  owasp-full:
+    workspace_id: 7
+    truth: ""
+    probe:
+      app_name: benchmark
+      agent_id: owasp-benchmark-full
+    note: >-
+      OWASP Benchmark 全集（2740 用例 / 8444 / HSQLDB 9002 / LDAP 10389）。
+      分片链走 tools/owasp_run_shards.py + scripts/submit_scan_task.py --shard，
+      不经过 run_validation_round.py，因此这里刻意不给 run_env：
+      Gate 0 的 6 项是 jsc/L2 专属，套到 OWASP 分片上就是口径污染。
+      本 profile 只供 probe_preflight（三元组）与分片发车参数使用。
+    shard: "data/owasp_shards/index.json"
+    service_url: "http://127.0.0.1:8444/benchmark"
+    gpu:
+      min_free_mib: 6200
+      max_util_pct: 40
+
+  owasp-sample:
+    workspace_id: 5
+    truth: ""
+    probe:
+      app_name: benchmark
+      agent_id: owasp-benchmark-sample
+    note: >-
+      OWASP benchmark-sample-200（205 用例 / 8443 / HSQLDB 9001）。
+      对账用 tools/reconcile_owasp.py 的 L1/L2 口径，不是 Gate 0 四档。
+    service_url: "http://127.0.0.1:8443/benchmark"
+    gpu:
+      min_free_mib: 6200
+      max_util_pct: 40

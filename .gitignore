@@ -1,0 +1,230 @@
+# ---------------------------------------------------------------------------
+# 基础：解释器 / 前端 / 测试缓存
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_tmp_*/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.python-version
+.venv/
+venv/
+env/
+
+logs/
+output/
+target/
+build/
+dist/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/src/**/*.js
+frontend/src/**/*.vue.js
+*.tsbuildinfo
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---------------------------------------------------------------------------
+# 运行时 / 一次性产物
+# ---------------------------------------------------------------------------
+.a3-*/
+.a3-runtime/
+.tmp-a3-map/
+tmp/
+.docker-local/
+.codex-docker/
+_pytest_*.txt
+test_*.txt
+replay_pid*.log
+package-lock.json
+# 前端是可部署应用，锁文件入库以保证 CI 与外部用户装到同一套依赖版本
+!frontend/package-lock.json
+SKILL.md
+test-project/*.zip
+stack_status.json
+.resolve_version_marker
+stack-backend.log
+stack-frontend.log
+owasp-full-watchdog.log
+hs_err_pid*.log
+nul
+
+payload*.b64
+payload*.base64
+payload*.bin
+payload*.ser
+payload*.txt
+poc.b64
+poc.ser
+cmd_payload.txt
+
+# ---------------------------------------------------------------------------
+# 本机内部记录与私有配置：不随公开发行版分发
+# ---------------------------------------------------------------------------
+.workbuddy-ai/
+.workbuddy/
+tools/_wb_*.py
+T.java
+data/_reorg_backup_*/
+data/_old_dirs_*/
+.js-shadow-backup/
+
+.env
+.env.*
+!.env.example
+config.yaml
+config/config.yaml
+# 本机专属运行 profile（含绝对路径与靶场密钥），只提交脱敏模板 run_profiles.yaml
+config/run_profiles.local.yaml
+升级文档.md
+记忆文档.md
+.idea/
+.vscode/
+.DS_Store
+.serena/
+
+# ---------------------------------------------------------------------------
+# 第三方二进制 / 编译产物（按需用 scripts/fetch_tools.py 下载）
+# ---------------------------------------------------------------------------
+src/pipeline/d2/resources/tools/*.exe
+src/pipeline/d2/resources/tools/*.jar
+src/pipeline/d2/resources/tools/java/*.jar
+tools/*.jar
+tools/*.exe
+lib/*.jar
+lib/*.exe
+tools/gadget_builder/lib/*.jar
+*.class
+*.sarif
+.codeql-db/
+.codeql-db-*/
+
+# ---------------------------------------------------------------------------
+# 本机专用运维脚本：工作区保留供本地整栈使用，但硬编码了本机 JDK / 靶场目录，
+# 不属于可分发工程；部署方式见 README 的 Configuration 一节。
+# ---------------------------------------------------------------------------
+frontend/vite.config.ts.timestamp-*.mjs
+scripts/_archive/
+tools/_archive/
+# launch_java_seccode.py：靶场启动器/评估工具，路径已环境变量化，随仓库分发
+# launch_owasp.py：靶场启动器/评估工具，路径已环境变量化，随仓库分发
+# launch_owasp_full.py：靶场启动器/评估工具，路径已环境变量化，随仓库分发
+# launch_target_mall.py：靶场启动器/评估工具，路径已环境变量化，随仓库分发
+# launch_ruoyi_full.py 依赖本机 JDK8 / MySQL / RuoYi 源码布局，保持本地专用、不随仓库分发
+launch_ruoyi_full.py
+
+# 历史重跑对账产物（一次性，不随仓库分发）
+docs/rerun-verify-*.md
+docs/2026-10-19-*.md
+docs/改进清单.md
+# 已移出索引的内部过程文档：顶层 .md 已被 docs/*.md 覆盖，这里补两个漏洞
+docs/archive/
+docs/*.json
+
+# 本机一次性诊断 / 评测脚本（工作区保留，不随仓库分发）
+# fetch_tools.py 是 README quickstart 的依赖，必须留在索引里。
+scripts/*
+!scripts/fetch_tools.py
+!scripts/README.md
+!scripts/submit_scan_task.py
+!scripts/seed_poc_memory.py
+# tests/test_route_binding_r24.py 直接 import 其中的纯函数，必须随仓库分发
+!scripts/check_r23_acceptance.py
+# 开发入口：start_dev.ps1 指向 scripts/dev_all.ps1，三者一起分发才不断链
+!scripts/dev_all.ps1
+!scripts/dev_backend.ps1
+!scripts/dev_frontend.ps1
+# 靶场/栈启动器。scripts/* 是整目录忽略，子目录必须逐层放行，否则 scripts/launch/ 整个被挡。
+!scripts/launch/
+scripts/launch/*
+!scripts/launch/launch_java_quote.py
+!scripts/launch/launch_java_seccode.py
+!scripts/launch/launch_owasp.py
+!scripts/launch/launch_owasp_full.py
+!scripts/launch/launch_stack.py
+!scripts/launch/launch_target_mall.py
+!scripts/launch/start_dev.ps1
+# launch_ruoyi_full.py 依赖本机 JDK8 / MySQL / RuoYi 源码布局，保持本地专用、不随仓库分发
+# tests/test_benchmark_gate.py 直接 import 其中的纯函数，必须随仓库分发
+# （OWASP 语料路径已改为环境变量 SAST_AI_OWASP_SAMPLE_DIR 驱动）
+# tools/eval_target.py：靶场启动器/评估工具，路径已环境变量化，随仓库分发
+# tests/test_reconcile_owasp_mini.py 通过 sys.path 插入 tools/ 后按裸名 import 下列两个，
+# 必须随仓库分发；它们的 OWASP 语料路径已改为环境变量 SAST_AI_OWASP_* 驱动
+# 本机一次性抽样监控/对账脚本：依赖未分发的本机 OWASP 真值与辅助脚本，不随仓库分发
+tools/reconcile_task_647.py
+tools/watch_task_647.py
+tools/owasp_run_shards.py
+tools/owasp_shards.py
+tools/register_full_target_session.py
+tools/spawn_detached.py
+tools/gadget_builder/verify_live.py
+tools/mvn_shim/*
+!tools/mvn_shim/mvn
+!tools/mvn_shim/mvn.cmd
+tools/*.cmd
+
+# ---------------------------------------------------------------------------
+# 可复现性：data/ 整体忽略，只精确放行基准真值表与 mini 分片。
+# 干净 clone 必须能拿到这些文件才能复算 README 里的四档数字；
+# 运行时数据（app.db、备份库、workspaces、扫描产物、盲化变体）一律不入库。
+# 已用 git check-ignore -v 逐条验证放行规则生效。
+# ---------------------------------------------------------------------------
+data/*
+!data/java_sec_code_truth.csv
+!data/java_sec_code_truth_v2.csv
+!data/juliet_truth.csv
+!data/ruoyi_451_truth.csv
+!data/owasp_shards/
+data/owasp_shards/*
+!data/owasp_shards/shards/
+data/owasp_shards/shards/*
+# 只有 mini 分片入库：其余分片清单每条记录都带本机靶场源码路径，清洗代价大
+# 且会破坏「按路径定位源码文件」的语义。外部用户可自行按同一格式生成。
+!data/owasp_shards/shards/mini.json
+
+# ---------------------------------------------------------------------------
+# 历史一次性对账 / 诊断报告：本机工作区保留，不随开源仓库分发。
+# 其中含开发机绝对路径与历史凭据讨论串，公开发布前不入库；
+# 已 tracked 的历史文档不受 .gitignore 影响，由卫生门禁逐行约束。
+# 只精确放行 README 与交付说明实际引用的文档。
+# ---------------------------------------------------------------------------
+docs/*.md
+!docs/ablation-e11-v2-full-blind.md
+!docs/l1_route_blinding_reconciliation.md
+!docs/l1_blind_route_rerun_reconciliation.md
+!docs/r0prime_invalid_round_postmortem.md
+!docs/r0prime2_effective_round_acceptance.md
+!docs/l1prime_blind_route_acceptance.md
+!docs/l3_run1_reconciliation.md
+!docs/l3_run2_invalid_round_postmortem.md
+!docs/l3_run2prime_reconciliation.md
+!docs/l2_run1_reconciliation.md
+!docs/gate0_release_criteria.md
+!docs/truth_addendum_impact_20261107.md
+!docs/generalization_validation_design.md
+!docs/d1_auth_guard_change.md
+!docs/NAMING_STANDARDS.md
+!docs/architecture.md
+!docs/ablation-e11-layout-prior.md
+# validation_run_plan_ / validation_run_state_ 是本机执行记录，含部署路径与 run_env
+# 具体值，命令必须保留真值才能直接跑，因此本机保留但不随仓库分发。
+
+# 本机专用守护 / 对账脚本（含本机 Ollama 与靶场路径，工作区保留）
+tools/_ollama_keeper.py
+tools/metric_layers.py
+
+# 2026-11-07 本机一次性诊断明细与重复探针副本。原 `tools/_wb_*.py`
+# 只挡 .py，这两个文件会被 `git add -A` 收进公开仓库；明细含开发机逐条
+# 证据与路径，ShiroProbe 副本与 tools/ShiroProbe.java 内容重复（后者有
+# 生产引用，必须保留）。二者本机保留、仅排除分发。
+tools/_wb_*.txt
+tools/_wb_shiro_probe.java
+
+# 一次性交付总览（不随仓库分发）
+overview.md
+!docs/overview.md

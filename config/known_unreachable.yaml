@@ -1,0 +1,54 @@
+version: 1
+updated: "2026-11-04"
+note: "物理不可达豁免清单：这些点在 SUT 能力边界内无法用 HTTP 重放证明，对账时从动态分母剔除，静态检出照常计入。"
+
+items:
+  - id: "ooxml-xxe-zip"
+    file: "ooxmlxxe.java"
+    family: "xxe"
+    reason: "zip 型 XXE 需要完整 xlsx 字节流，D1 走 HTTP 表单通道投不进去"
+    evidence: "new XSSFWorkbook(file.getInputStream())，解析发生在 zip 解包阶段"
+    blocked_by: "transport"
+    since: "2026-11-03"
+    review: "D1 支持 multipart 二进制文件上传后复核"
+
+  - id: "classdataloader-defineclass"
+    file: "classdataloader.java"
+    family: "deserialization"
+    reason: "端点物理不存在：该类无 @RestController/@Controller 注解，Spring 从不注册它 ⇒ 任何请求都 404；即便注册，defineClass 也要合法 .class 字节流"
+    evidence: "ClassDataLoader.java 只有 @RequestMapping(\"/classloader\")，无类级 Spring 注解；jsc 617 实测 GET /classloader 全部 404 Not Found"
+    blocked_by: "transport"
+    since: "2026-11-03"
+    review: "该类补上 @RestController 且出现可直接注入 .class 的端点时复核"
+
+  - id: "crlf-header-split"
+    file: "crlfinjection.java"
+    family: "crlf_injection"
+    reason: "Tomcat 8+ 默认拦截响应头拆行，靶场运行时不具备可利用性"
+    evidence: "response.addHeader 的值含 CRLF 时被容器 sanitize"
+    blocked_by: "framework"
+    since: "2026-11-03"
+    review: "靶场换用不拦截的容器版本时复核"
+
+  - id: "websecurityconfig-cve-2022-22978"
+    file: "websecurityconfig.java"
+    family: "authentication_session"
+    reason: "配置类漏洞且靶场已修复：CVE-2022-22978 的 PoC 是 URL 路径里的 %0a，而 Spring Security 5.5.7+ 的 regexMatchers 自动加 DOTALL ⇒ denyAll 正常生效，HTTP 重放证明不出绕过"
+    evidence: "Dotall.java 是离线 main 演示程序（无 @RestController，端点不存在）；jsc 619 实测 GET /black_path%0a/xx 与 /black_path/xx 均返回 200 登录页 ⇒ 都走 anyRequest().authenticated()，未绕过 denyAll"
+    blocked_by: "framework"
+    since: "2026-11-04"
+    review: "靶场换用 Spring Security < 5.5.7 时复核"
+
+property_families_excluded:
+  - "jwtutils.java"
+  - "cookies.java"
+  - "server.java"
+property_note: "属性族不能用 canary 到 sink 确认，正解是静态强算法门禁 src/iast/property_evidence.py；不进动态分母是既定口径。"
+
+missing_payload_families:
+  - family: "crlf_injection"
+    note: "已有 crlf_header_probe，但部分 spec 仍 payload_unavailable，需补参数形态"
+  - family: "jsonp_referer"
+    note: "缺 referer 头注入形态的载荷生成器"
+  - family: "csrf"
+    note: "状态变更判据已有 csrf_statechange，缺无 token 表单载荷"

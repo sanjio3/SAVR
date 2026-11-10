@@ -1,0 +1,35 @@
+file,family,vulnerable,note
+src/main/java/org/joychou/controller/CommandInject.java,command_execution,true,README CommandInject
+src/main/java/org/joychou/controller/Rce.java,command_execution,true,README RCE
+src/main/java/org/joychou/config/WebSocketsCmdEndpoint.java,command_execution,true,websocket cmd
+src/main/java/org/joychou/controller/WebSockets.java,command_execution,true,websocket cmd/proxy
+src/main/java/org/joychou/controller/SQLI.java,sql_injection,true,README SQLI
+src/main/java/org/joychou/controller/Jdbc.java,sql_injection,true,JdbcTemplate SQLI
+src/main/java/org/joychou/controller/PathTraversal.java,path_traversal,true,README PathTraversal
+src/main/java/org/joychou/controller/SSRF.java,ssrf,true,README SSRF
+src/main/java/org/joychou/controller/IPForge.java,ssrf,true,README IP Forge
+src/main/java/org/joychou/controller/XSS.java,xss,true,README XSS
+src/main/java/org/joychou/controller/CRLFInjection.java,crlf_injection,true,README CRLF
+src/main/java/org/joychou/controller/XXE.java,xxe,true,README XXE
+src/main/java/org/joychou/controller/othervulns/ooxmlXXE.java,xxe,true,README ooxmlXXE
+src/main/java/org/joychou/controller/othervulns/xlsxStreamerXXE.java,xxe,true,README xlsxStreamerXXE
+src/main/java/org/joychou/controller/Deserialize.java,deserialization,true,README Deserialize
+src/main/java/org/joychou/controller/Fastjson.java,deserialization,true,README Fastjson
+src/main/java/org/joychou/controller/Shiro.java,deserialization,true,README Shiro
+src/main/java/org/joychou/controller/XStreamRce.java,deserialization,true,README XStream
+src/main/java/org/joychou/controller/ClassDataLoader.java,deserialization,true,classloader
+src/main/java/org/joychou/controller/SSTI.java,ssti,true,README SSTI
+src/main/java/org/joychou/controller/SpEL.java,spel_injection,true,README SpEL
+src/main/java/org/joychou/controller/QLExpress.java,expression_injection,true,README QLExpress
+src/main/java/org/joychou/controller/Log4j.java,jndi_injection,true,README Log4j
+src/main/java/org/joychou/controller/URLRedirect.java,url_redirect,true,README URL Redirect
+src/main/java/org/joychou/controller/URLWhiteList.java,url_whitelist_bypass,true,README URL whitelist
+src/main/java/org/joychou/controller/Jsonp.java,jsonp_referer,true,README JSONP
+src/main/java/org/joychou/controller/Cors.java,cors,true,README CORS
+src/main/java/org/joychou/controller/CSRF.java,csrf,true,README CSRF
+src/main/java/org/joychou/security/WebSecurityConfig.java,auth_bypass,true,README CSRF+CVE-2022-22978
+src/main/java/org/joychou/controller/FileUpload.java,file_upload,true,README File Upload
+src/main/java/org/joychou/controller/Jwt.java,weak_crypto,true,README JWT
+src/main/java/org/joychou/controller/Cookies.java,secure_cookie,true,cookie 6 个 vuln 端点
+src/main/java/org/joychou/RMI/Server.java,rmi,true,README Java RMI
+src/main/resources/logback-online.xml,jndi_injection,true,README Actuators to RCE

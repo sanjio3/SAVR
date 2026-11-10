@@ -1,0 +1,427 @@
+version: 1
+
+# 机制表：库「内置闸门」的结构化描述（2026-10-02 落地）
+#
+# 与 config/payload_library.yaml 的分工：
+#   payload_library  = 攻击侧弹药（造什么弹、怎么造出真实 gadget 字节流）
+#   mechanism_library = 防御侧闸门（这道门在哪、默认开不开、怎么关、依赖什么）
+# 只有把「已知漏洞」×「闸门约束」×「运行时事实」求交，才能回答
+# 「这个 CVE 在当前这个目标上到底能不能打」。
+#
+# 字段说明：
+#   id            唯一标识
+#   family        所属漏洞族
+#   ecosystem     maven / npm
+#   package       group:artifact，与 SCA 输出的组件名对齐
+#   gate           闸门名称与位置（如 fastjson 的 autoType）
+#   kind           约束类型：allow（白名单）/ deny（黑名单）/ escape（转义）/ regex（正则）
+#   default       该闸门默认值：on（默认拦截生效）/ off（默认不拦）
+#   disable_by    关闭该闸门的配置项名，运行时据此判定
+#   depends        前置事实：jdk_range、classpath 必须存在的类
+#   verify        验证方式：oob（带外回调）/ echo（回显）/ error（报错）
+#   source        取值来源：osv / ghsa / nvd / ysoserial / source-mined
+#   notes         备注
+
+mechanisms:
+  - id: fastjson-autotype-legacy
+    family: deserialization
+    ecosystem: maven
+    package: com.alibaba:fastjson
+    version_range: "<=1.2.24"
+    gate: "autoType（ParserConfig.checkAutoType）"
+    kind: deny
+    default: "off"
+    disable_by: "ParserConfig.getGlobalInstance().setSafeMode(true)"
+    depends:
+      jdk_range: ">=1.8"
+      classes: []
+    verify: "oob"
+    source: "osv"
+    notes: "≤1.2.24 默认开启 autotype，JdbcRowSetImpl 触发 JNDI 查询"
+
+  - id: fastjson-autotype-cache-bypass
+    family: deserialization
+    ecosystem: maven
+    package: com.alibaba:fastjson
+    version_range: ">=1.2.25,<=1.2.47"
+    gate: "autoType（缓存 Class 绕过 checkAutoType）"
+    kind: deny
+    default: "on"
+    disable_by: "safeMode=true"
+    depends:
+      jdk_range: ">=1.8"
+      classes: []
+    verify: "oob"
+    source: "osv"
+    notes: "1.2.25–1.2.47 的 autotype 绕过"
+
+  - id: fastjson-autotype-modern
+    family: deserialization
+    ecosystem: maven
+    package: com.alibaba:fastjson
+    version_range: ">=1.2.48,<=1.2.82"
+    gate: "checkAutoType（autoTypeSupport 默认关；1.2.68 起提供 safeMode 开关）"
+    kind: deny
+    default: "on"
+    disable_by: "ParserConfig.setAutoTypeSupport(true)；safeMode 为可选加固（默认关，非默认开）"
+    depends:
+      jdk_range: ">=1.8"
+      classes: []
+    verify: "oob"
+    source: "ghsa"
+    notes: "口径修正（2026-10-02）：safeMode 于 1.2.68 引入且默认关；≤1.2.82 存在 expectClass 绕过面（CVE-2022-25845），1.2.83 修复；≥1.2.83 无已知通用绕过"
+
+  - id: jackson-default-typing
+    family: deserialization
+    ecosystem: maven
+    package: com.fasterxml.jackson.core:jackson-databind
+    version_range: "*"
+    gate: "enableDefaultTyping / @JsonTypeInfo"
+    kind: allow
+    default: "off"
+    disable_by: "ObjectMapper.enableDefaultTyping()"
+    depends:
+      jdk_range: ">=1.8"
+      classes: []
+    verify: "oob"
+    source: "source-mined"
+    notes: "仅当应用显式开启多态类型绑定时才可用，须过可达性判定"
+
+  - id: xstream-security-framework
+    family: deserialization
+    ecosystem: maven
+    package: com.thoughtworks.xstream:xstream
+    version_range: ">=1.4.18"
+    gate: "XStream.security.allowTypesByWildcard / SecurityFramework"
+    kind: allow
+    default: "on"
+    disable_by: "xstream.addPermission(AnyTypePermission.ANY)"
+    depends:
+      jdk_range: ">=1.8"
+      classes: []
+    verify: "oob"
+    source: "osv"
+    notes: "新版默认拒绝任意类型，需业务显式放通"
+
+  - id: snakeyaml-constructor
+    family: deserialization
+    ecosystem: maven
+    package: org.yaml:snakeyaml
+    version_range: "*"
+    gate: "Constructor vs SafeConstructor"
+    kind: allow
+    default: "off"
+    disable_by: "new Constructor()"
+    depends:
+      jdk_range: ">=1.8"
+      classes: []
+    verify: "oob"
+    source: "osv"
+
+  - id: shiro-rememberme
+    family: deserialization
+    ecosystem: maven
+    package: org.apache.shiro:shiro-core
+    version_range: "<=1.4.1"
+    gate: "rememberMe cookie（AES-CBC + 默认 key）"
+    kind: allow
+    default: "off"
+    disable_by: "cipherKey 非默认"
+    depends:
+      jdk_range: ">=1.8"
+      classes: []
+    verify: "oob"
+    source: "osv"
+    notes: "需搭配 gadget（CC/CB 链），受 classpath 与 JDK 约束"
+
+  - id: log4j2-jndilookup
+    family: deserialization
+    ecosystem: maven
+    package: org.apache.logging.log4j:log4j-core
+    version_range: ">=2.0-beta9,<=2.14.1"
+    gate: "JNDI lookup 是否启用"
+    kind: deny
+    default: "on"
+    disable_by: "log4j2.formatMsgNoLookups=true / 2.17+ 默认禁用"
+    depends:
+      jdk_range: "*"
+      classes: []
+    verify: "oob"
+    source: "ghsa"
+
+  - id: jdbc-mysql-autodeserialize
+    family: deserialization
+    ecosystem: maven
+    package: com.mysql:mysql-connector-java
+    version_range: "*"
+    gate: "JDBC URL 参数 autoDeserialize / queryInterceptors"
+    kind: allow
+    default: "off"
+    disable_by: "autoDeserialize=true 或 queryInterceptors"
+    depends:
+      jdk_range: "*"
+      classes: []
+    verify: "oob"
+    source: "ghsa"
+    notes: "依赖连接串配置，需从应用配置/源码读取"
+
+  # ---------------- 反序列化 gadget（Java 原生，按版本/ classpath 约束）----------------
+  - id: commons-collections-3x
+    family: deserialization
+    ecosystem: maven
+    package: commons-collections:commons-collections
+    version_range: "<=3.2.1"
+    gate: "InvokerTransformer / ChainedTransformer 等危险 transformer 是否可用"
+    kind: allow
+    default: "off"
+    disable_by: "升级到 commons-collections>=3.2.2（InvokerTransformer 加 Functor 保护）"
+    depends:
+      jdk_range: "*"
+      classes: ["org.apache.commons.collections.functors.InvokerTransformer"]
+    verify: "oob"
+    source: "ysoserial"
+    notes: "3.2.2 起 InvokerTransformer 默认拒绝反序列化；CC1 还需 JDK<=8u71 才稳"
+
+  - id: commons-collections4
+    family: deserialization
+    ecosystem: maven
+    package: org.apache.commons:commons-collections4
+    version_range: "<=4.0"
+    gate: "CommonsCollections2/4 链（PriorityQueue + TransformingComparator）"
+    kind: allow
+    default: "off"
+    disable_by: "升级到 commons-collections4>=4.1"
+    depends:
+      jdk_range: "*"
+      classes: ["org.apache.commons.collections4.functors.InvokerTransformer"]
+    verify: "oob"
+    source: "ysoserial"
+    notes: "4.1 起修复；不依赖 InvokerTransformer 的 JDK 限制，比 3.x 通用"
+
+  - id: commons-beanutils
+    family: deserialization
+    ecosystem: maven
+    package: commons-beanutils:commons-beanutils
+    version_range: "*"
+    gate: "CommonsBeanutils1（BeanComparator + PropertyUtils 任意 getter/setter）"
+    kind: allow
+    default: "off"
+    disable_by: "升级到 commons-beanutils>=1.9.4 并移除 commons-collections 危险 transformer（链依赖 collections 3.1）"
+    depends:
+      jdk_range: "*"
+      classes: ["org.apache.commons.beanutils.BeanComparator", "org.apache.commons.collections.functors.InvokerTransformer"]
+    verify: "oob"
+    source: "ysoserial"
+    notes: "需 commons-collections:3.1 同在 classpath；无版本门，纯 classpath 依赖"
+
+  # ---------------- JSON 解析库（含 autoType / 类型绑定门）----------------
+  - id: gson
+    family: deserialization
+    ecosystem: maven
+    package: com.google.code.gson:gson
+    version_range: "*"
+    gate: "(无内置多态类型绑定 / 无 autoType 等价物)"
+    kind: allow
+    default: "on"
+    disable_by: "（默认即安全）避免 new Gson().fromJson(json, Object.class) 后再强转危险类 / 使用 unsafe TypeAdapter"
+    depends:
+      jdk_range: "*"
+      classes: []
+    verify: "echo"
+    source: "source-mined"
+    notes: "Gson 默认不反序列化任意类型，无 RCE 路径；仅当应用显式用 unsafe adapter 才需关注"
+
+  - id: json-lib
+    family: deserialization
+    ecosystem: maven
+    package: net.sf.json-lib:json-lib
+    version_range: "*"
+    gate: "JSON1 ysoserial 链（net.sf.json 反序列化任意类）"
+    kind: allow
+    default: "off"
+    disable_by: "避免用 json-lib 反序列化不可信 JSON 到 Object"
+    depends:
+      jdk_range: "*"
+      classes: ["net.sf.json.JSONObject", "org.apache.commons.beanutils.BeanComparator", "org.apache.commons.collections.functors.InvokerTransformer"]
+    verify: "oob"
+    source: "ysoserial"
+    notes: "JSON1 链依赖完整 classpath（spring-aop / commons-beanutils / ezmorph / commons-collections）"
+
+  # ---------------- 表达式 / 模板引擎（用户输入被送入求值器）----------------
+  - id: spel
+    family: ssti
+    ecosystem: maven
+    package: org.springframework:spring-expression
+    version_range: "*"
+    gate: "SpEL 是否对用户输入求值（SpelExpressionParser.parseExpression）"
+    kind: allow
+    default: "off"
+    disable_by: "不将用户输入送入 SpelExpressionParser；用 BeanFactoryResolver 限制可用 bean"
+    depends:
+      jdk_range: "*"
+      classes: ["org.springframework.expression.spel.standard.SpelExpressionParser"]
+    verify: "echo"
+    source: "source-mined"
+    notes: "RCE 形如 T(java.lang.Runtime).getRuntime().exec(...)；无 autoType，靠应用把用户输入喂给求值器"
+
+  - id: ognl
+    family: ssti
+    ecosystem: maven
+    package: ognl:ognl
+    version_range: "*"
+    gate: "OGNL 是否对用户输入求值（ValueStack / Ognl.getValue）"
+    kind: allow
+    default: "off"
+    disable_by: "不将用户输入送入 OGNL 求值；Struts2 升级到已修版本"
+    depends:
+      jdk_range: "*"
+      classes: ["ognl.Ognl"]
+    verify: "echo"
+    source: "source-mined"
+    notes: "Struts2 默认把请求参数送入 OGNL；S2-xxx 系列多为此"
+
+  - id: mvel
+    family: ssti
+    ecosystem: maven
+    package: org.mvel:mvel2
+    version_range: "*"
+    gate: "MVEL 是否对用户输入求值（MVEL.eval）"
+    kind: allow
+    default: "off"
+    disable_by: "不将用户输入送入 MVEL.eval / MVEL.executeExpression"
+    depends:
+      jdk_range: "*"
+      classes: ["org.mvel2.MVEL"]
+    verify: "echo"
+    source: "source-mined"
+    notes: 'MVEL 模板/脚本注入，形如 @java.lang.Runtime@getRuntime().exec(...)' 
+
+  - id: velocity
+    family: ssti
+    ecosystem: maven
+    package: org.apache.velocity:velocity-engine-core
+    version_range: "*"
+    gate: "Velocity 模板是否含用户输入（#set / $ 注入 / #foreach 可控）"
+    kind: allow
+    default: "off"
+    disable_by: "模板静态化，不将用户输入拼进 Velocity 模板"
+    depends:
+      jdk_range: "*"
+      classes: ["org.apache.velocity.app.VelocityEngine"]
+    verify: "echo"
+    source: "source-mined"
+    notes: "模板注入可走到任意 Java 方法调用，须从源码挖掘是否拼接用户输入"
+
+  - id: freemarker
+    family: ssti
+    ecosystem: maven
+    package: org.freemarker:freemarker
+    version_range: "*"
+    gate: "Freemarker 模板注入（<#assign / ?new() / ?api / TemplateModel 任意方法）"
+    kind: allow
+    default: "off"
+    disable_by: "不将用户输入拼进模板；用 ?api 保护 / 2.3.17+ 受限"
+    depends:
+      jdk_range: "*"
+      classes: ["freemarker.template.Configuration"]
+    verify: "echo"
+    source: "source-mined"
+    notes: '<#assign ex="freemarker.template.utility.Execute"?new()> ${ex("id")} 是经典 payload'
+
+  - id: thymeleaf
+    family: ssti
+    ecosystem: maven
+    package: org.thymeleaf:thymeleaf
+    version_range: "*"
+    gate: "Thymeleaf 视图名/片段注入（::_{${...}} 或视图名含用户输入）"
+    kind: allow
+    default: "off"
+    disable_by: "不将用户输入拼进视图名/片段表达式；用 thymeleaf 3.x + 白名单"
+    depends:
+      jdk_range: "*"
+      classes: ["org.thymeleaf.spring5.SpringTemplateEngine"]
+    verify: "echo"
+    source: "source-mined"
+    notes: 'SSTI 形如 __${T(java.lang.Runtime).getRuntime().exec("id")}__::.x'
+
+  # ---------------- 协议 / 解析器（JDK 与框架层闸门）----------------
+  - id: jndi-trusturlcodebase
+    family: deserialization
+    ecosystem: jdk
+    package: com.sun.jndi:ldap
+    version_range: "*"
+    gate: "com.sun.jndi.ldap.object.trustURLCodebase（JNDI 远程类加载开关）"
+    kind: deny
+    default: "on"
+    disable_by: "JDK<8u191 / 11.0.1 默认 true；设为 -Dcom.sun.jndi.ldap.object.trustURLCodebase=false 即关（默认关）"
+    depends:
+      jdk_range: "<8u191"
+      classes: []
+    verify: "oob"
+    source: "nvd"
+    notes: "JDK 8u191+ / 11.0.1+ 默认 false → JNDI 注入无法远程加载类；LDAP/JNDI 注入依赖此开关与 codebase"
+
+  - id: rmi-deserialize
+    family: deserialization
+    ecosystem: jdk
+    package: java.rmi
+    version_range: "*"
+    gate: "RMI 反序列化（registry/IIOP 入口接受序列化对象）"
+    kind: allow
+    default: "off"
+    disable_by: "启用 JEP290 序列化过滤器（java.rmi.server.useCodebaseOnly=true / 全局 serialFilter）"
+    depends:
+      jdk_range: "*"
+      classes: []
+    verify: "oob"
+    source: "nvd"
+    notes: "RMI 反序列化依赖 classpath 上可用 gadget；JDK 8u121+ 默认 useCodebaseOnly=true 阻断远程类加载"
+
+  - id: xxe-external-entity
+    family: xxe
+    ecosystem: jdk
+    package: javax.xml:parsers
+    version_range: "*"
+    gate: "XML 解析器外部实体（DOCTYPE）是否禁用"
+    kind: deny
+    default: "off"
+    disable_by: "DocumentBuilderFactory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING,true) / DISALLOW_DOCTYPE_DECL / SAXParserFactory.setExpandEntityReferences(false)"
+    depends:
+      jdk_range: "*"
+      classes: []
+    verify: "oob"
+    source: "source-mined"
+    notes: "多数 XML 解析器（DocumentBuilder/SAX/DOM4J/XMLReader）默认允许外部实体，须显式关闭"
+
+  # ---------------- 框架层（默认行为即危险）----------------
+  - id: struts2-ognl
+    family: ssti
+    ecosystem: maven
+    package: org.apache.struts:struts2-core
+    version_range: "*"
+    gate: "Struts2 把请求参数送入 OGNL 求值（ParametersInterceptor / S2 漏洞系列）"
+    kind: allow
+    default: "off"
+    disable_by: "升级到已修 Struts2 版本；禁用动态方法调用 / 严格参数名白名单"
+    depends:
+      jdk_range: "*"
+      classes: ["org.apache.struts2.dispatcher.ng.StrutsRequestWrapper"]
+    verify: "echo"
+    source: "ghsa"
+    notes: "Struts2 的 OGNL 注入是框架层默认行为，与 ognl 库条目互补"
+
+  - id: weblogic-t3-iop
+    family: deserialization
+    ecosystem: other
+    package: weblogic:server
+    version_range: "*"
+    gate: "T3 / IIOP 协议启用 + 反序列化黑名单（黑名单可被绕过）"
+    kind: deny
+    default: "on"
+    disable_by: "禁用 T3/IIOP 监听；升级到已修版本（CVE-2020-2555 等黑名单绕过）"
+    depends:
+      jdk_range: "*"
+      classes: []
+    verify: "oob"
+    source: "nvd"
+    notes: "WebLogic 默认启用 T3/IIOP；反序列化黑名单可被多次绕过，属 deny 类但不可信赖"

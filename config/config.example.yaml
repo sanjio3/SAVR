@@ -1,0 +1,80 @@
+api:
+  provider: "anthropic-compatible"
+  model: "qwen3-coder-plus"
+  max_tokens: 4096
+  temperature: 0.1
+
+anthropic_compatible:
+  source: "auto"
+  auth_mode: "auto"
+  settings_dir: ""
+
+scan:
+  max_file_size: 500
+  concurrency: 3
+  languages:
+    - java
+    - python
+  skip_dirs:
+    - test
+    - tests
+    - target
+    - .git
+    - node_modules
+    - vendor
+    - venv
+    - output
+    - __pycache__
+
+output:
+  output_dir: "output"
+  formats:
+    - json
+    - markdown
+
+service:
+  host: "127.0.0.1"
+  port: 8000
+  max_concurrent_tasks: 2
+
+workspace:
+  tools_dir: "src/pipeline/a3/resources/tools"
+  skills_dir: "src/agents/resources/skills"
+
+agents:
+  a1:
+    enabled: true
+    # 2026-09-18（B3）：rules_file 已移除（无消费者，四份规则 yaml 已归档）。
+  a2:
+    enabled: true
+    prompts_file: "src/prompts/audit_prompts.yaml"
+    max_lines_per_request: 500
+    # 2026-09-17（Agentic 闭环）：闭环二次分析（携带 I2 回灌 feedback）是否走
+    # 「带工具调用的多轮推理」。工具集见 src/agents/a2_tools.py（只读：代码检索、
+    # 读文件、符号 grep、A1 规则匹配、exploit 只读清单）。默认关：首轮分析不受影响，
+    # 2026-09-18：已在真实全量（java-sec-code）开启验证。开启前已加固 fail-open
+    # （多轮失败 / 空结论均回退单次 completion，绝不静默归零），验证通过后保持开启。
+    enable_agentic_loop: true
+    # 多轮上限（含结论轮）。达上限仍无结论则取最后一轮文本，不静默丢弃。
+    agentic_max_rounds: 3
+  a3:
+    enabled: true
+    use_docker: true
+    ai_judge_enabled: true
+    ai_judge_on_statuses:
+      - partially_verified
+      - reached_but_not_triggered
+      - judge_inconclusive
+    hitl:
+      approval_mode: "ask_on_risky_tools"
+      tool_allowlist: []
+    runtime:
+      docker:
+        fallback_policy: "local_jar_first"
+        registry_mirror: ""
+      java:
+        allow_local_jar: true
+        preferred_base_images:
+          - "openjdk:21-jdk-slim"
+          - "eclipse-temurin:21-jre"
+          - "eclipse-temurin:17-jre"

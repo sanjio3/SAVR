@@ -1,0 +1,43 @@
+# 2026-11-06：补齐 PEP 517 构建后端，干净环境里的 `pip install -e .` 才可用。
+# 本项目以仓库根为 import 根（[tool.pytest.ini_options].pythonpath=["."]），
+# 不需要把 src/ 打成可安装包，故 packages 显式留空；editable 安装只提供元数据。
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = []
+
+[project]
+name = "savr"
+version = "0.1.0"
+description = "Workflow-driven SAST + AI semantic analysis + dynamic verification platform"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=0.18.0",
+    "fastapi>=0.115.0",
+    # 靶场实例纪元探测（src/iast/target_epoch.py，D2 批次隔离）：读监听目标端口进程的
+    # create_time 作为「靶场实例身份」。缺失即降级为探针心跳信号，不阻断主流程。
+    "psutil>=5.9.0",
+    "pydantic>=2.8.0",
+    "py7zr>=0.22.0",
+    "python-multipart>=0.0.9",
+    "pyyaml>=6.0",
+    "requests>=2.32.0",
+    "uvicorn>=0.30.0",
+    # D1 WebSocket 重放（src/application/d1_service.py）：缺失时该通道降级跳过。
+    "websockets>=12.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.3",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.uv]
+package = false

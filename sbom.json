@@ -1,0 +1,51 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:9f1c2a7e-6b34-4d18-a0c5-7e2b1d9f4a63",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-11-06T00:00:00Z",
+    "tools": [
+      {
+        "vendor": "savr",
+        "name": "manual-direct-dependency-export",
+        "version": "0.1.0"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:pypi/savr@0.1.0",
+      "name": "savr",
+      "version": "0.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "savr:sbom-scope",
+        "value": "direct-declarations-only"
+      },
+      {
+        "name": "savr:sbom-note",
+        "value": "Derived from requirements.txt and pyproject.toml. Transitive dependencies and third-party binaries fetched by scripts/fetch_tools.py are not resolved here; regenerate a full CycloneDX SBOM with pip-licenses or cdxgen in the target deployment."
+      }
+    ]
+  },
+  "components": [
+    {"type": "library", "bom-ref": "pkg:pypi/anthropic", "name": "anthropic", "version": ">=0.18.0", "purl": "pkg:pypi/anthropic", "scope": "required"},
+    {"type": "library", "bom-ref": "pkg:pypi/fastapi", "name": "fastapi", "version": ">=0.115.0", "purl": "pkg:pypi/fastapi", "scope": "required"},
+    {"type": "library", "bom-ref": "pkg:pypi/psutil", "name": "psutil", "version": ">=5.9.0", "purl": "pkg:pypi/psutil", "scope": "required"},
+    {"type": "library", "bom-ref": "pkg:pypi/pydantic", "name": "pydantic", "version": ">=2.8.0", "purl": "pkg:pypi/pydantic", "scope": "required"},
+    {"type": "library", "bom-ref": "pkg:pypi/py7zr", "name": "py7zr", "version": ">=0.22.0", "purl": "pkg:pypi/py7zr", "scope": "required"},
+    {"type": "library", "bom-ref": "pkg:pypi/python-multipart", "name": "python-multipart", "version": ">=0.0.9", "purl": "pkg:pypi/python-multipart", "scope": "required"},
+    {"type": "library", "bom-ref": "pkg:pypi/pyyaml", "name": "pyyaml", "version": ">=6.0", "purl": "pkg:pypi/pyyaml", "scope": "required"},
+    {"type": "library", "bom-ref": "pkg:pypi/requests", "name": "requests", "version": ">=2.32.0", "purl": "pkg:pypi/requests", "scope": "required"},
+    {"type": "library", "bom-ref": "pkg:pypi/uvicorn", "name": "uvicorn", "version": ">=0.30.0", "purl": "pkg:pypi/uvicorn", "scope": "required"},
+    {"type": "library", "bom-ref": "pkg:pypi/pytest", "name": "pytest", "version": ">=8.3.3", "purl": "pkg:pypi/pytest", "scope": "optional"}
+  ]
+}

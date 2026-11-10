@@ -1,0 +1,46 @@
+# Offline SCA advisory dataset (G10) — used as the default local intel source so
+# tests and air-gapped runs need zero network access. Shapes mirror OSV.
+version: 1
+source: osv
+advisories:
+  - id: GHSA-jfh8-c2jp-5v3q
+    summary: "Remote code execution in log4j (Log4Shell)"
+    aliases: ["CVE-2021-44228"]
+    severity:
+      - type: CVSS_V3
+    database_specific:
+      severity: CRITICAL
+    affected:
+      - package:
+          ecosystem: Maven
+          name: org.apache.logging.log4j:log4j-core
+        ranges:
+          - type: SEMVER
+            events:
+              - introduced: "2.0"
+              - fixed: "2.15.0"
+  - id: PYSEC-2023-62
+    summary: "SQL injection in example-orm before 1.4.2"
+    aliases: ["CVE-2023-0001"]
+    database_specific:
+      severity: HIGH
+    affected:
+      - package:
+          ecosystem: PyPI
+          name: example-orm
+        ranges:
+          - type: ECOSYSTEM
+            events:
+              - introduced: "0"
+              - fixed: "1.4.2"
+  - id: MAL-2024-0007
+    summary: "Malicious package: colourama typosquat exfiltrates env vars"
+    database_specific:
+      severity: CRITICAL
+      malicious: true
+    affected:
+      - package:
+          ecosystem: PyPI
+          name: colourama
+        versions:
+          - "0.1.6"

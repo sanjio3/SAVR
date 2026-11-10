@@ -1,0 +1,497 @@
+# 全量重扫 + 泛化验证三层实验配置
+# 状态：2026-11-09 02:05。L3 两轮稳定性通过；L2 首轮基线建成（本轮 EFFECTIVE）。
+#       扫描链 R0''→L1''→L3→L2 全部通过；剩余 G0-5 导出 / G0-6 README / G0-7 工作树。
+#       645 也判 INVALID：file_failures=1（sql/ruoyi.html 估算偏乐观仍 400）+ 404 口径
+#       跨靶场不可比（138 条 404 全落在 5 个 A2 从工具类方法名脑补的路由上）。
+#       两项都已修：服务端 400 时砍半预算重裁；404 率按 workspace 分档
+#       （jsc 0.10/4、ruoyi 0.20/8，640 负控仍 INVALID）。
+#       2026-11-08 23:13 整栈（后端 8000 / MySQL / RuoYi）被平台回收（本会话后台任务
+#       全部丢失），本轮变成打空门的孤儿轮 → 判 INVALID，已 reconcile 为 failed。
+#       恢复：launch_stack.py（后端+前端看门狗）+ launch_ruoyi_full.py 自愈循环
+#       （SAST_RUOYI_PROBE=1 + JDK11）重新拉起；A0 复测 ready=True 后再发车。
+#       L2 run1 前两轮都无效：642 因探针未挂载被 A0 判 failed（基础设施）；
+#       643 因 A2 prompt 超 num_ctx 导致 10 个大文件 400，被判 INVALID。
+#       已修：prompt 预算 7000 token，超预算按疑点行开窗；jsc 最大 6361 全在预算内
+#       ⇒ jsc 的 prompt 逐字节不变，L1/L3 读数无需重跑。L2 重发 本轮 running。
+#       发布动作仍冻结。
+#       组件修复已落地；R0'' (637) 唯一 compare 基线；L1' (638) 已通过；
+#       L3 run1 (639) 有效；L3 run2 (640) 被判无效轮；run2' (641) 有效。
+#       修掉四档落盘读数的解释器漂移（只改 tools/ + tests/ + docs/，
+#       不重置冻结基线）；641 的权威四档已用 .venv 重生成。
+#       实测波动 24/24 ↔ 23/24（±1 点 / ±4.2pp），根因是 confirm_gate_recheck
+#       迟到值级证据通道，见 docs/l3_run2prime_reconciliation.md。
+#       的「超时可配 + 有限重试」方向被 本轮实测证伪：A2 跑 58 分钟
+#       仅 48/95，3 组精确 300s 超时、6 次重试全部再次超时，exhausted != 0，
+#       按 Gate 0 判无效轮并主动终止。真根因是 stream:False + format:json
+#       grammar 下 options 缺 num_predict 上限，qwen3:8b 偶发不产 EOS 导致生成
+#       无限延伸、服务端不返回。完整证据见 docs/r0prime_invalid_round_postmortem.md；
+#       两版诊断的演进痕迹见 docs/l1_blind_route_rerun_reconciliation.md。
+#       631~636 全部降级为历史对照 / 无效轮；当前停在 L3 run2 重跑前。
+#       每轮出结果先跑 tools/check_effective_round.py（起同时检重放层环境），
+#       通过后才看红线/重放/gap；完整复盘见 docs/l3_run2_invalid_round_postmortem.md。
+#       发布标准见 docs/gate0_release_criteria.md G0-1 / G0-3。
+# 方法学设计见 docs/generalization_validation_design.md（随仓库分发）。本机执行计划与
+# 状态记录含部署路径与 run_env 真值，被 .gitignore 排除、不随仓库分发。
+
+version: 2
+status: scan_chain_passed_readme_pending
+
+execution:
+  order: [R0_redline_zero, L1_blind_route, L3_stability, L2_cross_target]
+  stop_on_redline: true          # L3/L2 仍是硬闸：任一**新**红线 fp_replay != 0 立即停链
+  # 选项 C 不把硬闸改成 false，而是预先登记一条已披露例外。真值表、代码、
+  # src/ 冻结、run_env 全部不变。
+  # 2026-11-07 20:5x 形成「L1 口径」决议「泛化例外，重跑 L1」：
+  # 旧写法 ``task_id: 632`` 把例外绑死在旧轮次上，修复后重跑 L1 会生成新
+  # task_id，白名单不外溢 ⇒ 同一条已知限制会被当成新红线停链。改为按 spec 特征
+  # 登记（层 + 文件 basename + 族），与轮次无关，放行的是**同一条已知限制**而非新例外。
+  # 离线复核：632 的 50 条 confirmed 在新口径下 in_truth=50/50、降级 0（Log4j.java
+  # 本身在真值表内，族 jndi_injection），故该 xss 红线必然重现，泛化是复刻而非放宽。
+  # 口径依据见 docs/gate0_release_criteria.md G0-3。
+  pre_registered_exceptions:
+    - id: L1_log4j_xss
+      spec: "log4j.java/xss"
+      match:
+        # 口径变更：L3 run1 实测复现了
+        # 同一条已知限制，原 applies_to 只写 L1 的隐含假设「L3/L2 不会出现」
+        # 被证伪。扩到 L3_stability 仍按 (file_basename, family) 严格匹配 +
+        # 每轮 1 条上限，其他任何新红线照旧停链；L2_cross_target 仍不放行。
+        # 证据与四轮 spec 对照见 docs/l3_run1_reconciliation.md。
+        applies_to: [L1_blind_route, L3_stability]
+        file_basename: "log4j.java"
+        family: "xss"
+      max_count_per_round: 1           # 每轮最多放行 1 条；第 2 条或特征不符 = 新红线，立即停链
+      reason: "真值表未覆盖的真实反射 XSS，非族错配幻觉；补真值代价实测见 docs/truth_addendum_impact_20261107.md"
+      decision: "口径决议：如实披露为已知限制，不补真值、不收紧 late-evidence、不改代码"
+      decision_2: "口径决议：泛化例外按 spec 特征登记，不动代码/真值表/src 冻结"
+      decision_3: "口径决议：例外范围扩到 L3_stability，639 与 632 同源，放行的是同一条已批准限制；不改红线定义/真值表/src/判据门，L2 仍不放行"
+  l2_run1_invalid_round:
+    name: ruoyi-L2-run1-20261108c
+    task_id: 642
+    status: failed
+    verdict: INVALID
+    reason: "A0 环境就绪硬门禁未通过：ruoyi/ruoyi 探针离线。RuoYi 的 JVM 启动命令里没有 -javaagent，iast_sessions#7 为 unready（末次心跳 2026-11-04）。A1/A2 已跑完（418 calls / 0 failed / 61 findings），失败点在 D1 门禁，属基础设施无效轮，不计入 L2 验收"
+    root_cause: "launch_ruoyi_full.py 的 build_cmd() 没有探针挂载参数；且 sec-probe.jar 的 agent 类是 Java 11（class 55），JDK8 无法加载 —— 与 workspace 8 会话 settings 里写的 java_path=jdk-11.0 一致，只是启动器一直用 JDK8"
+    fix: "launch_ruoyi_full.py 支持 SAST_RUOYI_PROBE=1 / SAST_RUOYI_JAVA_HOME / SAST_AI_PROBE_JAR，按 workspace 8 会话说读 probe_token，双挂 -Xbootclasspath/a + -javaagent，带 sec.server.url / agent.id / app.name / app.packages。默认不挂，保持原 JDK8 行为"
+    verification: "重启后 /login 200、admin/admin123 登录 OK、/index 无凭据 302 / 带凭据 200；iast_sessions#7 status=ready、last_heartbeat_at 新鲜（20:43:57）、agent_phase=READY；check_environment_readiness 实测 ready=True（target 200 / heartbeat_fresh / consistent / version unverified 软放行）"
+  l2_run1_invalid_round_2:
+    name: ruoyi-L2-run1-20261108d
+    task_id: 643
+    status: completed
+    verdict: INVALID
+    reason: "check_effective_round 判 INVALID：file_failures.failed_files=10。其余硬条件全过（transport 全 0、truncated=0、重放层 404 3.5% / 4 端点 / iso / IAST 1939 / 认证 100%）"
+    root_cause: "_user_prompt 把整份源码拼进 prompt、无 token 预算，10 个大文件超过 num_ctx=8192 被 Ollama 直接 400（服务端原文 request (9486 tokens) exceeds the available context size (8192 tokens)）。不是 LLM 不可用，是 prompt 无上限"
+    evidence: "10 个失败文件（ry-ui.js / 5×html / edit.html / ruoyi.html / ry_20201017.sql / ExcelUtil.java）全部在 RuoYi 真值 6 条 in_scope 之外；418 calls = 428 files - 10，说明在调用前即失败"
+    provisional_four_tier: "静态 6/6 / 动态 6/6 / 重放 2/6 = 33.3% / 红线 0/2（真值点未被污染，但因轮次无效不作 L2 基线）"
+    fix: "见 docs/validation_run_plan_20261106.md 第十一节：prompt_token_budget()=7000、_est_tokens()=len//3、_trim_code_to_budget() 按疑点行开窗、code_trimmed 计数；回归锁 tests/test_a2_prompt_budget.py 12 例"
+  l2_run1_invalid_round_3:
+    name: ruoyi-L2-run1-20261108e
+    task_id: 644
+    status: failed
+    verdict: INVALID
+    reason: "2026-11-08 23:13 平台回收了本会话全部后台任务，后端 8000 / MySQL 3306 / RuoYi 8081 同时消失；扫描子进程存活但此后一直在打已关闭的端口，成为孤儿轮。后端重启后 reconcile 为 failed"
+    evidence: "1033 条 replay_attempts 全部落在 22:50~23:13（200:901 / 404:132），最后一条 IAST 事件 23:13:27，之后无任何新证据；8081 与 3306 均无监听"
+    fix: "恢复动作：launch_stack.py 拉起后端+前端看门狗；launch_ruoyi_full.py 改为 while-true 自愈循环（SAST_RUOYI_PROBE=1 + JDK11），靶场或 launcher 单独退出会被 5s 内重拉；提交前复测 A0 ready=True"
+    lesson: "整栈与靶场都依赖本会话的后台任务存活；会话/专家切换会回收全部后台任务。长轮次期间不得切换会话，且每轮提交前必须复测 8000/8081/A0 三处"
+  l2_run1_invalid_round_4:
+    name: ruoyi-L2-run1-20261108f
+    task_id: 645
+    status: completed
+    verdict: INVALID
+    reason: "file_failures.failed_files=1（仅 sql/ruoyi.html，179KB，估算 7000 token 实际仍超）；404 13.2% / 5 端点超出 jsc 档阈值"
+    root_cause: "① _est_tokens=len//3 对 HTML 偏乐观（实测可到 2.5 字符/token），开窗后仍 400；② 404 口径用 jsc 阈值量 RuoYi：138 条 404 全落在 exportExcel(105)/loadYaml(12)/address(12)/upload(6)/nameUUIDFromBytes(3) 这 5 个「A2 从工具类方法名脑补、应用里不存在」的路由上，0 条触及 6 条真值点"
+    four_tier: "静态 6/6 / 动态 6/6 / 重放 2/6 = 33.3% / 红线 0/2 / 确认级误报 0/7"
+    fix: "服务端 400(context size) 时把预算砍半重裁，最多两次（src/agents/a2_integrated_analyst.py）；check_effective_round.py 按 workspace 分档 REPLAY_PROFILES={4:jsc 0.10/4, 8:ruoyi 0.20/8}，未登记走 default 严格档，输出标 [口径名]"
+    negative_control: "640 在 jsc 档仍 INVALID（18.3%/10%、20/4、shapes 2>1 三条同命中）；同一份 645 指纹放到 workspace 4 也仍 INVALID —— 分档不是全局放宽"
+    known_limitation: "A2 仍会为工具类（ExcelUtil / YamlUtil）脑补路由，浪费约 13% 重放预算；不影响真值点，列为后续项（要求 replay 路由必须存在于入口清单）"
+  l2_run1:
+    name: ruoyi-L2-run1-20261109a
+    task_id: 646
+    workspace_id: 8
+    target: RuoYi-4.5.1 @ http://127.0.0.1:8081
+    truth: data/ruoyi_451_truth.csv
+    truth_rows_in_scope: 6
+    submitted_at: "2026-11-09 00:57:04"
+    gate: "00:56:03 / 00:56:33 / 00:57:03 连续 3 次通过：free 6639/6605/6628 MiB、util 9/8/9%、models []；GATE PASSED used 1560 MiB"
+    note: "第五轮发车：642 探针未挂载、643 prompt 超 num_ctx、644 整栈被回收、645 file_failures=1+404 口径； 修复后 A0 ready=True 再发车"
+    run_env: "SAST_AI_D1_DUMP_REQ=1 / SAST_AI_D1_DUMP_PATH=logs/d1_req_dump_L2.jsonl / SAST_AI_STAGE_CACHE=0；SAST_AI_DESER_YSOSERIAL=1 是后端默认注入的通用开关。未传 jsc 专用的 SAST_AI_SHIRO_KEY 与 YSO_JAVA_HOME（RuoYi 真值里 deserialization 为 out_of_scope，本轮目标族只有 sql_injection / command_execution）"
+    dast_config_check: "ok=true，仅 1 条 info：app_not_found_ws_fallback（workspace-8 未登记 DAST app，回落到 workspace 配置 http://127.0.0.1:8081）"
+    launcher: "launch_ruoyi_full.py 常驻后台（SAST_RUOYI_PROBE=1 + SAST_RUOYI_JAVA_HOME=jdk-11.0）；MySQL pid 61124 / RuoYi pid 35264；8081 /login 200、admin/admin123 登录 OK、/index 无凭据 302 / 带凭据 200"
+    probe: "sec-probe.jar 双挂（-Xbootclasspath/a + -javaagent），app/agent=ruoyi、packages=com.ruoyi、token 取自 iast_sessions#7"
+    status: completed
+    effective_round: EFFECTIVE
+    static_family: "4/4（真值行 6/6）"
+    dynamic_family: "4/4（真值行 6/6）"
+    replay_family: "2/4 = 50%（按真值行 2/6 = 33.3%）"
+    strict_replay: "2/4（按行 2/6）"
+    fp_replay: "0/2"
+    confirmed_fp: "0/7"
+    replay_env_fingerprint: "404 141/1046 (13.5%)、5 端点、iso、IAST 1925、认证 100% [口径 ruoyi]"
+    code_trimmed: 18
+    unconfirmed_attribution: "3 条 SysUserMapper 行：framework:mybatis_dollar_substitution 静态确认但 boolean_same 不成立；1 条 SysDeptMapper：到 sink 但 D2 未判有害；无一属于漏检"
+    gate_0_result: "G0-3 L2 通过；G0-2 通过（五个有效轮红线扣除例外后全 0）"
+    reconciliation: docs/l2_run1_reconciliation.md
+  halted_at: G0-6_readme_finalize
+  halt_reason: "L3 已通过（639 + 641 两轮 EFFECTIVE，分母/静态一致，唯一退步 ssti.java/ssti 可解释，无新红线）。L2 run1：642 因探针未挂载被 A0 判 INVALID（已补探针挂载 + JDK11 重启），643 因 prompt 超 num_ctx 判 INVALID（已修 prompt 预算），重新发车后仍在运行。历史停链记录：2026-11-08 判 640 为 INVALID（A2 contract 与 637/639 逐字节一致，但 14:56 起 8080 被另一个 Spring Boot 实例接管，404 率 18.3% / 20 端点 / epoch+iso / IAST -21%，ssrf.java/ssrf 掉 2 条 oracle:error_reflect），见 docs/l3_run2_invalid_round_postmortem.md；解除后 run2' (641) 重跑通过，见 docs/l3_run2prime_reconciliation.md"
+  l3_stability_conclusion:
+    verdict: PASS_WITH_DISCLOSED_VARIANCE
+    effective_runs: [639, 641]
+    denominator: 24
+    static_family: "30/31 ↔ 30/31（一致）"
+    replay_family: "24/24 ↔ 23/24（±1 点 / ±4.2pp）"
+    strict_vs_replay_gap: 0
+    fp_replay: "1/62（预登记例外放行，有效 0）→ 0/62"
+    new_redline: 0
+    regression_points: ["ssti.java/ssti"]
+    variance_root_cause: "confirm_gate_recheck 迟到值级证据（value_hit gate B）未回补；641 全局 sink-reached-probe 902 条、value_hit.hit=True 22 条均为四轮最高，非通道退化"
+    disclosure: "不得把单轮 24/24 写成『稳定 100%』；发布材料须写明 23~24/24 波动与 log4j.java/xss 已知限制"
+    reconciliation: docs/l3_run2prime_reconciliation.md
+  # 有效轮硬条件：tools/check_effective_round.py 只读判定，fail-closed。
+  # 任何一轮命中即作废重跑，避免 LLM 不可用造成的假掉点被当成泛化结论。
+  effective_round_gate:
+    checker: tools/check_effective_round.py
+    require_status: completed
+    fail_closed: true
+    hard_zero_keys: [transport_exhausted, transport_generation_timeouts,
+                     transport_circuit_broken, file_failures]
+    transport_exhausted: 0
+    transport_generation_timeouts: 0
+    transport_circuit_broken: 0
+    file_failures: 0
+    # 2026-11-08 01:40 本轮首次真实轮校准：截断必须可观测，但非零只给
+    # warning，不否决轮次。准确性底线由「文件是否丢失 / 调用是否失败」承担。
+    transport_truncated: observable_warning_only
+    warning_requirements: "带 warning 的轮次须逐个列出被截断文件、是否为真值点、是否影响四档分母；若截断导致 file_failures > 0 仍判 INVALID"
+    # 2026-11-08 （本轮复盘）：只查 A2 contract 会漏掉「重放层靶场被
+    # 另一个应用实例抢占」。640 的 A2 contract 与 637/639 逐字节一致，仍被误判
+    # EFFECTIVE；补上重放层环境指纹后判 INVALID。
+    replay_env_gate:
+      checker: "tools/check_effective_round.py --task-id <id>"
+      fail_closed: true
+      max_not_found_ratio: 0.10
+      max_not_found_endpoints: 4
+      max_error_body_shapes: 1
+      min_iast_events: 1
+      min_authenticated_ratio: 0.90
+      history_only_switch: --no-replay-env
+      note: "阈值由 634/635/637/638/639 实测（1.8~2.2%、2~3 端点、单一 epoch、认证 99.5%）与 640（18.3%、20 端点、epoch+iso）分离得出；盲化轮 638 同样通过，无需豁免"
+    a2_num_predict_env: SAST_AI_A2_LLM_NUM_PREDICT
+    a2_num_predict_default: 1024
+    a2_timeout_env: SAST_AI_A2_LLM_TIMEOUT
+    a2_timeout_default_s: 300
+    a2_retries_env: SAST_AI_A2_LLM_RETRIES
+    a2_retries_default: 2
+    circuit_break_env: SAST_AI_A2_LLM_CIRCUIT_BREAK
+    note: "这些是组件默认值，不是 run_env 绕开项；6 项 run_env 保持不变，不新增第 7 项。生成超时不重试，仅连接层异常重试"
+  r0prime_invalid_round:
+    task_id: 636
+    verdict: INVALID
+    reason: "A2 生成不终止；3 组 300s 超时、6 次重试全部再次超时；58min 仅 48/95"
+    reconciliation: docs/r0prime_invalid_round_postmortem.md
+  l1b_result:
+    task_id: 635
+    name: jsc-L1-blind-route-20261107b
+    status: completed
+    replay_family: "19/24"
+    strict_replay: "19/24"
+    strict_vs_replay_gap: 0
+    fp_replay: "1/39"
+    fp_replay_exception_matched: L1_log4j_xss
+    disqualifiers_hit: []
+    gate_0_result: "G0-3 未通过（重放低于 21/24）；G0-3 其余条款通过"
+    reconciliation: docs/l1_blind_route_rerun_reconciliation.md
+  code_frozen_from: R0prime2 # 修复后的新冻结起点；此前冻结已随无效轮作废
+  code_fixes_landed:
+    - "A2 传输层：超时可配/有限重试/熔断/失败不静默丢文件（src/agents/a2_integrated_analyst.py、src/cli/benchmark_cli.py）"
+    - "泛化比较工具读取预登记例外（tools/generalization_compare.py）"
+    - "A2 生成长度硬上限 num_predict=1024 + 生成超时不重试 + 截断可观测（src/agents/a2_integrated_analyst.py、src/cli/benchmark_cli.py）"
+    - "有效轮判据固化为 tools/check_effective_round.py（fail-closed，回归锁 12 例）"
+    - "有效轮判据补重放层环境一致性（tools/check_effective_round.py，回归锁 20 例；640 判 INVALID，637/638/639 仍 EFFECTIVE）"
+    - "四档读数解释器漂移（tools/run_validation_round.py 绑定项目 .venv + 子进程 rc fail-closed；tools/jsc_four_tier.py 依赖预检 + --allow-degraded；tests/test_four_tier_interpreter_guard.py 9 例）。只改 tools/ + tests/ + docs/，不重置冻结基线"
+  r0prime_task_id: 636            # 历史无效轮，status=failed，不作任何 compare 基线
+  r0prime2_task_id: 637           # 2026-11-08 02:35:43 completed，验收通过；6 项 run_env 已核对、无第 7 项
+  l1prime_task_id: 638            # 2026-11-08 03:40:13 completed，验收通过；盲化树，6 项 run_env 与 637 一致，仅换 D1 dump
+  l3_run1_task_id: 639            # 2026-11-08 04:54:14 completed；有效轮 EFFECTIVE，四档 24/24，红线 1/62
+  l3_run1_result:
+    task_id: 639
+    name: jsc-L3-run1-20261108c
+    status: completed
+    effective_round: EFFECTIVE
+    effective_round_warnings: ["transport.truncated=3（逐文件对账见 docs/l3_run1_reconciliation.md）"]
+    static_file: "31/31"
+    static_family: "30/31"
+    replay_family: "24/24"
+    strict_replay: "24/24"
+    strict_vs_replay_gap: 0
+    fp_replay: "1/62"
+    fp_replay_spec: "log4j.java/xss (spec 240334, late-evidence-recovered)"
+    fp_replay_is_known_limitation: true
+    replay_delta_vs_637: "静态/动态/重放/严格均 +0.0pp；新命中 0、退步 0"
+    disqualifiers_hit: []
+    gate_0_result: "G0-3 L3 通过（修正例外范围后，原始 1 → 有效 0）"
+    exception_matched: L1_log4j_xss
+    fp_replay_effective: 0
+    reconciliation: docs/l3_run1_reconciliation.md
+  l3_run2_task_id: 640            # 2026-11-08 15:37:06 completed；复判 INVALID（重放层靶场被抢占），不作稳定性验收
+  l3_run2prime:
+    name: jsc-L3-run2-20261108d
+    task_id: 641
+    d1_dump: logs/d1_req_dump_L3r2d.jsonl
+    status: completed
+    submitted_at: "2026-11-08 17:20:21"
+    finished_at: "2026-11-08 18:21:21"
+    gate: "17:19:19 / 17:19:49 / 17:20:19 连续 3 次通过：free 6221/6211/6232 MiB、util 39%、models []；GATE PASSED used 1956 MiB"
+    note: "16:52 决定重跑；16:55:45 提交后因显存被其他进程占用（free 5514~5712 MiB）在闸门等待约 24 分钟，未放宽 min_free；显存释放后脚本自动提交。6 项 run_env 落库核对通过"
+    effective_round: EFFECTIVE
+    effective_round_warnings: ["transport.truncated=3（逐文件对账见 docs/l3_run2prime_reconciliation.md）"]
+    static_file: "31/31"
+    static_family: "30/31"
+    replay_family: "23/24"
+    strict_replay: "23/24"
+    strict_vs_replay_gap: 0
+    fp_replay: "0/62"
+    exception_matched: false
+    replay_delta_vs_639: "静态 +0.0pp；动态/重放/严格各 -4.2pp；新命中 0、退步 1（ssti.java/ssti）"
+    replay_env_fingerprint: "404 35/1937 (1.8%)、3 端点、epoch、IAST 5116、认证 99.7%"
+    a2_contract: "transport 全 0（truncated=3），file_failures=0；与 639 逐字节一致"
+    disqualifiers_hit: []
+    gate_0_result: "G0-3 L3 通过（两轮 EFFECTIVE、分母/静态一致、逐点差可解释、无新红线）"
+    reconciliation: docs/l3_run2prime_reconciliation.md
+    artifact_note: "前落盘四档文件受系统 Python 3.13 缺 PyYAML 影响写成 23/31；已用 .venv 重生成权威 23/24，DB 扫描结果未改"
+  l3_run2_result:
+    task_id: 640
+    name: jsc-L3-run2-20261108c
+    status: completed
+    effective_round: INVALID
+    effective_round_reason: "replay_env.not_found_ratio=18.3% / not_found_endpoints=20 / error_body_shapes=[epoch, iso]；8080 被另一个 Spring Boot 实例接管"
+    static_file: "31/31"
+    static_family: "30/31"
+    replay_family: "23/24"
+    strict_replay: "23/24"
+    fp_replay: "0/61"
+    replay_delta_vs_639: "动态/重放/严格各 -4.2pp；退步点 ssrf.java/ssrf（两条 oracle:error_reflect 确认丢失）"
+    gate_0_result: "G0-3 L3 未通过：无效轮，须在靶场独占后重跑 run2"
+    reconciliation: docs/l3_run2_invalid_round_postmortem.md
+  # 两轮之间未改 src/ / 真值表 / 扫描侧 run_env；但 640 期间 8080 被并发会话抢占，
+  # 违反「靶场状态不变」，故不得与 639 组成稳定性对照。口径配置只影响发布对账，
+  # 已验证 src/ 与 scripts/ 零引用，不参与扫描进程。
+  l1prime_result:
+    task_id: 638
+    name: jsc-L1-blind-route-20261108c
+    status: completed
+    effective_round: EFFECTIVE
+    effective_round_warnings: ["transport.truncated=7（逐文件对账见 docs/l1prime_blind_route_acceptance.md）"]
+    static_file: "30/31"
+    static_family: "29/31"
+    replay_family: "21/24"
+    strict_replay: "21/24"
+    strict_vs_replay_gap: 0
+    fp_replay: "0/40"
+    fp_replay_legacy: "1/43"   # 旧口径仍 1 条，因零重放被新口径排除，属口径收紧不是修复
+    exception_matched: false
+    baseline_task_id: 637
+    replay_delta: "静态 -4.2pp / 动态·重放·严格各 -12.5pp；新命中 0、退步 3，与 631→632 完全一致"
+    disqualifiers_hit: []
+    reconciliation: docs/l1prime_blind_route_acceptance.md
+  rescan_baseline_task_id: 637    # R0'' 已通过有效轮 + 四档，作为 L1'/L3 唯一 compare 基线
+  r0prime2_result:
+    task_id: 637
+    name: jsc-R0prime2-20261108a
+    status: completed
+    effective_round: EFFECTIVE
+    effective_round_warnings: ["transport.truncated=3（逐文件对账见 docs/r0prime_invalid_round_postmortem.md）"]
+    static_file: "31/31"
+    static_family: "30/31"
+    dynamic_family: "24/24"
+    replay_family: "24/24"
+    strict_replay: "24/24"
+    strict_vs_replay_gap: 0
+    fp_replay: "0/65"
+    a2_contract: "transport 除 truncated=3 外全 0；file_failures=0；95/95 文件约 9.5min"
+    disqualifiers_hit: []
+    reconciliation: docs/r0prime2_effective_round_acceptance.md
+  gpu_gate: "nvidia-smi 利用率 + 空闲显存 + compute-apps + /api/ps 四项同看"
+  # 631 = 原始 R0（红线 0/61、重放 24/24），保留作历史对照；
+  # 634 = R0b，修复后在同一冻结代码上的重扫（红线 0/62、重放 24/24），
+  # 631~636 均为历史对照 / 无效轮；新链 compare 一律以 rescan_baseline_task_id (637)
+  # 为唯一基线，不得套用旧代码读数。
+  baseline_task_id: 634          # 历史对照，修复前产物；新链 compare 一律用 rescan_baseline_task_id
+  historical_baseline_task_id: 631
+  # 本机执行记录，含部署路径与 run_env 具体值，随工作区保留但不随仓库分发
+  state_file: docs/validation_run_state_20261106.md
+
+baseline:
+  task_id: 628
+  name: jsc-r17k-final-20261106
+  truth: data/java_sec_code_truth_v2.csv
+  measured:
+    replay_family: "24/24 = 100.0%"
+    strict_replay: "23/24 = 95.8%"
+    fp_replay: "0/60"
+    note: "修复前参考轮；对着同一套真值调过五轮，已失去盲测资格，冻结为回归集。
+            注意 628 带五项 run_env 而 629 为 null，628↔629 并非严格同配置；
+            L1 的基线改用 R0（修复后同配置重扫），避免把代码修复收益混进路由先验结论"
+
+common:
+  db: data/app.db
+  compare_tool: tools/generalization_compare.py
+  submit_tool: scripts/submit_scan_task.py
+  # 判定统一口径，禁止各层自己另算
+  metrics:
+    - static_family
+    - dynamic_family
+    - replay_family
+    - strict_replay      # confirmed_exploitable + 非 framework + 确有 replay_attempts
+    - fp_replay          # 红线，必须为 0
+  disqualifiers:
+    # 掉点若命中以下任一，判为环境/执行层干扰，不计入「先验依赖」
+    - "replay_attempts.status_code 全 302 且 Location 指向 /login"
+    - "action_json.auth_state in (expired, reauth_failed)"
+    - "靶场进程重启 / h2 profile 丢失"
+    - "探针未织入（iast_state=no-arrival 且无对应 sink 事件）"
+
+layers:
+  - id: R0_redline_zero
+    name: 修复后全量重扫、清零红线
+    goal: 在冻结代码上验证判据门 / 登录墙 / entry 投影 / post-pass 证据链修复，把 1/61 打到 0
+    gpu_required: true
+    status: completed      # 2026-11-07 01:01，红线 0/61、重放 24/24
+    config_source: "严格复刻 628 的 options_json（含五项 run_env），dump 路径改 logs/d1_req_dump_R0.jsonl"
+    steps_executed:
+      - "scripts/submit_scan_task.py --name jsc-R0-redline-zero-20261106b --workspace-id 4（五项 run_env 落库齐全）"
+      - "只读 SQL 核对落库 options_json 与 628 一致"
+      - "tools/jsc_four_tier.py --task-id 631"
+    acceptance:
+      fp_replay: "0/61（新口径）/ 0/67（旧口径）— 通过"
+      replay_family: "24/24 — 通过"
+      strict_vs_replay_gap: "0 — 通过"
+      static_family: "30/31，与 629 一致 — 通过"
+      auth_state: "已落库，无 expired / reauth_failed — 通过"
+      conclusion: "R0 通过，作为 L1/L3 唯一基线"
+
+  - id: L1_blind_route
+    name: 同靶场去 URL 布局先验
+    goal: 量出 24/24 里有多少来自 jsc 路由语义（/sqli /spel /qlexpress …）
+    status: stopped_redline_1_of_47   # 2026-11-07 02:16 本轮完成，红线 1/47，停链
+    measured:
+      replay_family: "21/24 = 87.5%"
+      strict_replay: "21/24 = 87.5%"
+      fp_replay: "1/47"
+      replay_delta: "21/24 vs 631 的 24/24，-12.5pp；退步 3 点"
+      note: "红线是 log4j.java/xss 真值表未覆盖的真实反射 XSS，非族错配幻觉；详见 docs/l1_route_blinding_reconciliation.md"
+    gpu_required: false          # 生成变体纯本地；只有最终那轮全量扫描才占 GPU
+    artifacts:
+      generator: tools/jsc_make_blind_variant.py
+      variant_tree: data/blind_variants/jsc-blind
+      mapping: data/blind_variants/jsc-blind/blind_map.json
+    generator_result:
+      status: regenerated_20261107        # 修掉认证路径被盲化的设计缺陷后重建
+      coverage: "146/146 = 100.0%"
+      segments: 93
+      protected_segments: [/login, /logout]   # 不参与盲化，见设计文档 2026-11-07 勘误
+      whitelist_items_rewritten: 12
+      changed_files: 39
+      source_tree_untouched: true
+      scan_file_parity: "原仓库与盲化树各 95 files / 78 java，仅根前缀不同；四档按 basename 匹配"
+      compiled: true           # mvn -o -DskipTests package (JDK11)，98MB fat jar
+      compiled_jar: data/blind_variants/jsc-blind/target/java-sec-code-1.0.0.jar
+      class_only_scope: "已实现未实测：只改类级注解首段、方法级路径原样；回归锁 tests/test_jsc_blind_variant_class_only.py；别与 632 数字混用"
+      deploy_tool: tools/jsc_blind_switch.py   # status / blind --apply / restore --apply
+      deployed: true             # 2026-11-07 01:23 部署，02:18 restore --apply 已还原
+      restored: true
+    steps_executed:
+      - "tools/jsc_blind_switch.py status → blind --apply（jar + target_path + IAST session 归位）"
+      - "scripts/submit_scan_task.py --name jsc-L1-blind-route-20261107，本轮，五项 run_env 复刻 631"
+      - "tools/jsc_four_tier.py --task-id 632；tools/generalization_compare.py --baseline 631 --variant 632 --mode blind"
+      - "tools/jsc_blind_switch.py restore --apply（jar md5 / target_path / session code_path / JVM token 全部复核）"
+    acceptance:
+      fp_replay: "1/47 = 2.1%（旧口径 2/50）— 未通过，停链"
+      replay_family_delta: "21/24 vs 631 的 24/24，-12.5pp；退步 3 点，逐点归因见 docs/l1_route_blinding_reconciliation.md"
+      strict_vs_replay_gap: "0（21/24 vs 21/24）— 通过"
+      note: "红线为真值表未覆盖的真实反射 XSS，非族错配幻觉；口径/闸门变更待评审"
+
+  - id: L2_cross_target
+    name: 换未参与调优的靶场
+    goal: 证明能力不只在 jsc 上成立
+    status: passed   # 2026-11-09 01:57 完成；静态 4/4、重放 2/4、红线 0/2
+    gpu_required: true
+    targets:
+      - id: ruoyi_451
+        workspace_id: 8
+        target_url: http://127.0.0.1:8081
+        truth: data/ruoyi_451_truth.csv
+        truth_rows_in_scope: 6
+        families: [sql_injection, command_execution]
+        auth: "workspace settings_json.auth（Shiro，非 jsc 的 formLogin）"
+        truth_compatible: true      # 列结构与 jsc_four_tier.load_truth 一致，已本地验证
+        status: ready_not_executed
+      - id: juliet_cwe89_pilot
+        shard: data/owasp_shards/shards/juliet-cwe89-pilot.json
+        truth: data/juliet_truth.csv
+        truth_adapter_required: true
+        blocker: "juliet_truth.csv 用 (test name, category, real vulnerability, cwe) 记账，
+                   缺 case→源码文件路径映射，本期不落地，不伪造适配"
+        status: blocked
+    steps_not_executed:
+      - "启动 RuoYi 靶场（launch_ruoyi_full.py），确认 8081 健康检查"
+      - "scripts/submit_scan_task.py --name ruoyi-L2-run1 --workspace 8"
+      - "tools/generalization_compare.py --baseline 0 --variant <ID> --mode cross-target --truth data/ruoyi_451_truth.csv"
+    acceptance:
+      fp_replay: "待测，必须 0"
+      note: "首次跨靶场只建立基线，不与 jsc 的 24/24 直接比大小；两套真值分母不同"
+
+  - id: L3_stability
+    name: 同配置连跑两轮看方差
+    goal: 量化 late-evidence 抖动，判断单轮 24/24 是否稳定
+    status: passed_two_effective_runs_639_641   # 2026-11-08 18:40；实测 24/24 ↔ 23/24，波动已披露
+    runs:
+      - {name: jsc-L3-run1-20261107, task_id: 633, status: failed_winerror5, started_at: "2026-11-07 15:35", finished_at: "2026-11-07 16:33"}
+    measured_run1:
+      static_family: "29/31（findings 表 0 条；A1/A2 缓存复用未持久化）"
+      replay_family: "24/24 = 100.0%"
+      fp_replay: "1/63 = 1.6%"
+      fp_spec: "tomcatfiltermemshell.java/command_execution late-evidence-recovered，629 老误报回归"
+    blockers:
+      - "SAST_AI_STAGE_CACHE 默认 1；冻结的 src/ 让 cache key 不变 ⇒ L3 两轮都会跳过 CodeQL/LLM，方差失真"
+      - "src/core/progress_logger.py 的 os.replace 无重试，WinError 5 把数据完整的一轮判 failed（已修）"
+      - "红线 1/63 != 0，按 stop_on_redline 停链"
+    rerun_design:
+      run_env: "在 R0 五项之外加第六项 SAST_AI_STAGE_CACHE=0；R0 当时缓存尚未落盘，设 0 才是真正复刻 R0 行为"
+      freeze: "冻结起点重设为 progress_logger 修复后；两轮之间仍保持 src/ 不变"
+      status: "pending_review（涉及全量重测，待评审后发起）"
+    gpu_required: true
+    repeats: 2
+    fixed:
+      truth: data/java_sec_code_truth_v2.csv
+      run_env: "与 R0 / 本轮完全一致（五项全中），只改任务名与 D1 dump 路径"
+      target: jsc workspace 4
+      code_frozen: true       # 两轮之间禁止改 src/
+    steps_not_executed:
+      - "scripts/submit_scan_task.py --name jsc-L3-run1"
+      - "scripts/submit_scan_task.py --name jsc-L3-run2"
+      - "tools/generalization_compare.py --baseline <ID1> --variant <ID2> --mode stability"
+    acceptance:
+      denominator_identical: "通过：639/641 均为 24"
+      static_family_identical: "通过：639/641 均为 30/31（A1 静态侧不受抖动影响）"
+      replay_delta_points: "通过：唯一退步 ssti.java/ssti（迟到 value_hit gate B 证据未回补），见 docs/l3_run2prime_reconciliation.md 第三节"
+      fp_replay: "通过：639 为 1/62（预登记例外放行为有效 0）、641 为 0/62，无新红线"
+      conclusion: "单轮 24/24 不稳定，实测 23~24/24（±1 点 / ±4.2pp）；波动须随发布材料披露"
+
+# ---------------------------------------------------------------------------
+# L1 停链后的口径决议（2026-11-07 15:27）。候选真值行仍是
+# PROPOSED / NOT ADOPTED，主真值表未修改；四轮只读复算见
+# docs/truth_addendum_impact_20261107.md。
+# ---------------------------------------------------------------------------
+pending_oracle_decision:
+  status: resolved_option_c_20261107   # 键名沿用历史；已决议，不再是 pending
+  resolution: "披露为已知限制后解除 L1 停链，继续 L3/L2；主真值表未改"
+  redline_spec: "log4j.java/xss @ L1"
+  shadow_truth_addendum: config/truth_addendum_l1_log4j_xss.csv
+  adoption_status: proposed_not_adopted
+  measured_if_adopted:
+    l1_fp_replay: "1/47 -> 0/47（闸门立即通过）"
+    r0_replay_family: "24/24 -> 24/25，-4.0pp"
+    early_a_replay_family: "23/24 -> 23/25，-3.8pp"
+    early_b_replay_family: "23/24 -> 23/25，-3.8pp"
+    dynamic_denominator: "24 -> 25，作用于所有历史轮次"
+  recommendation: "option C：如实披露为已知限制并放宽闸门先拿 L3/L2 数据，真值口径另作独立议题"

@@ -1,0 +1,106 @@
+# 各族「真 sink」token（值级闸判定 payload at_sink/absent 用）
+# 数据化自 src/core/sink_value_gate.FAMILY_SINK_TOKENS（M2 后端侧，2026-10-20）。
+# 纯加法：现有 Python 硬编码保留为 fallback；本文件是后续 printf / M3 族归因 / 4.3 探针
+# 匹配器的可扩展底座（扩展 token 改 YAML，不动代码）。
+# token 为子串匹配，取值来自 iast_events 实测 sink_file 分布。
+
+families:
+  command_execution:
+    tokens:
+      - Runtime.exec
+      - ProcessBuilder
+  sql_injection:
+    tokens:
+      - Statement.execute
+      - PreparedStatement
+      - executeQuery
+      - executeUpdate
+      - execute(
+      - Executor.query
+      - Executor.update
+      - prepareCall
+      - prepareStatement
+      - addBatch
+      - CallableStatement
+      - JDBCStatement
+      - DelegatingStatement
+  path_traversal:
+    tokens:
+      - FileInputStream
+      - FileOutputStream
+      - Files.
+      - File.
+      - RandomAccessFile
+      - FileChannel
+      - Paths.get
+      - Path.of
+      - FileReader
+      - FileWriter
+  xxe:
+    tokens:
+      - DocumentBuilder.parse
+      - DocumentBuilderImpl.parse
+      - SAXParser.parse
+      - SAXParserImpl.parse
+      - XMLReader.parse
+      - Unmarshaller.unmarshal
+      - SAXSource
+      - Transformer.transform
+  ldap_injection:
+    tokens:
+      - DirContext.search
+      - InitialDirContext
+      - NamingEnumeration
+  xpath_injection:
+    tokens:
+      - XPath.evaluate
+      - XPathExpression.evaluate
+      - XPathImpl.evaluate
+      - XPathExpressionImpl.evaluate
+      - XPathImpl.compile
+      - XPath.compile
+  xss:
+    tokens:
+      - PrintWriter.write
+      - CoyoteWriter.write
+      - getWriter
+      - CoyoteWriter.print
+      - StringHttpMessageConverter.writeInternal
+  weak_hash:
+    tokens:
+      - MessageDigest.getInstance
+  weak_crypto:
+    tokens:
+      - Cipher.getInstance
+  trust_boundary_violation:
+    tokens:
+      - StandardSession.setAttribute
+      - SessionFacade.setAttribute
+      - putValue
+
+# 平台短族名 → 规范族名
+aliases:
+  cmdi: command_execution
+  command: command_execution
+  sqli: sql_injection
+  sql: sql_injection
+  xss: xss
+  path: path_traversal
+  pathtraver: path_traversal
+  ldap: ldap_injection
+  ldapi: ldap_injection
+  xpath: xpath_injection
+  xpathi: xpath_injection
+  trustbound: trust_boundary_violation
+  weakrand: weak_random
+
+# 算法/属性族（其「值」是算法名/flag，不是污点 payload，值级闸不适用）
+non_dataflow:
+  - weak_hash
+  - hash
+  - weak_crypto
+  - crypto
+  - weak_random
+  - weakrand
+  - secure_cookie
+  - securecookie

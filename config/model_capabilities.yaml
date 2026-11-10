@@ -1,0 +1,57 @@
+# 模型能力画像的本地调参表（config/model_capabilities.yaml）
+#
+# 覆盖语义：**按 name 逐项覆盖内置表**，不是整体替换。
+# 也就是说本文件里只写你要改的档位；没写的档位（claude-large / glm-large /
+# cloud-openai-large / cloud-medium / reasoning / SAFE_FALLBACK / CLOUD_FALLBACK）
+# 一律沿用内置值。新增档位默认追加到匹配顺序末尾，写 `prepend: true` 则插到表头优先匹配。
+#
+# 只写在这里就生效，**不需要改代码**；改完下一次进程启动或 LLM 调用即生效
+# （画像表有进程级缓存，改完最好重启后端；A2 子进程是新起的，天然读到新值）。
+#
+# 字段速查：
+#   context_window            上下文窗口（token）。本地模型会被 /api/show 的 num_ctx 覆盖
+#   max_output_tokens         单次输出上限，调用方写死更大值也会被钳到这里
+#   input_reserve_tokens      给模板展开/推理留的余量
+#   supports_stream           是否走流式（影响超时语义：chunk idle 还是整体读超时）
+#   supports_tools            仅信息字段：声明该模型是否支持工具调用（当前无消费点）
+#   supports_json_mode        仅信息字段：声明是否支持 JSON 模式
+#   use_thinking              仅 Ollama 原生客户端消费：是否默认开启思维链
+#   max_attempts              同一 provider 内的重试上限（失败后才会切换降级链）
+#   recommended_concurrency   并发闸门宽度（只调小不调大）
+#   match                     模型名正则列表（大小写不敏感，先匹配者胜）
+
+profiles:
+  # ---- 本地小模型（Ollama）----
+  # 面向全量扫描的取值。理由见下：
+  #   use_thinking=false : 2026-09-19 实测 4 个真实样本，think=false 命中 4/4、总耗时 31.7s；
+  #                        think=true 命中 0~3/4、总耗时 150s+（思考与正文争抢输出预算，
+  #                        预算耗尽时 content 全空）。关思考更准、更稳、快约 5 倍。
+  #   max_attempts=2     : 本地失败后没有云端兜底（api.fallback_provider 为空），
+  #                        给一次重试把「Ollama 抖动/模型重载」这类瞬时故障吃掉；
+  #                        想完全不做重试可改回 1。
+  #   concurrency=2      : Ollama 侧实测并发 2 聚合约 52.93 tok/s、并发 1 只有 28.77；
+  #                        更高并发只是排队（Ollama 内部排队不可观测），因此锁在 2。
+  #   max_output_tokens  : 1024 是「够用 + 有界」的折中。实测 4 个样本的输出只有
+  #                        164~247 token；放宽到 1024 覆盖长文件的长结论，同时把单条最坏
+  #                        耗时限制在约 40s。若想进一步压低尾部延迟可收到 512，代价是
+  #                        长结论更可能被截断（截断会被 P0-2 检出并抢救，不会静默归零）。
+  - name: local-small
+    tier: local
+    provider: ollama
+    context_window: 8192          # 占位值；真实值由 Ollama /api/show 的 num_ctx 覆盖
+    max_output_tokens: 1024
+    input_reserve_tokens: 256
+    supports_stream: true
+    supports_tools: true
+    supports_json_mode: false
+    use_thinking: false
+    max_attempts: 2
+    recommended_concurrency: 2
+    notes: "面向前端全量扫描调参：关思考、单次重试、并发锁 2"
+
+  # ---- 可选的云端档位调参示例（默认注释掉，与内置值一致）----
+  # 云端并发可以更高，但要注意与 D2 阶段抢资源；一旦某个 provider 出现 429，
+  # 闸门会把它降级成「排队」，所以这里给的值是上限而非目标。
+  # - name: cloud-openai-large
+  #   recommended_concurrency: 8
+  #   max_attempts: 3
