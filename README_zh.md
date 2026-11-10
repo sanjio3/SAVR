@@ -4,8 +4,8 @@
 
 **S**can · **A**nalyze · **V**erify · **R**eplay（扫描 · 分析 · 验证 · 重放）
 
-自动化白盒漏洞扫描与验证流水线：静态分析产生候选告警，大模型给出研判与可执行的触发规约；
-确定性重放对运行中的目标发起验证，告警是否成立仅由可观测的结构化影响证据判定。
+自动化白盒漏洞扫描与验证流水线：静态分析产生候选告警，大模型给出研判与机器可用的触发规格；
+确定性重放对运行中的目标发起验证，告警是否成立仅由结构化危害证据判定。
 模型不接触目标，验证过程确定、可复现、可审计。
 
 [![CI](https://github.com/sanjio3/SAVR/actions/workflows/ci.yml/badge.svg)](https://github.com/sanjio3/SAVR/actions/workflows/ci.yml)

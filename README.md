@@ -4,8 +4,11 @@
 
 **S**can · **A**nalyze · **V**erify · **R**eplay
 
-An LLM-assisted static analysis pipeline whose findings are confirmed by
-deterministic replay against a live target — not by the model's opinion.
+An automated white-box vulnerability scanning and verification pipeline: static analysis
+produces candidate findings, and a local LLM returns a verdict plus a machine-usable trigger spec;
+deterministic replay fires that spec at a running target, and a finding counts as confirmed
+only on structured impact evidence. The LLM never touches the target; everything downstream
+is deterministic, replayable and auditable.
 
 [![CI](https://github.com/sanjio3/SAVR/actions/workflows/ci.yml/badge.svg)](https://github.com/sanjio3/SAVR/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
