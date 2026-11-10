@@ -14,21 +14,11 @@
 [![Java](https://img.shields.io/badge/probe-JDK%2011%2B-orange.svg)](probe-java/)
 
 [Releases](https://github.com/sanjio3/SAVR/releases) · [Issues](https://github.com/sanjio3/SAVR/issues) ·
-[安全](SECURITY.md) · [贡献](CONTRIBUTING_zh.md)
+[安全公告](https://github.com/sanjio3/SAVR/security/advisories)
 
 [English](README.md) | 中文
 
 </div>
-
----
-
-## 这个项目解决什么问题
-
-静态分析给你一张清单。清单里有真漏洞也有假的，而报告本身不告诉你哪条是哪条。动态扫描器能覆盖你已经知道怎么访问的 URL，却覆盖不到你根本没想到的 sink。两边都便宜，都可信度低。
-
-SAVR 把两端接起来。静态分析提出候选，本地 LLM 读每个 sink 文件并写出一份具体的触发规格：打哪条路由、传哪个参数、用什么载荷、绕什么拦截。然后由确定性重放器把这份规格打到运行中的靶场上，寻找结构化的危害证据：进程内 IAST 探针在 sink 上的事件、族级响应判据，或带外回调。
-
-**LLM 永远不碰靶场。** 它只做判定和写规格，这就是它全部的权限。下游一切都是确定性的、可重放、可审计的——这正是「确认」两个字有意义的原因。
 
 ---
 

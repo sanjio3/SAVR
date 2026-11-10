@@ -16,7 +16,7 @@ is deterministic, replayable and auditable.
 [![Java](https://img.shields.io/badge/probe-JDK%2011%2B-orange.svg)](probe-java/)
 
 [Releases](https://github.com/sanjio3/SAVR/releases) · [Issues](https://github.com/sanjio3/SAVR/issues) ·
-[Security](SECURITY.md) · [Contributing](CONTRIBUTING.md)
+[Security advisories](https://github.com/sanjio3/SAVR/security/advisories)
 
 English | [中文](README_zh.md)
 
