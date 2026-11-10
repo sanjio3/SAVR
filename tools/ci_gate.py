@@ -39,15 +39,49 @@ def run(label, argv, cwd=ROOT):
     return rc
 
 
+SYNTAX_DIRS = ("src", "tools", "scripts", "tests")
+
+
+def syntax_check():
+    """Compile every Python source in memory, without writing any .pyc.
+
+    `python -m compileall` writes a .pyc next to each source file. On Windows an
+    external file watcher can invalidate those paths mid-run, so byte-compile
+    fails with OSError(EBADF) on perfectly valid files. check_oss_hygiene.py also
+    compiles sources, but silently skips files it cannot read or decode; this pass
+    treats a missing or undecodable source as a failure instead.
+    """
+    print("[ci-gate] syntax check: %s" % ", ".join(SYNTAX_DIRS), flush=True)
+    checked, errors = 0, []
+    for top in SYNTAX_DIRS:
+        root = ROOT / top
+        if not root.is_dir():
+            errors.append("missing directory: %s" % top)
+            continue
+        for path in sorted(root.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            rel = path.relative_to(ROOT).as_posix()
+            try:
+                compile(path.read_bytes(), rel, "exec")
+            except (SyntaxError, ValueError, OSError) as exc:
+                errors.append("%s: %s" % (rel, exc))
+            else:
+                checked += 1
+    for msg in errors:
+        print("[ci-gate]   %s" % msg, flush=True)
+    if errors:
+        print("[ci-gate] FAIL syntax check (%d bad)" % len(errors), flush=True)
+        return 1
+    print("[ci-gate] syntax check OK: %d files" % checked, flush=True)
+    return 0
+
+
 def step_static():
-    py = sys.executable
-    rc = run("oss hygiene", [py, "tools/check_oss_hygiene.py"])
+    rc = run("oss hygiene", [sys.executable, "tools/check_oss_hygiene.py"])
     if rc:
         return rc
-    return run(
-        "byte-compile",
-        [py, "-m", "compileall", "-q", "src", "tools", "scripts", "tests"],
-    )
+    return syntax_check()
 
 
 def junit_stats():
