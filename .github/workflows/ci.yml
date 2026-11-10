@@ -35,7 +35,7 @@ jobs:
           cache-dependency-glob: uv.lock
       - name: Install dependencies
         run: uv sync --frozen --group dev
-      - name: OSS hygiene and byte-compile
+      - name: OSS hygiene, lint and syntax check
         run: uv run --frozen python tools/ci_gate.py --step static
 
   test:
@@ -85,3 +85,41 @@ jobs:
         run: uv sync --frozen --group dev
       - name: Build frontend
         run: uv run --frozen python tools/ci_gate.py --step build
+
+  # Supplementary signal, deliberately NOT a required status check. The three
+  # job names above are pinned in branch protection, so this matrix can grow or
+  # shrink without touching the merge gate.
+  compat:
+    name: compat (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: windows-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install dependencies
+        run: uv sync --frozen --group dev
+      - name: Unit and regression tests
+        run: uv run --frozen python tools/ci_gate.py --step test
+      - name: Upload JUnit results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-compat-${{ matrix.os }}-${{ matrix.python-version }}-${{ github.run_id }}
+          path: output/ci/junit.xml
+          if-no-files-found: warn

@@ -33,6 +33,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.3.3",
+    "ruff>=0.14.5",
 ]
 
 [tool.pytest.ini_options]
@@ -44,6 +45,16 @@ markers = [
     "benchmark: expensive benchmark re-run, never part of the PR gate",
     "slow: long-running regression test",
 ]
+
+# Lint is opt-in per file: ci_gate.py enforces ruff only on the small set of
+# first-party tooling files that are already formatted. Widening the scope is a
+# separate change so a feature PR never carries a whole-tree reformat.
+[tool.ruff]
+line-length = 100
+extend-exclude = ["probe-java", "frontend", "tools/_archive", "scripts/_archive"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
 
 [tool.uv]
 package = false

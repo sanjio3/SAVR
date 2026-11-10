@@ -5,6 +5,30 @@ Keep a Changelog; this project has not yet cut a release tag.
 
 ## [Unreleased] - 2026-11-08
 
+### Added
+
+- `tools/ci_gate.py`: ruff lint and format checks on first-party tooling, a `--fast`
+  switch to deselect external/benchmark tests, and a skip-reason breakdown in the
+  CI step summary.
+- `tools/clean_clone_check.py`: runs the full gate in a pristine detached HEAD
+  worktree, so distribution-surface gaps fail locally instead of on a contributor's
+  first clone.
+- `tools/ci_benchmark.py` and `.github/workflows/benchmark.yml`: maintainer-only
+  L1-L3 trigger on a self-hosted runner, with reports uploaded as CI artifacts.
+- `.github/workflows/release.yml`, `.github/CODEOWNERS`, `.github/dependabot.yml`
+  and a `compat` matrix in `ci.yml` (Python 3.13 and Windows, informational only).
+
+### Changed
+
+- `tests/test_d2_spec_association.py`: the empty-status spec regression guard now
+  uses an in-memory SQLite fixture instead of historical rows in `data/app.db`, so
+  it runs on a fresh clone with no database.
+- Eight test modules that require local target sources are marked `external`. The
+  default gate still runs the full suite; `--fast` is opt-in.
+- `.gitignore` now covers config and secret filename variants plus test output.
+- Both CONTRIBUTING files document the benchmark workflow, the clean-clone check,
+  branch naming versus branch protection, and the no-test-records rule.
+
 ### Fixed
 
 - `confirm_gate_recheck` late-evidence recovery now only promotes specs whose

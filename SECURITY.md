@@ -31,6 +31,12 @@ We will not pursue legal action for research conducted in good faith on your own
 installations, provided you avoid privacy violations, data destruction and service
 disruption, and you give us reasonable time to remediate before disclosure.
 
+## Fixes and releases
+
+Confirmed issues are fixed privately and shipped in the next `v*` tag. Release notes and
+the SBOM are published by `.github/workflows/release.yml`; the report stays private until
+that release is public. Do not attach reproduction material to a public pull request.
+
 ## Handling secrets
 
 Never commit credentials. The repository ignores `.env`, `config.yaml` and runtime databases.

@@ -23,10 +23,13 @@ import os
 import pytest
 
 LOCAL_ROOT = os.environ.get("SAST_AI_SDL_ROOT", "")
-pytestmark = pytest.mark.skipif(
-    not LOCAL_ROOT,
-    reason="external target sources required: set SAST_AI_SDL_ROOT to your local targets root",
-)
+pytestmark = [
+    pytest.mark.external,
+    pytest.mark.skipif(
+        not LOCAL_ROOT,
+        reason="external target sources required: set SAST_AI_SDL_ROOT to your local targets root",
+    ),
+]
 
 import json
 import os

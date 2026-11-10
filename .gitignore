@@ -77,8 +77,16 @@ data/_old_dirs_*/
 .env
 .env.*
 !.env.example
+# 本机密钥与配置：精确文件名 + 常见变体，防止改个名字就被 git add -A 带上公开仓库。
+# 公开的脱敏样例是 config/config.example.yaml 与 .env.example，不匹配下面任何一条。
 config.yaml
 config/config.yaml
+configs/config.yaml
+**/config.local.yaml
+**/config.*.local.yaml
+**/*.local.yaml
+**/secrets.yaml
+**/secrets.yml
 # 本机专属运行 profile（含绝对路径与靶场密钥），只提交脱敏模板 run_profiles.yaml
 config/run_profiles.local.yaml
 升级文档.md
@@ -218,3 +226,11 @@ tools/_wb_shiro_probe.java
 # 一次性交付总览（不随仓库分发）
 overview.md
 !docs/overview.md
+
+# 测试记录不入库：CI 的 JUnit XML 与运行页面摘要是唯一出口。
+# 基准重跑（L1-L3）的报告同样只进 CI artifact，不往仓库里写新文件。
+output/ci/
+*.junit.xml
+junit.xml
+output/benchmark/
+docs/validation_run_*.md

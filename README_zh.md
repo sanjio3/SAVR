@@ -265,7 +265,7 @@ SAVR/
 ├── data/                    # 真值表与分片清单
 ├── docs/                    # 设计说明、对账记录、运行计划
 ├── tests/                   # 单元与回归测试
-└── .github/workflows/       # CI：静态 / 测试 / 前端三项必需检查
+└── .github/workflows/       # CI 三项必需检查、benchmark 手动重跑、release 自动化
 ```
 
 ---

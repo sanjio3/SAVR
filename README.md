@@ -379,7 +379,7 @@ SAVR/
 ├── data/                    # truth tables and shard manifests
 ├── docs/                    # design notes, reconciliation records, run plans
 ├── tests/                   # unit and regression suite
-└── .github/workflows/       # CI: static / test / frontend required checks
+└── .github/workflows/       # ci (3 required checks), benchmark, release
 ```
 
 ---

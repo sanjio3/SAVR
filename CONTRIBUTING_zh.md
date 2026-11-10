@@ -17,6 +17,17 @@ uv run --frozen python tools/ci_gate.py
 
 `uv.lock` 是依赖版本的唯一权威。不要在功能 PR 里放宽它；依赖升级由 Dependabot 以独立 PR 提出。
 
+静态门禁还会对 `tools/ci_gate.py::LINT_FILES` 列出的自研工具文件跑 `ruff check` 与 `ruff format --check`。要扩大这份白名单请单独开 PR，不要把它当功能改动的副作用。
+
+本地开发还有两个可选入口：
+
+```bash
+uv run --frozen python tools/ci_gate.py --fast       # 不跑 external/benchmark 标记的用例
+uv run --frozen python tools/clean_clone_check.py    # 在干净 HEAD 检出里跑门禁
+```
+
+干净 clone 自检回答的是「别人刚 clone 下来能不能跑过」：它用 HEAD 的游离 worktree，不从你的工作树复制任何文件。
+
 ## 拉取请求规则
 
 1. 测试是硬要求。任何对 `src/` 的改动都必须保持全量门禁全绿（`uv run --frozen python tools/ci_gate.py`）。不要只跑你改到的那几个文件——跨阶段回归在这个代码库里很常见，而且确实发生过。
@@ -27,11 +38,11 @@ uv run --frozen python tools/ci_gate.py
 
 ## 验证分层
 
-PR 门禁就是 L0，也是拉取请求唯一必需的一层：CI 会跑 `uv run --frozen python tools/ci_gate.py`，三项检查全绿才允许合并。
+PR 门禁就是 L0，也是拉取请求唯一必需的一层：CI 会跑 `uv run --frozen python tools/ci_gate.py`，三项检查全绿才允许合并。`compat` 矩阵 job 只是补充信号，覆盖 Python 3.13 与 Windows，不是必需检查，因此分支保护仍然钉在 `static`、`test`、`frontend` 三项上。
 
-下面的 L1 到 L3 是仅维护者执行的基准重跑，需要本地靶场、CodeQL CLI、LLM 端点和扫描数据库，每轮约 1.5 小时、数据库增长约 600MB。它们由维护者手动触发，不阻塞任何 PR，报告只进 CI artifact，不再往仓库里新增文件。
+下面的 L1 到 L3 是仅维护者执行的基准重跑，从 `.github/workflows/benchmark.yml` 手动触发（`workflow_dispatch`，填层级、profile 和名称）。它需要带本地靶场、CodeQL CLI、LLM 端点与扫描数据库的自托管 runner（标签 `self-hosted` 与 `savr-benchmark`）；GitHub 托管 runner 过不了预检，在未注册该 runner 之前任务只会排队。它不阻塞任何 PR。`tools/ci_benchmark.py` 把报告写到 `output/benchmark/`，只作为 CI artifact 上传，不入库。
 
-- L0：每次拉取请求。约 4 分钟，跑全量门禁（卫生检查、字节编译、pytest、前端构建）。
+- L0：每次拉取请求。约 4 分钟，跑全量门禁（卫生检查、lint、语法检查、pytest、前端构建）。
 - L1：小的语义改动。约 15 分钟，20 例冒烟分片。
 - L2：两处及以上语义改动，或任何触及登记/确认链路的改动。约 1.5 小时，130 例分片。
 - L3：发布。数小时，2740 例全量。
@@ -40,4 +51,8 @@ PR 门禁就是 L0，也是拉取请求唯一必需的一层：CI 会跑 `uv run
 
 ## 提交信息
 
-用约定式提交（`feat:`、`fix:`、`chore:`、`docs:`、`test:`）。一次提交只做一件逻辑上的事；如果改动来自某一轮基准运行，把本轮的任务 id 写进提交信息。
+用约定式提交（`feat:`、`fix:`、`chore:`、`docs:`、`test:`）。一次提交只做一件逻辑上的事；如果改动来自某一轮基准运行，把本轮的任务 id 写进提交信息。`feat/...`、`fix/...` 这类分支名只是命名约定，不改变合并规则；分支保护作用于 `main`，在仓库设置里管理。
+
+## 测试记录
+
+不要把测试输出提交进仓库。JUnit XML、基准报告、验证轮记录都只作为 CI artifact；`.gitignore` 已排除 `output/ci/`、`output/benchmark/`、`*.junit.xml` 和 `docs/validation_run_*.md`。PR 里带结果文件会被要求移除。

@@ -8,6 +8,7 @@ The gate owns the environment variables and pytest arguments so the CI workflow
 and a developer checkout cannot drift apart. No third-party dependency: this
 module uses only the standard library.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -40,6 +41,14 @@ def run(label, argv, cwd=ROOT):
 
 
 SYNTAX_DIRS = ("src", "tools", "scripts", "tests")
+
+# Lint is enforced on first-party tooling only. Adding a path here is an explicit
+# decision to keep it formatted; the rest of the tree is out of scope on purpose.
+LINT_FILES = (
+    "tools/ci_gate.py",
+    "tools/clean_clone_check.py",
+    "tools/ci_benchmark.py",
+)
 
 
 def syntax_check():
@@ -81,6 +90,12 @@ def step_static():
     rc = run("oss hygiene", [sys.executable, "tools/check_oss_hygiene.py"])
     if rc:
         return rc
+    rc = run("ruff check", [sys.executable, "-m", "ruff", "check", *LINT_FILES])
+    if rc:
+        return rc
+    rc = run("ruff format", [sys.executable, "-m", "ruff", "format", "--check", *LINT_FILES])
+    if rc:
+        return rc
     return syntax_check()
 
 
@@ -104,7 +119,21 @@ def junit_stats():
     return totals
 
 
-def write_summary(stats):
+def skip_reasons():
+    """Aggregate the skip conditions recorded in JUnit XML, most common first."""
+    try:
+        root = ET.parse(JUNIT).getroot()
+    except (OSError, ET.ParseError):
+        return []
+    counts = {}
+    for node in root.iter("skipped"):
+        raw = (node.get("message") or "no reason given").strip()
+        msg = raw.splitlines()[0][:160] if raw else "no reason given"
+        counts[msg] = counts.get(msg, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:6]
+
+
+def write_summary(stats, reasons, fast):
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not path or not stats:
         return
@@ -114,16 +143,30 @@ def write_summary(stats):
         fh.write("- failures: %d\n" % stats["failures"])
         fh.write("- errors: %d\n" % stats["errors"])
         fh.write("- skipped: %d\n\n" % stats["skipped"])
-        fh.write("JUnit XML: `output/ci/junit.xml`\n")
+        fh.write("JUnit XML: `output/ci/junit.xml`\n\n")
+        fh.write("## Why tests were skipped\n\n")
+        if reasons:
+            for msg, count in reasons:
+                fh.write("- %d x %s\n" % (count, msg.replace("\n", " ")))
+        else:
+            fh.write("- none\n")
+        fh.write("\n")
+        if fast:
+            fh.write("`external` and `benchmark` tests were deselected with `-m`.\n\n")
+        else:
+            fh.write(
+                "Full suite selected. External and benchmark markers are informational; "
+                "pass `--fast` to deselect them during local iteration.\n\n"
+            )
 
 
-def step_test():
+def step_test(fast: bool = False):
     JUNIT.parent.mkdir(parents=True, exist_ok=True)
-    rc = run(
-        "pytest",
-        [sys.executable, "-m", "pytest", "tests/", "-q", "--junitxml=" + str(JUNIT)],
-    )
-    write_summary(junit_stats())
+    argv = [sys.executable, "-m", "pytest", "tests/", "-q", "--junitxml=" + str(JUNIT)]
+    if fast:
+        argv += ["-m", "not external and not benchmark"]
+    rc = run("pytest", argv)
+    write_summary(junit_stats(), skip_reasons(), fast)
     return rc
 
 
@@ -144,10 +187,15 @@ STEPS = {
 def main():
     ap = argparse.ArgumentParser(description="Run the SAVR CI gate")
     ap.add_argument("--step", choices=("all", "static", "test", "build"), default="all")
+    ap.add_argument(
+        "--fast",
+        action="store_true",
+        help="deselect external and benchmark tests (local iteration only; CI runs the full suite)",
+    )
     args = ap.parse_args()
     todo = list(STEPS) if args.step == "all" else [args.step]
     for name in todo:
-        rc = STEPS[name]()
+        rc = STEPS[name](fast=args.fast) if name == "test" else STEPS[name]()
         if rc:
             return rc
     print("[ci-gate] OK: %s" % ", ".join(todo), flush=True)
