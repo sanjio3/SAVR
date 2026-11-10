@@ -249,16 +249,36 @@ def ensure_ldap(logf) -> bool:
     ApacheDS 的 jar 已在 `WEB-INF/lib`，`LDAPServer` 构造器会 `init()` 起服务并 seed 3 个
     测试用户（foo / Ms Bar / Mr Unknown）；我们只需一个 main 把它拉起来常驻。
 
-    启动器 `tools/_wb_ldap/StartLdap.class`（源码同目录 .java，JDK11 编译）。
+    启动器 `tools/ldap/StartLdap.java`（首次使用时由本函数用 JDK11 编译）。
     轮询到 10389 真在监听才返回，避免 servlet 在 LDAP 未就绪时抢连失败。
     """
     if _port_listening(LDAP_PORT):
         logf.write(f"[{now()}] LDAP({LDAP_PORT}) 已 LISTENING，跳过\n")
         logf.flush()
         return True
-    launcher_dir = os.path.join(ROOT, "tools", "_wb_ldap")
+    launcher_dir = os.path.join(ROOT, "tools", "ldap")
     classes, lib = bench_classpath()
     cp = f"{launcher_dir};{classes};{lib}"
+    class_file = os.path.join(launcher_dir, "StartLdap.class")
+    if not os.path.isfile(class_file):
+        # 分发面只带 .java（*.class 不进仓库），首次使用时编译一次。
+        envc = os.environ.copy()
+        envc["JAVA_HOME"] = JAVA_HOME
+        try:
+            proc = subprocess.run(
+                [os.path.join(JAVA_HOME, "bin", "javac.exe"), "-cp", f"{classes};{lib}",
+                 "-d", launcher_dir, os.path.join(launcher_dir, "StartLdap.java")],
+                cwd=launcher_dir, env=envc, capture_output=True, text=True, timeout=120,
+            )
+            ok = proc.returncode == 0 and os.path.isfile(class_file)
+        except Exception as e:  # noqa: BLE001
+            logf.write(f"[{now()}] StartLdap 编译异常：{e}\n")
+            logf.flush()
+            return False
+        if not ok:
+            logf.write(f"[{now()}] StartLdap 编译失败：{(proc.stderr or '')[:400]}\n")
+            logf.flush()
+            return False
     env = os.environ.copy()
     env["JAVA_HOME"] = JAVA_HOME
     logf.write(f"[{now()}] LDAP({LDAP_PORT}) 未监听，启动中（StartLdap）=====\n")

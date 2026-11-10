@@ -141,7 +141,7 @@ def _norm_probe_path(raw) -> str:
     """把探针路径归一成 ``/xxx``。
 
     真实踩到的坑：Git Bash 会把命令行里的 ``/index`` 按 MSYS 规则改写成
-    ``D:/tools/PortableGit/index``，于是探针打到一个不存在的
+    ``<盘符>:/<路径>/PortableGit/index``，于是探针打到一个不存在的
     Windows 路径上，永远拿不到 200，表现为「登录成功但判定失败」。
     这里把「盘符 + 常见 PortableGit 前缀」剥掉，再补前导斜杠。
     """
@@ -176,7 +176,7 @@ class AuthSession:
         self.password = password
         self.login_path = login_path or "/login"
         # 路径归一：Git Bash 会把 `--probe /index` 这类参数按 MSYS 规则改写成
-        # `D:/.../PortableGit/index`（实测过），所以既补前导 "/"，也识别被改写的形态。
+        # ` <盘符>:/.../PortableGit/index`（实测过），所以既补前导 "/"，也识别被改写的形态。
         self.probe_path = _norm_probe_path(probe_path)
         self.extra_params = dict(extra_params or {})
         # 成功标记必须容错：同一框架不同版本返回 `{"code":0}` / `{"code":"0"}` /

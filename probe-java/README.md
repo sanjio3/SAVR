@@ -15,7 +15,7 @@ pom.xml Maven 构建描述。
 在项目根目录执行（JDK 11，注意 Windows 上 jar 工具不认 --create/--file）：
 
 ```
-C:\apache-maven-3.9.11\bin\mvn.cmd -B -DskipTests -f probe-java/pom.xml clean package
+mvn -B -DskipTests -f probe-java/pom.xml clean package
 ```
 
 产物为 probe-java/target/sec-probe.jar。构建前必须先停靶场 JVM，否则 jar 被占用无法覆盖。
