@@ -20,6 +20,6 @@ The IAST/RASP agent source under probe-java/ was merged into this repository on
 source-fingerprint record. It is distributed under this project's Apache-2.0
 license.
 
-Benchmark truth tables under data/ (java_sec_code_truth*.csv, juliet_truth.csv,
-ruoyi_451_truth.csv, owasp_shards/shards/mini.json) are derived metadata for
-reproducing published measurements, not copies of the target applications.
+Benchmark truth tables under data/ (java_sec_code_truth_v2.csv, ruoyi_451_truth.csv,
+owasp_shards/shards/mini.json) are derived metadata for reproducing published
+measurements, not copies of the target applications.

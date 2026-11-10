@@ -129,8 +129,7 @@ def _syntax_errors(files: list[str]) -> list[tuple[str, str]]:
 
 
 # 根目录白名单：只允许这些条目。新增要么归入其中之一，要么先想清楚该放哪。
-# 历史上出现过 config/ 与 configs/ 两个只差一个字母的目录、5 个 launcher 散在根上、
-# testfiles/ 与 tools/testfiles/ 两份历史拷贝 —— 根目录一旦失控，新用户第一眼就放弃。
+# 这条规则来自实际教训：同名近似目录、启动脚本散落在根上都发生过。
 ROOT_ALLOWED_ENTRIES = frozenset({
     # 文档（半成品定位：只有入口与授权）
     "README.md", "README_zh.md", "LICENSE", "NOTICE",
