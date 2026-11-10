@@ -4,8 +4,9 @@
 
 **S**can · **A**nalyze · **V**erify · **R**eplay（扫描 · 分析 · 验证 · 重放）
 
-一条 LLM 辅助的静态分析流水线，它的告警由对活靶场的确定性重放来确认，
-而不是由模型说一句「有害」。
+自动化白盒漏洞扫描与验证流水线：静态分析产生候选告警，大模型给出研判与可执行的触发规约；
+确定性重放对运行中的目标发起验证，告警是否成立仅由可观测的结构化影响证据判定。
+模型不接触目标，验证过程确定、可复现、可审计。
 
 [![CI](https://github.com/sanjio3/SAVR/actions/workflows/ci.yml/badge.svg)](https://github.com/sanjio3/SAVR/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
