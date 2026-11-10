@@ -47,7 +47,6 @@ SYNTAX_DIRS = ("src", "tools", "scripts", "tests")
 LINT_FILES = (
     "tools/ci_gate.py",
     "tools/clean_clone_check.py",
-    "tools/ci_benchmark.py",
 )
 
 

@@ -10,7 +10,7 @@
 - ``launch_owasp*.py``：按 ``CODE_PATH`` 反推 workspace 再查 DB；
 - ``launch_stack.py``：只读环境变量。
 
-再加上 ``tools/jsc_blind_switch.py`` 会原地改 ``iast_sessions.probe_token``
+再加上「原地改 DB token 的运维操作」会与探针手里的旧 token 冲突
 （token takeover），结果是「探针手里拿着旧 token、DB 里已经是新 token」。
 探针 ingest 鉴权失败时后端返回 HTTP 200 + ``accepted=0``，探针侧不解析响应体，
 于是整轮扫描静默丢光 IAST 事件，直到 D2 才发现，表现为「扫描断链」。
@@ -165,7 +165,7 @@ def assert_token_matches_db(token: str, workspace_id: int, app_name: str,
                             agent_id: str, *, db_path: Optional[str] = None) -> None:
     """原地改过 ``iast_sessions.probe_token`` 后调用，确认注入侧与 DB 仍对齐。
 
-    ``tools/jsc_blind_switch.py`` 的 token takeover 会更新 DB token，任何还在
+    原地改过 ``iast_sessions.probe_token`` 的 token takeover 会更新 DB token，任何还在
     持有旧 token 的进程都必须失效重拉；本断言用于切换完成后自检。
     """
     db_path = db_path or os.environ.get("SAST_AI_DB_PATH") or DEFAULT_DB_PATH

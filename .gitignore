@@ -153,11 +153,6 @@ scripts/launch/*
 !scripts/launch/launch_target_mall.py
 !scripts/launch/start_dev.ps1
 # launch_ruoyi_full.py 依赖本机 JDK8 / MySQL / RuoYi 源码布局，保持本地专用、不随仓库分发
-# tests/test_benchmark_gate.py 直接 import 其中的纯函数，必须随仓库分发
-# （OWASP 语料路径已改为环境变量 SAST_AI_OWASP_SAMPLE_DIR 驱动）
-# tools/eval_target.py：靶场启动器/评估工具，路径已环境变量化，随仓库分发
-# tests/test_reconcile_owasp_mini.py 通过 sys.path 插入 tools/ 后按裸名 import 下列两个，
-# 必须随仓库分发；它们的 OWASP 语料路径已改为环境变量 SAST_AI_OWASP_* 驱动
 # 本机一次性抽样监控/对账脚本：依赖未分发的本机 OWASP 真值与辅助脚本，不随仓库分发
 tools/reconcile_task_647.py
 tools/watch_task_647.py

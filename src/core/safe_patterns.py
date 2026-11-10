@@ -7,7 +7,7 @@
 本模块提供「命中已知安全实现 → 抑制该 finding」的确定性判定：
 - 判据只认高特异性安全特征（PreparedStatement+绑定参数、ESAPI/Encoder 编码、
   SecureRandom、SHA-256+、setHttpOnly(true)+setSecure(true) 等），宁可漏抑制也不误杀
-  （门禁 benchmark_gate 严格 TPR 降 ≤3pp 是硬约束）。
+  （严格 TPR 降 ≤3pp 是硬约束）。
 - 族名先经 normalize_family 归一，再查本表；未登记族不抑制（fail-open）。
 - 证据源：finding 自带 code_snippet 优先，否则读源文件按 sink 行取方法窗口。
   两者皆缺时不抑制（无证据不杀人）。

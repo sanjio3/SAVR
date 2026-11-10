@@ -64,7 +64,7 @@ flowchart LR
 
 ## 检测效果
 
-报告三套评测集。它们的记账口径不同，不能合并成一个分数。下面每个数字都可以用 `data/` 里随仓库分发的真值表和分片定义，加上你自己跑出来的扫描数据库复算。
+报告三套评测集。它们的记账口径不同，不能合并成一个分数。这些数字描述的是在参考靶场上的一次一致性运行，不是靶场无关的保证。
 
 ### Java 靶场，四档口径
 
@@ -199,7 +199,7 @@ python tools/probe_preflight.py --workspace-id 4 --http
 
 ## 配置
 
-配置以环境变量优先。`.env.example` 列出核心运行键及其默认值；LLM 的调参键在 `config/run_profiles.yaml` 的 `tuning` 区。
+配置以环境变量优先。`.env.example` 列出核心运行键及其默认值；模型超参在 `config/model_capabilities.yaml`。
 
 选模型三步：
 
@@ -211,46 +211,11 @@ python tools/probe_preflight.py --workspace-id 4 --http
 
 环境变量沿用项目早期名称的 `SAST_AI_` 前缀。这个前缀属于运行契约的一部分——基线 6 项 `run_env` 里有两项就是用这个前缀拼的——因此刻意保持不变，以维持向后兼容。
 
-### 运行 profile
-
-一轮可复现的设置意味着 6 项 `run_env` 键，而一组错误的键会悄悄改变你测的东西。`config/run_profiles.yaml` 把它们收敛成一条 `--profile` 命令。`config/run_profiles.local.yaml`（被 gitignore）放本机相关的值，比如绝对 JDK 路径与靶场密钥：
-
-```bash
-cp config/run_profiles.yaml config/run_profiles.local.yaml
-# 把 ${SAST_AI_SHIRO_KEY} 与 ${YSO_JAVA_HOME} 换成真实值，然后：
-.venv/Scripts/python.exe tools/run_validation_round.py --name jsc-R1 --profile jsc \
-  --truth data/java_sec_code_truth_v2.csv
-```
-
-加载器只做展开。它不推断默认值，拒绝与 `--env` 合并（两个参数互斥），展开后的键集合不是恰好那 6 项基线键、或者 `SAST_AI_STAGE_CACHE` 不是 `0`，它都会拒绝运行。随仓库分发的 profile 有 `jsc`、`ruoyi`、`owasp-full`、`owasp-sample`；OWASP 那两个刻意不带 `run_env`，因为分片运行器不走验证轮执行器。
-
 ### 决定一轮是否有效的键
 
 - `SAST_AI_STAGE_CACHE=0`：可计量的一轮必须显式关闭阶段缓存。代码默认是 `1`，否则缓存的 A1/A2 输出会掩盖轮次间的差异。
 - `SAST_AI_CLOSED_LOOP=0`：除非你特意要 I2 反馈闭环，否则保持关闭。它没有实测增益，而且会给确认路径加上一层 LLM 依赖。
 - `SAST_AI_BENCHMARK_PRIOR=1`：保持路由布局先验开启。关掉它才是那个「召回有多少依赖路由名」的实验。
-
----
-
-## 复现这些数字
-
-`data/java_sec_code_truth_v2.csv`、`data/juliet_truth.csv`、`data/ruoyi_451_truth.csv` 与
-`data/owasp_shards/shards/mini.json` 随仓库分发，让已公布的数字可以被复算。你仍然需要自己跑出来的扫描数据库；历史数据库刻意不分发。
-
-```bash
-python tools/jsc_four_tier.py --task-id <id>
-python tools/jsc_four_tier.py --task-id <id> --param-drift
-python tools/generalization_compare.py --mode stability --baseline <id1> --variant <id2>
-python tools/truth_addendum_impact.py
-python tools/check_oss_hygiene.py
-python tools/prune_runtime_artifacts.py
-```
-
-OWASP 红线对账不在默认 clone 的范围内：它需要外部的 OWASP Benchmark 真值 CSV，加一个不分发的本地辅助脚本。mini 分片清单（`data/owasp_shards/shards/mini.json`）作为参考随仓库分发。
-
-`--param-drift` 报出 `raw_json.exploit_spec.entry` 与权威 `trigger_specs` 参数列不一致的规格；新鲜跑一轮应当报零。`config/truth_addendum_l1_log4j_xss.csv` 是一条「提案、未采纳」的真值行——带上 `--truth-addendum` 可以看加进它会让每个历史分母怎么变。主真值表一个字节都不会改，影子输出也不是官方读数。`check_oss_hygiene.py` 扫描已跟踪文件，以及 `git add -A` 会纳入的未跟踪文件，所以新文件绕不过这道门。`prune_runtime_artifacts.py` 默认只列出可回收产物，需要 `--apply` 才会删；生产数据库、真值表、盲化变体和重放转储都受保护。
-
-四档数字必须用项目虚拟环境的解释器生成。`run_validation_round.py` 会绑定项目解释器，而 `jsc_four_tier.py` 在缺 `yaml` 或归一化模块导入时 fail closed（`exit 2`），而不是悄悄产出另一个分母。曾有一次用没有 PyYAML 的系统 Python 报出 `23/31`，正确读数是 `23/24`；那种失败模式现在是硬错误。
 
 ---
 
@@ -269,7 +234,7 @@ SAVR/
 ├── tools/                   # 对账、分片、评估工具、一次性脚本
 ├── scripts/                 # 入口：fetch_tools、submit_scan_task、launch/
 ├── config/                  # 随仓库分发、不含凭据的配置
-├── data/                    # 真值表与分片清单
+├── data/                    # 参考真值表与分片清单
 ├── tests/                   # 单元与回归测试
 └── .github/workflows/       # CI 三项必需检查与 benchmark 手动重跑
 ```
@@ -278,11 +243,10 @@ SAVR/
 
 ## 提 issue
 
-先跑这三个检查，它们能解决很大一部分报告：
+先跑这两个检查，它们能解决很大一部分报告：
 
 1. `python tools/probe_preflight.py --workspace-id <id> --http` —— 如果不是 `ready=true`，事件正在被丢弃，每次重放都会看起来像漏检。
 2. `uv run --frozen python tools/ci_gate.py` —— 确认问题不是本机环境造成的。
-3. `python tools/jsc_four_tier.py --task-id <id> --verbose` —— 打印这次回归落在哪一档，通常在读代码之前就定位了。
 
 开 issue 时请附上：
 

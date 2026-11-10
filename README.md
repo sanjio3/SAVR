@@ -90,8 +90,8 @@ cost is hitting the target, not inference.
 ## Results
 
 Three evaluation sets are reported. They use different accounting and must not be combined
-into a single score. Every number below is recomputable from the truth tables and shard
-definition shipped in `data/` plus a scan database from your own run.
+into a single score. The numbers describe one conformance run on the reference targets, not a
+target-independent guarantee.
 
 ### Java target, four-tier accounting
 
@@ -279,7 +279,7 @@ events and does not refresh the heartbeat, so it cannot make a dead session look
 ## Configuration
 
 Configuration is environment-first. `.env.example` lists the core runtime keys with their
-defaults; the LLM tuning keys live in `config/run_profiles.yaml` under `tuning`.
+defaults; model hyperparameters live in `config/model_capabilities.yaml`.
 
 To choose a model:
 
@@ -296,26 +296,6 @@ Environment variables keep the `SAST_AI_` prefix from the project's earlier name
 is part of the run contract — two of the six baseline `run_env` keys are spelled with it — so it
 is deliberately left unchanged for backwards compatibility.
 
-### Run profiles
-
-Setting up a repeatable run means six `run_env` keys, and a wrong set silently changes what you
-are measuring. `config/run_profiles.yaml` expands them from one `--profile` flag.
-`config/run_profiles.local.yaml` (gitignored) holds machine-specific values such as absolute
-JDK paths and target secrets:
-
-```bash
-cp config/run_profiles.yaml config/run_profiles.local.yaml
-# replace ${SAST_AI_SHIRO_KEY} and ${YSO_JAVA_HOME} with real values, then:
-.venv/Scripts/python.exe tools/run_validation_round.py --name jsc-R1 --profile jsc \
-  --truth data/java_sec_code_truth_v2.csv
-```
-
-The loader only expands. It infers no defaults, refuses to merge with `--env` (the two flags
-are mutually exclusive), and refuses to run if the expanded key set is not exactly the six
-baseline keys or if `SAST_AI_STAGE_CACHE` is not `0`. Profiles ship for `jsc`, `ruoyi`,
-`owasp-full` and `owasp-sample`; the OWASP ones deliberately carry no `run_env`, because the
-shard runner does not go through the validation-round executor.
-
 ### Keys that change whether a run is valid
 
 - `SAST_AI_STAGE_CACHE=0` for a measured run. Otherwise cached A1/A2 output masks run-to-run
@@ -324,44 +304,6 @@ shard runner does not go through the validation-round executor.
   gain and it adds an LLM dependency to the confirmation path.
 - `SAST_AI_BENCHMARK_PRIOR=1` keeps the route-layout prior on. Turning it off is the experiment
   that measures how much of the recall depends on knowing the route names.
-
----
-
-## Reproducing the numbers
-
-`data/java_sec_code_truth_v2.csv`, `data/juliet_truth.csv`, `data/ruoyi_451_truth.csv` and
-`data/owasp_shards/shards/mini.json` ship with the repository so published figures can be
-recomputed. You still need a scan database from your own run; historical databases are
-deliberately not shipped.
-
-```bash
-python tools/jsc_four_tier.py --task-id <id>
-python tools/jsc_four_tier.py --task-id <id> --param-drift
-python tools/generalization_compare.py --mode stability --baseline <id1> --variant <id2>
-python tools/truth_addendum_impact.py
-python tools/check_oss_hygiene.py
-python tools/prune_runtime_artifacts.py
-```
-
-OWASP red-line reconciliation is not part of a default clone: it needs the external
-OWASP Benchmark truth CSV plus a local-only helper that is not distributed. The mini shard
-manifest (`data/owasp_shards/shards/mini.json`) is included for reference.
-
-`--param-drift` reports specs whose `raw_json.exploit_spec.entry` disagrees with the
-authoritative `trigger_specs` parameter columns; a fresh run should report zero.
-`config/truth_addendum_l1_log4j_xss.csv` is a proposed, not adopted, truth row — pass it with
-`--truth-addendum` to see how adding it would shift every historical denominator. The main
-truth table is never modified and the shadow output is not an official reading.
-`check_oss_hygiene.py` scans tracked files and untracked files that `git add -A` would include,
-so a new file cannot bypass the gate. `prune_runtime_artifacts.py` lists reclaimable artifacts
-by default and needs `--apply` to delete; the production database, truth tables, blind variants
-and replay dumps are protected.
-
-Four-tier numbers must be generated with the project virtualenv interpreter.
-`run_validation_round.py` binds the project interpreter, and `jsc_four_tier.py` fails closed
-(`exit 2`) when `yaml` or a normalizer import is missing, rather than silently producing a
-different denominator. A system Python without PyYAML once reported `23/31` where the correct
-reading was `23/24`; that failure mode is now a hard error.
 
 ---
 
@@ -380,7 +322,7 @@ SAVR/
 ├── tools/                   # reconciliation, shards, evaluation harness, one-off scripts
 ├── scripts/                 # entry points: fetch_tools, submit_scan_task, launch/
 ├── config/                  # committed, credential-free configuration
-├── data/                    # truth tables and shard manifests
+├── data/                    # reference truth tables and a shard manifest
 ├── tests/                   # unit and regression suite
 └── .github/workflows/       # ci (3 required checks) and benchmark
 ```
@@ -389,13 +331,11 @@ SAVR/
 
 ## Reporting issues
 
-Run these three checks before filing; they resolve a large share of reports:
+Run these two checks before filing; they resolve a large share of reports:
 
 1. `python tools/probe_preflight.py --workspace-id <id> --http` — if this is not `ready=true`,
    events are being dropped at ingest and every replay will look like a miss.
 2. `uv run --frozen python tools/ci_gate.py` — confirms the failure is not a local environment problem.
-3. `python tools/jsc_four_tier.py --task-id <id> --verbose` — prints which tier a regression
-   shows up in, which usually localises it before any reading of code.
 
 When you open an issue, include:
 

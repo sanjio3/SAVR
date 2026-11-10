@@ -22,7 +22,7 @@ IAST 事件恒 0。用户侧观感就是「扫描又断链了」。
 用法：
     python tools/probe_preflight.py --workspace-id 7 --app-name benchmark \
         --agent-id owasp-benchmark-full --http
-    python tools/probe_preflight.py --profile owasp-full --http
+    python tools/probe_preflight.py --workspace-id 4 --http
 """
 from __future__ import annotations
 
@@ -263,18 +263,11 @@ def preflight_workspace(workspace_id: int, *, db_path: str = DEFAULT_DB_PATH,
     return report
 
 
-def _load_profile(name: str) -> Dict[str, Any]:
-    """从 config/run_profiles.yaml 读 probe 段；不引入执行期依赖。"""
-    from tools import run_profiles
-    return run_profiles.load_profile(name)
-
-
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--workspace-id", type=int)
     ap.add_argument("--app-name", default="")
     ap.add_argument("--agent-id", default="")
-    ap.add_argument("--profile", default="", help="从 config/run_profiles.yaml 取三元组")
     ap.add_argument("--db", default=DEFAULT_DB_PATH)
     ap.add_argument("--http", action="store_true", help="额外做后端鉴权空批次握手")
     ap.add_argument("--api-base", default=API_BASE)
@@ -287,19 +280,8 @@ def main() -> int:
     args = ap.parse_args()
 
     ws, app, agent = args.workspace_id, args.app_name, args.agent_id
-    if args.profile:
-        try:
-            prof = _load_profile(args.profile)
-        except Exception as exc:  # noqa: BLE001
-            print(json.dumps({"ready": False, "reasons": ["profile 加载失败：%s" % exc]},
-                             ensure_ascii=False, indent=2))
-            return 2
-        probe = prof.get("probe") or {}
-        ws = ws if ws is not None else int(prof["workspace_id"])
-        app = app or str(probe.get("app_name") or "")
-        agent = agent or str(probe.get("agent_id") or "")
     if ws is None:
-        print(json.dumps({"ready": False, "reasons": ["缺少 --workspace-id 或 --profile"]},
+        print(json.dumps({"ready": False, "reasons": ["缺少 --workspace-id"]},
                          ensure_ascii=False, indent=2))
         return 2
 

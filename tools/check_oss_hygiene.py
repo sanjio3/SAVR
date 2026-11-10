@@ -59,9 +59,7 @@ REQUIRED_TRACKED = (
     "README_zh.md",
     "LICENSE",
     "config/config.example.yaml",
-    "config/run_profiles.yaml",
     "tools/check_oss_hygiene.py",
-    "tools/export_clean_snapshot.py",
     "scripts/fetch_tools.py",
     "scripts/launch/launch_stack.py",
     "scripts/launch/launch_java_quote.py",
@@ -231,7 +229,7 @@ def _local_import_gaps(files: list[str]) -> list[tuple[str, str]]:
 def main() -> int:
     tracked = _tracked()
     pending = _pending()
-    # 与 export_clean_snapshot.py 的 candidates() 同口径：只看磁盘上真实存在的文件。
+    # 与 check_oss_hygiene 自身的 candidates() 同口径：只看磁盘上真实存在的文件。
     # 否则文件移动后 git ls-files 里的旧路径会被当成待检查项，产生假违规。
     files = [f for f in dict.fromkeys(tracked + pending)
              if os.path.isfile(os.path.join(ROOT, f.replace('/', os.sep)))]

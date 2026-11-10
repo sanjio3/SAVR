@@ -1,2 +1,0 @@
-﻿file,family,scope,detectability,evidence,note
-src/main/java/org/joychou/controller/Log4j.java,xss,in_scope,static_sink,Log4j.log4j() returns the token query parameter verbatim,PROPOSED ORACLE ADDENDUM - NOT ADOPTED - main truth table unchanged - see docs/l1_route_blinding_reconciliation.md section 7

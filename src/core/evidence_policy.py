@@ -3,7 +3,7 @@
 背景：证据判定散在三处，口径漂移会导致「报表说 S4、闸门说不合格」的自相矛盾：
   - ``src/core/sink_value_gate.py::judge_sink_value`` —— 底层，返回 at_sink/absent/no_event；
   - ``src/cli/benchmark_cli.py::_apply_sink_value_gate_postpass`` —— 组级否决规则（三套）；
-  - ``tools/eval_target.py::_evidence_of_group`` —— S4/S3/S2/S1 分桶。
+  - 评估脚本 —— S4/S3/S2/S1 分桶。
 
 本模块把「分桶」与「组级决策」抽成唯一真相源：
   - ``classify(spec, events)`` → :class:`Evidence`（kind ∈ S4/S3/S2/S1）；
@@ -63,7 +63,7 @@ def classify(spec: Dict[str, Any], events: Sequence[Dict[str, Any]], *, judge=No
     spec 需含 ``taint_marker`` / ``family``（或 ``capability_family``）/ ``id``。
     ``judge`` 可注入（默认 ``sink_value_gate.judge_sink_value``），便于单测。
 
-    映射（与 eval_target._evidence_of_group 逐条等价）：
+    映射（S4/S3/S2/S1 逐条等价）：
       at_sink → S4；absent → S3；no_event 且有事件 → S2；no_event 且零事件 → S1。
     """
     if judge is None:
@@ -144,7 +144,7 @@ def decide_group(items: Sequence[Evidence], policy: Policy) -> Tuple[str, str]:
 
 
 def best_kind(items: Sequence[Evidence]) -> str:
-    """组内最强证据（S4 > S3 > S2 > S1），与 eval_target._evidence_of_group 等价。"""
+    """组内最强证据（S4 > S3 > S2 > S1）。"""
     if not items:
         return S1
     return max((e.kind for e in items), key=lambda k: _RANK.get(k, 0))

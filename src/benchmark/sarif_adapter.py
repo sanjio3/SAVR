@@ -19,7 +19,7 @@ import os
 import sqlite3
 from typing import Any, Dict, List, Optional
 
-# 与 tools/gate_quality_redline.py 口径一致的确认态
+# 确认态：与终态判定口径一致
 CONFIRMED_STATES = ("confirmed_exploitable", "confirmed_code_property", "confirmed_sink_control")
 
 # family -> 默认严重度（raw_json 里没有 severity 时兜底）
