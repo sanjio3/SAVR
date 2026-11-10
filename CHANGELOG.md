@@ -20,6 +20,9 @@ Keep a Changelog; this project has not yet cut a release tag.
 
 ### Changed
 
+- `httpx` is now an explicit dev dependency. `starlette.testclient` needs it and it
+  used to arrive only as a transitive dependency, so a provider bump could remove it
+  and break test collection.
 - `tests/test_d2_spec_association.py`: the empty-status spec regression guard now
   uses an in-memory SQLite fixture instead of historical rows in `data/app.db`, so
   it runs on a fresh clone with no database.

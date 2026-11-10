@@ -34,6 +34,10 @@ dependencies = [
 dev = [
     "pytest>=8.3.3",
     "ruff>=0.14.5",
+    # starlette.testclient.TestClient is used by several API tests. httpx used to
+    # arrive only as a transitive dependency, so a provider bump could remove it
+    # and break collection. Declare it explicitly.
+    "httpx>=0.27",
 ]
 
 [tool.pytest.ini_options]

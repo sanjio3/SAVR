@@ -38,7 +38,7 @@ uv run --frozen python tools/clean_clone_check.py    # 在干净 HEAD 检出里�
 
 ## 验证分层
 
-PR 门禁就是 L0，也是拉取请求唯一必需的一层：CI 会跑 `uv run --frozen python tools/ci_gate.py`，三项检查全绿才允许合并。`compat` 矩阵 job 只是补充信号，覆盖 Python 3.13 与 Windows，不是必需检查，因此分支保护仍然钉在 `static`、`test`、`frontend` 三项上。
+PR 门禁就是 L0，也是拉取请求唯一必需的一层：CI 会跑 `uv run --frozen python tools/ci_gate.py`，三项检查全绿才允许合并。`compat` 矩阵 job 只是补充信号：Ubuntu + Python 3.13 跑全量 pytest，两个 Windows 组合只做冒烟（静态门禁加一小组平台无关的测试）。部分历史测试依赖已配置好的开发机（控制台编码、本机 subprocess 工具），干净 Windows runner 暂时跑不过全量，这是已知边界。这些都不是必需检查，分支保护仍钉在 `static`、`test`、`frontend` 三项上。
 
 下面的 L1 到 L3 是仅维护者执行的基准重跑，从 `.github/workflows/benchmark.yml` 手动触发（`workflow_dispatch`，填层级、profile 和名称）。它需要带本地靶场、CodeQL CLI、LLM 端点与扫描数据库的自托管 runner（标签 `self-hosted` 与 `savr-benchmark`）；GitHub 托管 runner 过不了预检，在未注册该 runner 之前任务只会排队。它不阻塞任何 PR。`tools/ci_benchmark.py` 把报告写到 `output/benchmark/`，只作为 CI artifact 上传，不入库。
 

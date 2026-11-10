@@ -60,9 +60,12 @@ It uses a detached worktree at HEAD and copies nothing from your working tree.
 
 The PR gate is L0 and is the only tier required for a pull request: CI runs
 `uv run --frozen python tools/ci_gate.py` and all three checks must pass before merge.
-The `compat` matrix job is informational: it covers Python 3.13 and Windows without
-being a required status check, so branch protection stays pinned to `static`, `test`
-and `frontend`.
+The `compat` matrix job is informational: Ubuntu/Python 3.13 runs the full pytest suite,
+while the two Windows combinations are smoke-only (static gate plus a small
+platform-neutral test subset). Several legacy tests assume a configured developer machine
+(console encoding, locally installed subprocess tools), so a clean Windows runner is not
+expected to pass the whole suite yet. None of these are required status checks, so branch
+protection stays pinned to `static`, `test` and `frontend`.
 
 L1-L3 below are maintainer-only benchmark re-runs, triggered from
 `.github/workflows/benchmark.yml` (`workflow_dispatch` with tier, profile and name).
