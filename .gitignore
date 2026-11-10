@@ -126,13 +126,8 @@ tools/_archive/
 # launch_ruoyi_full.py 依赖本机 JDK8 / MySQL / RuoYi 源码布局，保持本地专用、不随仓库分发
 launch_ruoyi_full.py
 
-# 历史重跑对账产物（一次性，不随仓库分发）
-docs/rerun-verify-*.md
-docs/2026-10-19-*.md
-docs/改进清单.md
-# 已移出索引的内部过程文档：顶层 .md 已被 docs/*.md 覆盖，这里补两个漏洞
-docs/archive/
-docs/*.json
+# 文档已内联进 README，docs/ 不再分发；本机残留一并忽略。
+docs/
 
 # 本机一次性诊断 / 评测脚本（工作区保留，不随仓库分发）
 # fetch_tools.py 是 README quickstart 的依赖，必须留在索引里。
@@ -225,7 +220,6 @@ tools/_wb_shiro_probe.java
 
 # 一次性交付总览（不随仓库分发）
 overview.md
-!docs/overview.md
 
 # 测试记录不入库：CI 的 JUnit XML 与运行页面摘要是唯一出口。
 # 基准重跑（L1-L3）的报告同样只进 CI artifact，不往仓库里写新文件。
@@ -233,4 +227,3 @@ output/ci/
 *.junit.xml
 junit.xml
 output/benchmark/
-docs/validation_run_*.md

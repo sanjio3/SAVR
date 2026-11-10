@@ -19,6 +19,13 @@ updates:
     groups:
       frontend:
         patterns: ["*"]
+    ignore:
+      # vue-tsc resolves typescript/lib/tsc, which TypeScript 6 no longer exports.
+      # Remove these two entries once vue-tsc supports TS 6.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vue-tsc"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"

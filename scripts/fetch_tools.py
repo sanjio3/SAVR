@@ -44,6 +44,26 @@ TOOLS = {
 }
 
 
+# Bundle archives are unpacked as a directory tree instead of a single binary.
+# CodeQL ships its CLI together with the query packs, so the tree must be kept;
+# tool_paths.find_codeql() looks for <dest>/codeql/codeql afterwards.
+def _codeql_platform() -> str:
+    if os.name == "nt":
+        return "win64"
+    if sys.platform == "darwin":
+        return "osx64"
+    return "linux64"
+
+
+ARCHIVE_TOOLS = {
+    "codeql": (
+        "https://github.com/github/codeql-action/releases/latest/download/"
+        "codeql-bundle-%s.tar.gz" % _codeql_platform(),
+        "codeql",
+    ),
+}
+
+
 def _sha256(path: str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as fh:
@@ -59,6 +79,22 @@ def _download(url: str, dest: str) -> None:
     os.replace(tmp, dest)
 
 
+def _unpack_archive(url: str, dest: str) -> None:
+    """Download a .tar.gz bundle and unpack it into dest, keeping the tree."""
+    import tarfile
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        archive = os.path.join(td, "bundle.tar.gz")
+        _download(url, archive)
+        print("[ok  ] archive sha256=%s" % _sha256(archive))
+        with tarfile.open(archive, "r:gz") as tf:
+            try:
+                tf.extractall(dest, filter="data")
+            except TypeError:  # pragma: no cover - Python < 3.12
+                tf.extractall(dest)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dest", default=os.environ.get("SAST_AI_TOOLS_DIR", ""),
@@ -71,12 +107,32 @@ def main() -> int:
         print("[FATAL] 未指定 --dest，且环境变量 SAST_AI_TOOLS_DIR 为空")
         return 1
     os.makedirs(args.dest, exist_ok=True)
-    wanted = {s.strip() for s in args.only.split(",") if s.strip()} or set(TOOLS)
+    wanted = {s.strip() for s in args.only.split(",") if s.strip()} or (
+        set(TOOLS) | set(ARCHIVE_TOOLS)
+    )
     expected = {}
     for pair in (args.sha256 or "").split(","):
         if "=" in pair:
             k, v = pair.split("=", 1)
             expected[k.strip()] = v.strip().lower()
+
+    for name, (url, subdir) in ARCHIVE_TOOLS.items():
+        if name not in wanted:
+            continue
+        exe = os.path.join(args.dest, subdir, "codeql.exe" if os.name == "nt" else "codeql")
+        if os.path.isfile(exe):
+            print("[skip] %s 已存在：%s" % (name, exe))
+            continue
+        print("[get ] %s ← %s" % (name, url))
+        try:
+            _unpack_archive(url, args.dest)
+        except Exception as exc:  # noqa: BLE001
+            print("[fail] %s：%s" % (name, exc))
+            continue
+        if os.path.isfile(exe):
+            print("[ok  ] %s → %s" % (name, exe))
+        else:
+            print("[warn] 解包后未找到 %s，请检查 bundle 目录结构" % exe)
 
     for name, (url, filename) in TOOLS.items():
         if name not in wanted:

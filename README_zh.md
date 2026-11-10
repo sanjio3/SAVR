@@ -124,7 +124,7 @@ python tools/generalization_compare.py --mode stability --baseline <id1> --varia
 - Python 3.12+
 - Node.js 20+（前端）
 - JDK 11+ 与 Maven（构建 IAST 探针；探针是构建产物，不随仓库分发）
-- CodeQL CLI 在 `PATH` 上（静态分析阶段用）
+- CodeQL CLI（静态分析阶段用）。`uv run python scripts/fetch_tools.py --dest tools --only codeql` 会把 bundle 解包到 `tools/codeql/`；也可以设 `CODEQL_BIN`，或把 `codeql` 放进 `PATH`。bundle 约 1GB，不入库。
 - 本地 LLM，由 Ollama 提供（默认 `qwen3:8b`），或任何 OpenAI 兼容端点
 - 一个运行中的 HTTP 靶场，并挂载本项目自带的 IAST java agent。靶场应用、JDK、Tomcat 与第三方二进制不在本仓库内分发，需要你自己提供
 
@@ -136,17 +136,16 @@ python tools/generalization_compare.py --mode stability --baseline <id1> --varia
 
 ```bash
 git clone https://github.com/sanjio3/SAVR.git && cd SAVR
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -r requirements.txt
+uv sync --frozen --group dev
 cp .env.example .env
-python scripts/fetch_tools.py --dest /opt/sast-ai-tools
+uv run python scripts/fetch_tools.py --dest tools --only codeql
 ollama pull qwen3:8b
-python -m src.cli.service_server
+uv run python -m src.cli.service_server
 ```
 
-Linux 或 macOS 用 `.venv/bin/python` 代替 `.venv/Scripts/python.exe`，并把 `SAST_AI_TOOLS_DIR` 指到传给 `fetch_tools.py --dest` 的目录。后端监听 `127.0.0.1:8000`。前端单独跑：`cd frontend && npm ci && npm run dev`，监听 `127.0.0.1:5173`。
+`uv.lock` 锁定全部依赖，`pyproject.toml` 是权威声明。仓库根目录就是导入根，不需要安装成包。本文档里的命令统一用 `uv run`；把虚拟环境加进 `PATH` 后直接调 `python` 也可以。
 
-`requirements.txt` 是依赖清单的兼容导出，`pyproject.toml` 是权威来源，`uv.lock` 锁定精确版本。仓库根目录就是导入根，所以装好依赖列表就够跑 CLI，不需要安装成包。`pyproject.toml` 里声明了 PEP 517 构建后端，供需要它的工具链使用，`uv sync` 配合 `[tool.uv] package = false` 也可用。`pip install -e .` 需要 `setuptools>=68`，pip 会把它拉进隔离构建环境；离线机器请用 `requirements.txt` 那条路。
+后端监听 `127.0.0.1:8000`。前端单独跑：`cd frontend && npm ci && npm run dev`，监听 `127.0.0.1:5173`。
 
 ---
 
@@ -200,7 +199,15 @@ python tools/probe_preflight.py --workspace-id 4 --http
 
 ## 配置
 
-配置以环境变量优先。`.env.example` 列出核心运行键及其默认值；LLM 的调参键在 `config/run_profiles.yaml` 的 `tuning` 区。干净 clone 没有 `config.yaml`（它被 gitignore，因为可能存放供应商凭据），加载器会回退到随仓库分发的、不含凭据的 `config/config.example.yaml`。只有需要覆盖供应商默认值时才把它复制成 `config.yaml`，并且不要提交。不要提交 `.env`、`config.yaml` 或任何数据库。
+配置以环境变量优先。`.env.example` 列出核心运行键及其默认值；LLM 的调参键在 `config/run_profiles.yaml` 的 `tuning` 区。
+
+选模型三步：
+
+1. `cp config/config.example.yaml config.yaml`。该副本被 gitignore 排除，因为它可能存放凭据。
+2. 把 `api.provider` 与 `api.model` 指向样例里的某个段：`ollama`（默认，不需密钥）、`qwen`、`doubao`、`minimax`、`deepseek`、`openai-compatible`、`claude`、`anthropic-compatible`。
+3. 填该段。本地 `ollama` 只需 `base_url` 与 `model`；云端段需 `base_url`、`api_key`、`model`。任何值都可以写成 `"${ENV_VAR}"`，让密钥留在环境变量里。
+
+不要提交 `.env`、`config.yaml` 或任何数据库。
 
 环境变量沿用项目早期名称的 `SAST_AI_` 前缀。这个前缀属于运行契约的一部分——基线 6 项 `run_env` 里有两项就是用这个前缀拼的——因此刻意保持不变，以维持向后兼容。
 
@@ -263,18 +270,15 @@ SAVR/
 ├── scripts/                 # 入口：fetch_tools、submit_scan_task、launch/
 ├── config/                  # 随仓库分发、不含凭据的配置
 ├── data/                    # 真值表与分片清单
-├── docs/                    # 设计说明、对账记录、运行计划
 ├── tests/                   # 单元与回归测试
-└── .github/workflows/       # CI 三项必需检查、benchmark 手动重跑、release 自动化
+└── .github/workflows/       # CI 三项必需检查与 benchmark 手动重跑
 ```
 
 ---
 
 ## 提 issue
 
-这是我们最在意的部分。一份有用的报告能省一周猜测；一份含糊的报告会先换来一轮追问。
-
-请先跑这三个检查，它们能解决很大一部分报告：
+先跑这三个检查，它们能解决很大一部分报告：
 
 1. `python tools/probe_preflight.py --workspace-id <id> --http` —— 如果不是 `ready=true`，事件正在被丢弃，每次重放都会看起来像漏检。
 2. `uv run --frozen python tools/ci_gate.py` —— 确认问题不是本机环境造成的。
@@ -287,51 +291,10 @@ SAVR/
 - 该规格的终态 `verification_status` 与 `failure_attribution`，若涉及 LLM 阶段再加上 `stage_results.a2.contract`。这三个字段能解释大部分漏检，不需要对方看源码。
 - 相关日志行，不是整份日志。
 
-我们特别在找的：
-
-- 会暴露假确认的真实靶场。这是最在意的失败模式，比任何召回数字都值钱。
-- 检测到了缺陷但确认不了的靶场，附上规格终态。
-- 同一靶场两轮之间可复现的差异。
-
-本项目自身的漏洞请不要开公开 issue，请走 `SECURITY.md` 里的私有通道。
-
----
-
-## 现在不足
-
-检测与确认不是一回事，下面不少条目是确认能力的限制而不是检测能力的限制。引用任何数字之前请先读这段。
-
-- 纯算法族与属性族没有载荷语义。弱随机、弱哈希、弱加密、缺 cookie 标志描述的是属性而不是污点流，所以重放一个请求既证不了也证不了不。它们被路由到静态代码属性通道，并被排除在动态分母之外。`by design`。
-- 弱随机是最大的开放缺口：130 例分片上 0/15 确认。这些用例被检出了，但规格被标成 `xss`，因为该基准里每个用例都以同一个 `getWriter().println(...)` 回显收尾，然后被路由进 XSS 判决通道，根本到不了属性通道。探针也没有织桩 `java.util.Random.nextBytes`，所以其中一个用例连事件都没有。族标签是从自由格式的模型输出加命名启发式推断出来的，而这些启发式是在一个靶场的路由词汇上调的，迁到路由与模板长得不一样的靶场就不成立。`help wanted`。
-- 静态 A1 规则假设算法名是字面量。靶场若从 properties 文件读算法名，或用了 `prepareStatement(sql, String[])` 这类 JDBC 重载，规则与兜底都会同时漏掉。`help wanted`。
-- 泛化只部分成立。Java 靶场是针对同一张 31 点真值表、连跑六轮逐点调出来的，所以它是回归集而不是盲测。盲化路由名要付出 12.5 个百分点的重放召回。另一个靶场目前只有基线，运行时确认了 6 个真值行里的 2 个。不宣称靶场无关的覆盖率。`help wanted`。
-- 单轮重放在点级别不稳定：两次完全相同的运行给出 24/24 与 23/24。抖动来自迟到值级证据通道，不是 LLM 阶段。`no fix planned`——这是证据通道的性质，所以我们报区间而不是点估计。
-- 有一条红线是一个真实的反射 XSS，而随仓库分发的真值表没有为那个文件登记它。我们在对账与稳定性两轮里都如实披露，而不是改真值表把它吸收掉。加不加它是一个待定的判据决策。`known`。
-- 检测层精确率低，尽管确认层是干净的。130 例分片上，51 个负例里有 42 个产出了候选规格、48 个产出了静态告警。几乎所有区分力都落在终态确认门禁上。`by design`——这个设计刻意过度提案，把预算花在确认上。
-- Java 靶场有 4 个真值点因物理不可达被豁免，另有 3 个属性/配置族被排除在动态分母之外。两处豁免都在随仓库分发的真值表里逐条列明。`by design`。
-- H2 1.4.200 不实现 MySQL `SLEEP()`，所以时间盲注在 h2 profile 上打不出延迟，确认回退到布尔对。`environment`。
-- 一个任务一个靶场。多靶场战役没有实现。`no fix planned`。
-- OWASP 真值表从仓库外的路径读取，继承自本地检出该基准的方式。在干净 clone 上复算需要自己放置 `expectedresults-1.2.csv`。`help wanted`——把它做成自包含是个小改动。
-- `docs/` 以中文为主。本 README 与 `README_zh.md` 是入口。
-
----
-
-## 贡献
-
-见 [CONTRIBUTING_zh.md](CONTRIBUTING_zh.md)（或英文版 [CONTRIBUTING.md](CONTRIBUTING.md)）。最要紧的两件事：一个是修复前失败、修复后通过的回归测试；另一个是别人能用随仓库分发的真值表复算出来的数字。
-
----
-
-## 安全
-
-本项目自身的漏洞请不要开公开 issue，请走 [SECURITY.md](SECURITY.md) 里描述的私有通道。
-
----
-
 ## 许可
 
-Apache License 2.0 —— 完整条款见 [LICENSE](LICENSE)，第三方组件的署名声明见 [NOTICE](NOTICE)。
+Apache License 2.0。完整条款见 [LICENSE](LICENSE)；第三方组件的署名声明见 [NOTICE](NOTICE)。
 
-用大白话说：你可以使用、修改、再分发这个软件，包括用在商业或闭源产品里，Apache-2.0 并不要求你公开自己的源码。它要求的是保留版权与许可声明、标明你的改动，以及不用项目名或贡献者的名字去背书他们没参与的东西。许可里还包含贡献者给出的明确专利授权。
+该许可允许使用、修改与再分发，包括用于闭源产品，前提是保留版权与许可声明、标明所做修改，且不得用项目名或贡献者姓名为衍生作品背书。许可中包含贡献者给出的明示专利授权。
 
-这是刻意选的宽松许可：这个工具的定位就是被嵌进别人的安全流水线里用。
+选择宽松许可是刻意的：本工具的定位是被嵌入既有安全流水线，而非独立使用。

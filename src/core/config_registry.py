@@ -95,7 +95,21 @@ def codeql_enabled(default: bool = True) -> bool:
 
 
 def codeql_bin_path(default: Optional[str] = None) -> Optional[str]:
-    return codeql_config().get("bin_path") or default
+    """Resolve the CodeQL CLI path.
+
+    The shipped default is ``bin_path: auto``: probe ``SAST_AI_TOOLS_DIR``,
+    ``tools/codeql`` and ``PATH`` via ``tool_paths.find_codeql``. An explicit
+    path in the yaml or in ``CODEQL_BIN`` wins and is returned unchanged.
+    """
+    raw = str(codeql_config().get("bin_path") or "").strip()
+    if raw and raw.lower() != "auto":
+        return raw
+    try:
+        from src.core.tool_paths import find_codeql
+    except Exception:  # pragma: no cover - tool_paths 不可用时退回调用方默认
+        return default
+    found = find_codeql()
+    return str(found) if found else default
 
 
 def codeql_ram_mb(default: int = 4096) -> int:

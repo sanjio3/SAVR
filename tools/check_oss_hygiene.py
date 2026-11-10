@@ -25,6 +25,10 @@ ABS_PATH_RES = [
     re.compile(r"Desktop[/\\]+SDL[/\\]+", re.I),
     re.compile(r"[A-Za-z]:[/\\]+WorkBuddy", re.I),
 ]
+# 配置文件里的盘符绝对路径几乎总是开发机残留（IDE 安装目录、靶场路径）。
+# 范围限定 config/ 下的 yaml，且跳过标注为示例的行，避免误伤文档性取值。
+CONFIG_DRIVE_PATH = re.compile(r"[A-Za-z]:[\\/][A-Za-z0-9_.\-]{2,}[\\/]")
+CONFIG_PATH_OK = ("example", "placeholder", "示例")
 # 已知凭据前缀 / 私钥头：无论采用哪种赋值形式都算违规
 KNOWN_SECRET = re.compile(
     r"(?:sk-[A-Za-z0-9]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|"
@@ -54,10 +58,6 @@ REQUIRED_TRACKED = (
     "README.md",
     "README_zh.md",
     "LICENSE",
-    "SECURITY.md",
-    "CONTRIBUTING.md",
-    "CODE_OF_CONDUCT.md",
-    "CHANGELOG.md",
     "config/config.example.yaml",
     "config/run_profiles.yaml",
     "tools/check_oss_hygiene.py",
@@ -134,14 +134,13 @@ def _syntax_errors(files: list[str]) -> list[tuple[str, str]]:
 # 历史上出现过 config/ 与 configs/ 两个只差一个字母的目录、5 个 launcher 散在根上、
 # testfiles/ 与 tools/testfiles/ 两份历史拷贝 —— 根目录一旦失控，新用户第一眼就放弃。
 ROOT_ALLOWED_ENTRIES = frozenset({
-    # 文档与治理
-    "README.md", "README_zh.md", "LICENSE", "NOTICE", "CHANGELOG.md",
-    "CODE_OF_CONDUCT.md", "CONTRIBUTING.md", "CONTRIBUTING_zh.md", "SECURITY.md",
+    # 文档（半成品定位：只有入口与授权）
+    "README.md", "README_zh.md", "LICENSE", "NOTICE",
     # 构建与依赖
-    "pyproject.toml", "requirements.txt", "uv.lock", "sbom.json",
+    "pyproject.toml", "uv.lock",
     ".env.example", ".gitignore", ".gitattributes",
     # 目录
-    ".github", "config", "data", "docs", "frontend", "probe-java",
+    ".github", "config", "data", "frontend", "probe-java",
     "scripts", "src", "tests", "tools",
 })
 
@@ -288,6 +287,11 @@ def main() -> int:
                 problems.append("dangling issue autolink: %s:%d" % (rel, i))
             if any(p.search(line) for p in ABS_PATH_RES):
                 problems.append("local absolute path: %s:%d" % (rel, i))
+            if ext in (".yaml", ".yml") and rel.startswith("config/"):
+                if CONFIG_DRIVE_PATH.search(line) and not any(
+                    k in line.lower() for k in CONFIG_PATH_OK
+                ):
+                    problems.append("machine-specific path in config: %s:%d" % (rel, i))
 
     # 根目录白名单：防止目录再次膨胀或出现同名近似目录
     for name in _root_entry_violations(files):

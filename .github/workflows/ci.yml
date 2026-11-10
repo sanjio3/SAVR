@@ -3,11 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - 'docs/historical/**'
   pull_request:
-    paths-ignore:
-      - 'docs/historical/**'
   workflow_dispatch:
 
 # CI never writes back to the repository and never needs a secret, so fork PRs

@@ -180,7 +180,9 @@ everything".
 - Python 3.12 or newer.
 - Node.js 20 or newer, for the frontend.
 - JDK 11 or newer and Maven, to build the IAST probe (it is built, not shipped).
-- CodeQL CLI on `PATH`, for the static analysis stage.
+- CodeQL CLI, for the static analysis stage. `uv run python scripts/fetch_tools.py --dest tools
+  --only codeql` downloads the bundle into `tools/codeql/`; alternatively set `CODEQL_BIN` or put
+  `codeql` on `PATH`. The bundle is about 1GB and is not vendored.
 - A running HTTP target with the bundled IAST java agent attached. Target applications, JDKs,
   Tomcat and third-party binaries are not vendored; you supply your own.
 - An LLM endpoint. Any OpenAI-compatible local server works; the defaults point at Ollama.
@@ -193,24 +195,18 @@ Windows is the primary development platform. Linux and macOS should work but are
 
 ```bash
 git clone https://github.com/sanjio3/SAVR.git && cd SAVR
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -r requirements.txt
+uv sync --frozen --group dev
 cp .env.example .env
-python scripts/fetch_tools.py --dest /opt/sast-ai-tools
+uv run python scripts/fetch_tools.py --dest tools --only codeql
 ollama pull qwen3:8b
 ```
 
-On Linux or macOS use `.venv/bin/python` instead of `.venv/Scripts/python.exe`, and set
-`SAST_AI_TOOLS_DIR` to the directory you passed to `fetch_tools.py --dest`. The backend listens
-on `127.0.0.1:8000`. The frontend runs separately: `cd frontend && npm ci && npm run dev`,
-listening on `127.0.0.1:5173`.
+`uv.lock` pins every dependency and `pyproject.toml` is the canonical declaration. The repository
+root is the import root, so no package installation step is needed. `uv run` is the supported
+entry point for every command in this document; a virtualenv on `PATH` works as well.
 
-`requirements.txt` is the compatibility export of the dependency list; `pyproject.toml` is the
-canonical source and `uv.lock` pins exact versions. The repository root is the import root, so
-installing the dependency list is enough to run the CLI; no package installation is required. A
-PEP 517 build backend is declared for tooling that expects one, and `uv sync` works with
-`[tool.uv] package = false`. `pip install -e .` needs `setuptools>=68`, which pip fetches into
-an isolated build environment — on an offline machine use the `requirements.txt` path instead.
+The backend listens on `127.0.0.1:8000`. The frontend runs separately:
+`cd frontend && npm ci && npm run dev`, listening on `127.0.0.1:5173`.
 
 ---
 
@@ -283,10 +279,18 @@ events and does not refresh the heartbeat, so it cannot make a dead session look
 ## Configuration
 
 Configuration is environment-first. `.env.example` lists the core runtime keys with their
-defaults; the LLM tuning keys live in `config/run_profiles.yaml` under `tuning`. A fresh clone
-has no `config.yaml` (it is gitignored because it may hold provider credentials). The loader
-falls back to the committed, credential-free `config/config.example.yaml`; copy it to
-`config.yaml` only when you need to override provider defaults, and keep that copy out of Git.
+defaults; the LLM tuning keys live in `config/run_profiles.yaml` under `tuning`.
+
+To choose a model:
+
+1. `cp config/config.example.yaml config.yaml`. The copy is gitignored because it may hold
+   credentials.
+2. Set `api.provider` and `api.model` to one of the sections in that file: `ollama` (default, no
+   key required), `qwen`, `doubao`, `minimax`, `deepseek`, `openai-compatible`, `claude`, or
+   `anthropic-compatible`.
+3. Fill that section. The local `ollama` section needs `base_url` and `model`; cloud sections
+   need `base_url`, `api_key` and `model`. Any value may be written as `"${ENV_VAR}"` so the
+   secret stays in the environment.
 
 Environment variables keep the `SAST_AI_` prefix from the project's earlier name. That prefix
 is part of the run contract — two of the six baseline `run_env` keys are spelled with it — so it
@@ -377,19 +381,15 @@ SAVR/
 ├── scripts/                 # entry points: fetch_tools, submit_scan_task, launch/
 ├── config/                  # committed, credential-free configuration
 ├── data/                    # truth tables and shard manifests
-├── docs/                    # design notes, reconciliation records, run plans
 ├── tests/                   # unit and regression suite
-└── .github/workflows/       # ci (3 required checks), benchmark, release
+└── .github/workflows/       # ci (3 required checks) and benchmark
 ```
 
 ---
 
 ## Reporting issues
 
-This is the part we care most about. A useful report saves a week of guessing; a vague one
-costs a round of questions before work can start.
-
-Please run these three checks first. They resolve a large share of reports:
+Run these three checks before filing; they resolve a large share of reports:
 
 1. `python tools/probe_preflight.py --workspace-id <id> --http` — if this is not `ready=true`,
    events are being dropped at ingest and every replay will look like a miss.
@@ -407,93 +407,26 @@ When you open an issue, include:
   misses without needing source access.
 - Relevant log lines, not full logs.
 
-Requests we are actively looking for:
+Reports of particular value:
 
-- Real-world targets that expose a false confirmation. That is the failure mode we care about
-  most, and it is worth more than any recall number.
-- Targets where a detected defect cannot be confirmed, with the spec terminal state attached.
-- Reproducible divergences between two runs of the same target.
+- A real-world target that exposes a false confirmation.
+- A detected defect that cannot be confirmed, with the spec terminal state attached.
+- A reproducible divergence between two runs of the same target.
 
-Please do not open a public issue for a security vulnerability in this project. Use the private
-channel in `SECURITY.md`.
-
----
-
-## Known limitations
-
-Detection and confirmation are not the same thing, and several of the limits below are
-confirmation limits rather than detection limits. Read this before quoting any number.
-
-- Pure algorithmic and property families have no payload semantics. Weak randomness, weak hash,
-  weak crypto and missing cookie flags describe a property, not a tainted flow, so replaying a
-  request can neither prove nor disprove them. They are routed to a static code-property
-  channel and excluded from the dynamic denominator. `by design`.
-- Weak randomness is the largest open gap: 0/15 confirmed on the 130-case shard. The cases are
-  detected; the specs are labelled `xss`, because every case in that benchmark ends with the
-  same `getWriter().println(...)` echo, and are then suppressed by the XSS verdict channel
-  before reaching the property channel. The probe also does not hook
-  `java.util.Random.nextBytes`, so one case carries no event at all. Family labelling is
-  inferred from free-form model output plus naming heuristics, and those heuristics were tuned
-  on one target's route vocabulary, so they do not transfer to targets whose routes and
-  templates look different. `help wanted`.
-- Static A1 rules assume algorithm names are literals. A target that reads the algorithm from a
-  properties file, or uses a JDBC overload such as `prepareStatement(sql, String[])`, can fall
-  through both the rule and the fallback. `help wanted`.
-- Generalisation is only partially established. The Java target was tuned point by point across
-  six consecutive runs against the same 31-point truth table, so it is a regression set, not a
-  blind test. Blinding route names costs 12.5pp of replay recall. Exactly one other target has
-  a baseline, and it confirms 2 of 6 truth rows at runtime. Target-independent coverage is not
-  claimed. `help wanted`.
-- Single-run replay is not stable at the point level: two identical runs produced 24/24 and
-  23/24. The swing comes from the late value-level evidence channel, not from the LLM stage.
-  `no fix planned` — it is a property of the evidence channel, and we report the range rather
-  than a point estimate.
-- One red line is a real reflected XSS on a file the shipped truth table does not register. We
-  disclose it in both the route-blinded and stability runs rather than editing the truth table
-  to absorb it. Adding it is an open oracle decision. `known`.
-- Detection-layer precision is low even though the confirmed layer is clean. On the 130-case
-  shard, 42 of 51 negative cases produced a candidate spec and 48 of 51 produced a static
-  warning. Almost all discriminative power sits in the terminal confirmation gate. `by design`
-  — the design deliberately over-proposes and spends its budget on confirmation.
-- Four truth points in the Java target are exempt as physically unreachable, and three
-  property/configuration families are excluded from the dynamic denominator. Both exemptions
-  are enumerated in the shipped truth table. `by design`.
-- H2 1.4.200 does not implement MySQL `SLEEP()`, so time-based SQL probes cannot produce a delay
-  on the h2 profile; confirmation falls back to boolean pairs. `environment`.
-- One target per task. Multi-target campaigns are not implemented. `no fix planned`.
-- The OWASP truth table is read from a path outside the repository, inherited from how the
-  benchmark is checked out locally. Recomputing on a clean clone requires placing
-  `expectedresults-1.2.csv` yourself. `help wanted` — making this self-contained is a
-  contained change.
-- `docs/` is predominantly Chinese. This README and `README_zh.md` are the entry points.
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) (or [CONTRIBUTING_zh.md](CONTRIBUTING_zh.md)). Two
-things matter most: a regression test that fails before your fix and passes after it, and
-numbers that can be recomputed by someone else from the shipped truth tables.
-
----
-
-## Security
-
-Do not open a public issue for a vulnerability in this project. Use the private channel
-described in [SECURITY.md](SECURITY.md).
+Do not open a public issue for a vulnerability in this project. Use GitHub's private
+vulnerability reporting (Security → Report a vulnerability) instead.
 
 ---
 
 ## License
 
-Apache License 2.0 — the full text is in [LICENSE](LICENSE), and attribution notices for
-third-party components are in [NOTICE](NOTICE).
+Apache License 2.0. The full text is in [LICENSE](LICENSE); attribution notices for third-party
+components are in [NOTICE](NOTICE).
 
-In plain terms: you may use, modify and redistribute this software, including inside a
-commercial or closed-source product, and Apache-2.0 does not oblige you to publish your own
-source. What it does require is keeping the copyright and licence notice intact, stating your
-own changes, and not using the project name or contributors' names to endorse something they
-did not work on. The licence also includes an express patent grant from the contributors.
+The licence permits use, modification and redistribution, including within closed-source
+products, provided that copyright and licence notices are retained, modifications are stated,
+and the project name or contributors' names are not used to endorse derived work. It includes
+an express patent grant from contributors.
 
-This is deliberately a permissive licence: the tool is meant to be embedded in other people's
-security pipelines.
+The permissive choice is deliberate: the tool is intended to be embedded in existing security
+pipelines rather than used standalone.

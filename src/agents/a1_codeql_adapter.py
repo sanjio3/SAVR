@@ -292,8 +292,13 @@ class CodeQLAdapter:
         if _disabled:
             self._codeql = None
         else:
-            # 优先级：显式入参 > config(CODEQL_BIN) > PATH 查找
-            candidate = codeql_bin or _cfg_codeql_bin() or shutil.which("codeql")
+            # 优先级：显式入参 > config(CODEQL_BIN / bin_path=auto 探测) > PATH 查找
+            # 入参可能是配置里的 "auto" 字样，按「未指定」处理，否则 Path("auto").exists()
+            # 为 False，会直接把 CodeQL 降级掉。
+            explicit = str(codeql_bin or "").strip()
+            if explicit.lower() == "auto":
+                explicit = ""
+            candidate = explicit or _cfg_codeql_bin() or shutil.which("codeql")
             # 传入的路径必须真实存在，否则视为不可用（回退内置规则）
             self._codeql = candidate if (candidate and Path(candidate).exists()) else None
         # 线程护栏保留固定小值（编译分层也吃 CPU，与后端/Ollama 共存）。

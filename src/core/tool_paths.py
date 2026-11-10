@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import List, Optional
 import os
+import shutil
 
 
 def get_repo_root() -> Path:
@@ -79,6 +80,38 @@ def find_existing_tool(*filenames: str) -> Optional[Path]:
 
 def find_ysoserial_jar() -> Optional[Path]:
     return find_existing_tool("ysoserial-all.jar", "ysoserial.jar")
+
+
+def find_codeql() -> Optional[Path]:
+    """Locate the CodeQL CLI without any machine-specific configuration.
+
+    Search order: ``SAST_AI_TOOLS_DIR/codeql``, then ``tools/codeql`` inside the
+    repository (where ``scripts/fetch_tools.py --only codeql`` unpacks the
+    bundle), then ``PATH``. An explicit ``CODEQL_BIN`` is handled by
+    ``src.core.config_registry`` before this function is reached, so a stale
+    environment value can never shadow a working install here.
+
+    Returns None when nothing is found; callers must degrade explicitly and
+    record the reason rather than silently producing an empty report.
+    """
+    exe_names = ("codeql.exe", "codeql")
+    roots: List[Path] = []
+    external = get_external_tools_dir()
+    if external is not None:
+        roots.append(external / "codeql")
+    roots.append(get_repo_root() / "tools" / "codeql")
+    for root in roots:
+        for name in exe_names:
+            candidate = root / name
+            if candidate.is_file():
+                return candidate
+        # Some bundles keep an extra nesting level: codeql/codeql/codeql.
+        for name in exe_names:
+            nested = root / "codeql" / name
+            if nested.is_file():
+                return nested
+    found = shutil.which("codeql")
+    return Path(found) if found else None
 
 
 def find_java_decompiler_jar(extra_search_dirs: Optional[List[Path]] = None) -> Optional[Path]:
