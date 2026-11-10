@@ -497,3 +497,5 @@ did not work on. The licence also includes an express patent grant from the cont
 
 This is deliberately a permissive licence: the tool is meant to be embedded in other people's
 security pipelines.
+
+<!-- PR gate smoke test: closed without merge -->
