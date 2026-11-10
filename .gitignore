@@ -146,11 +146,7 @@ scripts/*
 !scripts/launch/
 scripts/launch/*
 !scripts/launch/launch_java_quote.py
-!scripts/launch/launch_java_seccode.py
-!scripts/launch/launch_owasp.py
-!scripts/launch/launch_owasp_full.py
 !scripts/launch/launch_stack.py
-!scripts/launch/launch_target_mall.py
 !scripts/launch/start_dev.ps1
 # launch_ruoyi_full.py 依赖本机 JDK8 / MySQL / RuoYi 源码布局，保持本地专用、不随仓库分发
 # 本机一次性抽样监控/对账脚本：依赖未分发的本机 OWASP 真值与辅助脚本，不随仓库分发
@@ -167,23 +163,11 @@ tools/mvn_shim/*
 tools/*.cmd
 
 # ---------------------------------------------------------------------------
-# 可复现性：data/ 整体忽略，只精确放行基准真值表与 mini 分片。
-# 干净 clone 必须能拿到这些文件才能复算 README 里的四档数字；
-# 运行时数据（app.db、备份库、workspaces、扫描产物、盲化变体）一律不入库。
-# 已用 git check-ignore -v 逐条验证放行规则生效。
+# data/ 是运行时数据目录（SQLite 库、工作区、分片、扫描产物），整体不入库。
+# 参考真值表与分片清单不再随仓库分发：用户扫自己的靶场时没有对应真值。
+# 需要「真值表内点」保护时，用 SAST_AI_TRUTH_FILES 指向自己的 CSV。
 # ---------------------------------------------------------------------------
 data/*
-!data/java_sec_code_truth.csv
-!data/java_sec_code_truth_v2.csv
-!data/juliet_truth.csv
-!data/ruoyi_451_truth.csv
-!data/owasp_shards/
-data/owasp_shards/*
-!data/owasp_shards/shards/
-data/owasp_shards/shards/*
-# 只有 mini 分片入库：其余分片清单每条记录都带本机靶场源码路径，清洗代价大
-# 且会破坏「按路径定位源码文件」的语义。外部用户可自行按同一格式生成。
-!data/owasp_shards/shards/mini.json
 
 # ---------------------------------------------------------------------------
 # 历史一次性对账 / 诊断报告：本机工作区保留，不随开源仓库分发。

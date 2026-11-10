@@ -599,12 +599,11 @@ def _rule_expression_engine(code: str, rel: str) -> List[FrameworkHit]:
 
 # ── 规则 5b：反射调用（类名/方法名来自变量）→ command_execution ────────────
 #
-# 2026-11-02（若依首扫补口）：`data/ruoyi_451_truth.csv` 里唯一一条 in_scope 的
-# command_execution 是 `/monitor/job/add` + `/monitor/job/run`，而 本轮的
-# A1 **一条候选都没产出**（findings 里 command_execution 有 7 条，但没一条落在
-# Job/Quartz 文件上）。根因是这类「定时任务 invokeTarget 注入」不是 shell 拼接，
-# 而是**反射调用**：`Class.forName(beanName).newInstance()` + `method.invoke(...)`，
-# 现有的命令执行规则只认 `Runtime.exec` / `ProcessBuilder`，看不见它。
+# 典型形态是定时任务的 invokeTarget 注入（如 `/monitor/job/add` + `/monitor/job/run`）。
+# 这类漏洞不是 shell 拼接，A1 的字符串规则会**一条候选都不产出** —— findings 里
+# 有 command_execution，但没有一条落在 Job / Quartz 文件上。
+# 它的真实形态是**反射调用**：`Class.forName(beanName).newInstance()` + `method.invoke(...)`，
+# 而命令执行规则只认 `Runtime.exec` / `ProcessBuilder`，看不见它。
 #
 # 判据（同文件同时满足，保守）：
 #   1. `Class.forName(<标识符>)` —— 类名来自变量，不是字符串字面量；

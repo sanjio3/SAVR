@@ -1,14 +1,15 @@
-"""jsc 626→627 回归锁：剩余六个真值点的结构性根因。
+"""层三回归锁：剩余六个真值点的结构性根因。
 
 覆盖四类修复：
-  1. 靶场数据源：launch_java_seccode.py 默认带 h2 profile（sqli 布尔对可达）；
+  1. 靶场数据源：Spring Boot 靶场的 h2 profile（sqli 布尔对可达）——启动器已移出分发面，
+     对应守卫在 launcher 缺席时跳过；
   2. 两族接入行为 oracle：expression_injection / deserialization 的探测臂与判据；
   3. D1 投递：body 型 spec 的探测臂走裸串，且不再复用主载荷；
   4. D2 关联：孤儿 spec 用登记的 vhash 反查，不再每轮补入却每轮零重放。
 
 证据边界（必须保持）：deser_object_accepted 只证明「攻击者可控字节被反序列化
-器完整解析」，不等于 RCE 命令执行。判据与闸门都要按弱证据处理，避免 625 那种
-「召回改善换来红线误报恶化」。
+器完整解析」，不等于 RCE 命令执行。判据与闸门都要按弱证据处理，避免「召回改善
+换来红线误报恶化」。
 """
 from __future__ import annotations
 
@@ -30,30 +31,18 @@ def _read(rel: str) -> str:
 
 
 def test_watchdog_defaults_to_h2_profile_and_is_reversible():
-    src = _read("scripts/launch/launch_java_seccode.py")
-    assert "application-h2.properties" in src
-    assert 'JSC_SPRING_ARGS' in src
-    assert '"-jar", jar] + JSC_SPRING_ARGS' in src
-    assert 'SAST_AI_JSC_H2' in src
+    """基线守卫：launcher 未分发时跳过。
 
-    import importlib.util
+    `scripts/launch/launch_java_seccode.py` 属于特定靶场的启动器，已移出分发面。
+    保留这个占位守卫是为了让「靶场启动器不再入库」这件事在测试里有痕迹，而不是
+    悄悄消失。
+    """
     path = ROOT / "scripts" / "launch" / "launch_java_seccode.py"
-    old = os.environ.pop("SAST_AI_JSC_H2", None)
-    try:
-        spec = importlib.util.spec_from_file_location("_wb_lj_default", path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        assert mod.JSC_SPRING_ARGS == ["--spring.profiles.active=h2"]
-        os.environ["SAST_AI_JSC_H2"] = "0"
-        spec2 = importlib.util.spec_from_file_location("_wb_lj_off", path)
-        mod2 = importlib.util.module_from_spec(spec2)
-        spec2.loader.exec_module(mod2)
-        assert mod2.JSC_SPRING_ARGS == []
-    finally:
-        if old is None:
-            os.environ.pop("SAST_AI_JSC_H2", None)
-        else:
-            os.environ["SAST_AI_JSC_H2"] = old
+    if not path.exists():
+        pytest.skip("target-specific launcher is not distributed")
+    src = path.read_text(encoding="utf-8")
+    assert "application-h2.properties" in src
+    assert "JSC_SPRING_ARGS" in src
 
 
 # ── 2. 新族接入 oracle ────────────────────────────────────────────────

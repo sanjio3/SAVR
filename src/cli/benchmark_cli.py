@@ -4827,10 +4827,14 @@ def _norm_path(p):
 
 
 def _load_truth_file_keys() -> set:
-    """装载双靶场真值表 file 列（小写归一化），用于迟到回补的「真值表内点」判定。
+    """装载真值表 file 列（小写归一化），用于迟到回补的「真值表内点」判定。
 
-    仅回补「确属本靶场已知漏洞端点」的 spec，避免把真值表外的 genuine-sink
+    仅回补「确属目标已知漏洞端点」的 spec，避免把真值表外的 genuine-sink
     （如 tomcatfiltermemshell 写类文件）误升 confirmed_exploitable 触发红线。
+
+    本仓库不内置基准真值表：用户扫自己的靶场时通常也没有对应真值。需要这层保护时，
+    用 ``SAST_AI_TRUTH_FILES`` 指定一个或多个 CSV（逗号或分号分隔，每条至少要有 ``file``
+    列）；不给就返回空集，回补会被跳过——方向是保守的，少确认但不误升级。
     """
     global _TRUTH_FILE_KEYS_CACHE
     if _TRUTH_FILE_KEYS_CACHE is not None:
@@ -4838,10 +4842,10 @@ def _load_truth_file_keys() -> set:
     import csv
     import os
     keys: set = set()
-    _repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    for _fn in ("data/java_sec_code_truth_v2.csv", "data/ruoyi_451_truth.csv"):
-        _p = os.path.join(_repo, _fn)
+    raw = os.environ.get("SAST_AI_TRUTH_FILES", "")
+    for _p in [s.strip() for s in raw.replace(";", ",").split(",") if s.strip()]:
         if not os.path.exists(_p):
+            logger.warning("[truth-keys] 真值表不存在，已跳过：%s", _p)
             continue
         try:
             with open(_p, "r", encoding="utf-8-sig", newline="") as _f:
@@ -4850,7 +4854,7 @@ def _load_truth_file_keys() -> set:
                     if _file:
                         keys.add(_norm_path(_file))
         except Exception as _ce:  # noqa: BLE001
-            logger.warning("[truth-keys] 装载 %s 失败：%s", _fn, _ce)
+            logger.warning("[truth-keys] 装载 %s 失败：%s", _p, _ce)
     _TRUTH_FILE_KEYS_CACHE = keys
     return keys
 

@@ -53,8 +53,6 @@ INTERNAL_PREFIXES = (".workbuddy-ai/", ".workbuddy/", "data/app.db")
 # 必须存在且不得被 .gitignore 命中的文件。命中 ignore 意味着「工作区里有、发布产物里没有」——
 # 这类缺口在本机完全看不出来，只在干净 clone 里炸（CI 报 FileNotFoundError）。
 REQUIRED_TRACKED = (
-    "data/java_sec_code_truth_v2.csv",
-    "data/owasp_shards/shards/mini.json",
     "README.md",
     "README_zh.md",
     "LICENSE",

@@ -4,10 +4,8 @@
 真值源只有一个：``iast_sessions`` 表按 ``(workspace_id, app_name, agent_id)``
 唯一键查出的 ``probe_token``。历史上注入侧存在两套互相冲突的优先级：
 
-- ``launch_ruoyi_full.py``：``SAST_AI_PROBE_TOKEN`` 环境变量优先，DB 兜底；
 - ``launch_java_quote.py``：DB 优先，但查询**不带 workspace_id**，可能命中别的
   workspace 下的同名会话；
-- ``launch_owasp*.py``：按 ``CODE_PATH`` 反推 workspace 再查 DB；
 - ``launch_stack.py``：只读环境变量。
 
 再加上「原地改 DB token 的运维操作」会与探针手里的旧 token 冲突

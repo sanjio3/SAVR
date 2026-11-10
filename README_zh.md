@@ -143,30 +143,62 @@ uv run python -m src.cli.service_server
 
 ### 构建探针
 
-IAST 探针是构建产物，不随仓库分发。需要 JDK 11 与 Maven：
+IAST 探针是构建产物，不随仓库分发；源码在 `probe-java/`。需要 JDK 11 与 Maven：
 
 ```bash
 mvn -B -DskipTests -f probe-java/pom.xml clean package
+jar cf probe-java/target/sec-probe-bootstrap.jar -C probe-java/target/classes com/rasp/probe/TaintHub.class
 ```
 
-产物是 `probe-java/target/sec-probe.jar`。同一次构建还会生成配套的 `sec-probe-bootstrap.jar`，两个必须一起带上。探针必须在靶场 JVM 启动前挂上，而且要同时挂到 bootstrap 类路径和 agent 位置；`scripts/launch/` 下的启动脚本就是这么做的，具体参数以它们为准。jar 缺失时，那些脚本会回退到一个外部路径，靶场会不带插桩地跑起来——没有事件，也不会报错告诉你。
+第一条产出 `sec-probe.jar`（探针主体），第二条产出 `sec-probe-bootstrap.jar`。后者只含
+`TaintHub` 一个类，必须放进 `-Xbootclasspath/a`：探针要在 JDK 类加载器启动之前就能看到它，
+否则 bootstrap 期的插桩拿不到共享状态。**两条命令都要跑，`mvn` 不会自动生成 bootstrap jar。**
+构建前先停掉靶场 JVM，否则 jar 被占用无法覆盖。
 
-### 靶场与启动脚本
+挂载参数如下（取自 `scripts/launch/launch_java_quote.py`，可直接照拄）：
 
-靶场是外部项目，本仓库不分发它们的源码，所以启动脚本从环境变量读靶场位置：
+```bash
+java -Xbootclasspath/a:probe-java/target/sec-probe-bootstrap.jar \
+     -javaagent:probe-java/target/sec-probe.jar \
+     -Dsec.server.url=http://127.0.0.1:8000 \
+     -Dsec.agent.id=<agent-id> \
+     -Dsec.app.name=<app-name> \
+     -Dsec.agent.token=<DB 里的 probe_token> \
+     -Dsec.app.packages=<你的业务包前缀，如 com.example> \
+     -Dsec.network.timeout.ms=5000 \
+     -jar your-target.jar
+```
 
-| 启动脚本 | 靶场 | 环境变量 |
-| --- | --- | --- |
-| `scripts/launch/launch_java_seccode.py` | java-sec-code | `SAST_AI_SECCODE_DIR` |
-| `scripts/launch/launch_owasp.py` | OWASP Benchmark 抽样版（200 例） | `SAST_AI_OWASP_DIR` |
-| `scripts/launch/launch_owasp_full.py` | OWASP Benchmark 全集 | `SAST_AI_OWASP_FULL_DIR` |
-| `scripts/launch/launch_target_mall.py` | target-mall | `SAST_AI_TARGET_MALL_DIR` |
+四个必须对的点：
 
-不设时回退到「与本仓库同级、同名目录」的约定。探针 jar 默认取仓库内构建产物 `probe-java/target/sec-probe.jar`，`SAST_AI_PROBE_JAR` 可以改写。`scripts/launch/launch_java_quote.py` 是「如何把探针挂到任意 JVM 靶场」的最小示例，自己写启动脚本时以它为准。
+- `-Dsec.app.packages` 写**真实业务包前缀**。写错不会报错，只是零插桩、一个事件都没有，
+  这是最常见的「扫描跑完了但什么都没发现」。
+- `-Dsec.server.url` 用 `127.0.0.1` 而不是 `localhost`。后者在部分环境解析到 `::1`，
+  而后端只监听 IPv4。
+- `-Dsec.agent.token` 必须与数据库 `iast_sessions.probe_token` 一致。不一致时摄取接口
+  返回 HTTP 200 且 `accepted=0`，看起来像成功。
+- 探针只能在 JVM **启动前**挂载，不支持运行时 attach。
 
-另有两个环境变量值得知道：`SAST_AI_HSQLDB_JAVA` 指定 OWASP 脚本起 HSQLDB 服务用的 JDK，`SAST_AI_TOOLS_DIR` 指向 `scripts/fetch_tools.py` 下载工具的目录。
+挂完先自检，`ready=true` 才算接上：
 
-RuoYi 的启动脚本不分发：它依赖特定 JDK 8、本机 MySQL 和本地 RuoYi 源码，属于本地脚本。自己接靶场时按 `launch_java_quote.py` 的方式挂探针即可。
+```bash
+python tools/probe_preflight.py --workspace-id <id> --http
+```
+
+它同时校验会话行存在、心跳新鲜、`X-Agent-Token` 握手被接受且返回非空 `session_id`。
+它不写事件、不刷新心跳，所以不会把已经死掉的心跳伪装成活的。
+
+### 接入你自己的靶场
+
+本仓库不分发任何靶场源码，也不绑定特定靶场。接入方式是写一个启动脚本，把探针按上面的
+参数挂到你自己的应用上。`scripts/launch/launch_java_quote.py` 是最小完整示例：它起一个
+Spring Boot 应用、解析探针 jar 路径、从数据库取 token、拼好 JVM 参数。照它改成你的启动
+命令即可。
+
+`scripts/launch/launch_stack.py` 启动的是 SAVR 自己（后端 + 前端看门狗），与靶场无关。
+
+两个环境变量有用：`SAST_AI_PROBE_JAR` 改写探针 jar 路径，`SAST_AI_TOOLS_DIR` 指向
+`scripts/fetch_tools.py` 下载第三方工具的目录。
 
 ### 提交一次扫描
 
@@ -174,8 +206,11 @@ RuoYi 的启动脚本不分发：它依赖特定 JDK 8、本机 MySQL 和本地 
 
 ```bash
 python -m src.cli.scan_task_runner --task-id 1 --target /path/to/target/src \
-  --output-dir output/run1 --shard-file data/owasp_shards/shards/mini.json --no-sca
+  --output-dir output/run1 --no-sca
 ```
+
+`--shard-file <path>` 可选：指向一个 JSON 分片清单，把扫描范围收窄到清单内的入口；
+不给就扫全量。分片清单的格式见 `src/core/scan_scope.py` 的加载逻辑。
 
 在把一轮指向外部靶场之前，先确认探针会话与 token 确实对得上。对不上时，摄取接口会返回 HTTP 200 且 `accepted=0`，很容易被误读成成功：
 
