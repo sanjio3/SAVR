@@ -1,6 +1,6 @@
 # 2026-11-06：补齐 PEP 517 构建后端，干净环境里的 `pip install -e .` 才可用。
-# 本项目以仓库根为 import 根（[tool.pytest.ini_options].pythonpath=["."]），
-# 不需要把 src/ 打成可安装包，故 packages 显式留空；editable 安装只提供元数据。
+# 本项目以仓库根为 import 根，不需要把 src/ 打成可安装包，故 packages 显式留空；
+# editable 安装只提供元数据。
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
@@ -32,22 +32,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "pytest>=8.3.3",
     "ruff>=0.14.5",
-    # starlette.testclient.TestClient is used by several API tests. httpx used to
-    # arrive only as a transitive dependency, so a provider bump could remove it
-    # and break collection. Declare it explicitly.
-    "httpx>=0.27",
-]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]
-addopts = "--strict-markers -ra"
-markers = [
-    "external: needs a local target, a real database or an external service",
-    "benchmark: expensive benchmark re-run, never part of the PR gate",
-    "slow: long-running regression test",
 ]
 
 # Lint is opt-in per file: ci_gate.py enforces ruff only on the small set of

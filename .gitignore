@@ -119,11 +119,7 @@ tools/gadget_builder/lib/*.jar
 frontend/vite.config.ts.timestamp-*.mjs
 scripts/_archive/
 tools/_archive/
-# launch_java_seccode.py：靶场启动器/评估工具，路径已环境变量化，随仓库分发
-# launch_owasp.py：靶场启动器/评估工具，路径已环境变量化，随仓库分发
-# launch_owasp_full.py：靶场启动器/评估工具，路径已环境变量化，随仓库分发
-# launch_target_mall.py：靶场启动器/评估工具，路径已环境变量化，随仓库分发
-# launch_ruoyi_full.py 依赖本机 JDK8 / MySQL / RuoYi 源码布局，保持本地专用、不随仓库分发
+# launch_ruoyi_full.py 依赖本机 JDK8 / MySQL / 靶场源码布局，保持本地专用、不随仓库分发
 launch_ruoyi_full.py
 
 # 文档已内联进 README，docs/ 不再分发；本机残留一并忽略。
@@ -135,9 +131,6 @@ scripts/*
 !scripts/fetch_tools.py
 !scripts/README.md
 !scripts/submit_scan_task.py
-!scripts/seed_poc_memory.py
-# tests/test_route_binding_r24.py 直接 import 其中的纯函数，必须随仓库分发
-!scripts/check_r23_acceptance.py
 # 开发入口：start_dev.ps1 指向 scripts/dev_all.ps1，三者一起分发才不断链
 !scripts/dev_all.ps1
 !scripts/dev_backend.ps1
@@ -148,8 +141,7 @@ scripts/launch/*
 !scripts/launch/launch_java_quote.py
 !scripts/launch/launch_stack.py
 !scripts/launch/start_dev.ps1
-# launch_ruoyi_full.py 依赖本机 JDK8 / MySQL / RuoYi 源码布局，保持本地专用、不随仓库分发
-# 本机一次性抽样监控/对账脚本：依赖未分发的本机 OWASP 真值与辅助脚本，不随仓库分发
+# 本机一次性抽样监控/对账脚本：依赖未分发的本机真值与辅助脚本，不随仓库分发
 tools/reconcile_task_647.py
 tools/watch_task_647.py
 tools/owasp_run_shards.py
@@ -169,23 +161,6 @@ tools/*.cmd
 # ---------------------------------------------------------------------------
 data/*
 
-# ---------------------------------------------------------------------------
-# 历史一次性对账 / 诊断报告：本机工作区保留，不随开源仓库分发。
-# 其中含开发机绝对路径与历史凭据讨论串，公开发布前不入库；
-# 已 tracked 的历史文档不受 .gitignore 影响，由卫生门禁逐行约束。
-# 只精确放行 README 与交付说明实际引用的文档。
-# ---------------------------------------------------------------------------
-docs/*.md
-!docs/gate0_release_criteria.md
-!docs/generalization_validation_design.md
-!docs/d1_auth_guard_change.md
-!docs/NAMING_STANDARDS.md
-!docs/architecture.md
-# 两篇无效轮复盘归档在此；其余历史对账已从发布树移除。
-!docs/historical/
-# validation_run_plan_ / validation_run_state_ 是本机执行记录，含部署路径与 run_env
-# 具体值，命令必须保留真值才能直接跑，因此本机保留但不随仓库分发。
-
 # 本机专用守护 / 对账脚本（含本机 Ollama 与靶场路径，工作区保留）
 tools/_ollama_keeper.py
 tools/metric_layers.py
@@ -200,9 +175,8 @@ tools/_wb_shiro_probe.java
 # 一次性交付总览（不随仓库分发）
 overview.md
 
-# 测试记录不入库：CI 的 JUnit XML 与运行页面摘要是唯一出口。
-# 基准重跑（L1-L3）的报告同样只进 CI artifact，不往仓库里写新文件。
+# 本机运行记录不入库
 output/ci/
+output/benchmark/
 *.junit.xml
 junit.xml
-output/benchmark/

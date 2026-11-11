@@ -24,24 +24,6 @@ English | [中文](README_zh.md)
 
 ---
 
-## The problem
-
-A static analyzer gives you a list. Some entries are real, some are not, and nothing in the
-report tells you which. A dynamic scanner gives you coverage of URLs you already know how to
-reach, and nothing about the sinks you never guessed. Both halves are cheap to produce and
-expensive to trust.
-
-SAVR connects them. Static analysis proposes candidates. A local LLM reads each sink file and
-writes a concrete trigger spec — which route, which parameter, which payload, which bypass. A
-deterministic replayer then fires that spec at a running target and looks for structural
-evidence of impact.
-
-**The LLM never touches the target.** It judges and it writes specs; that is the whole of its
-authority. Everything downstream is deterministic, replayable and auditable, which is what
-makes a confirmation mean something.
-
----
-
 ## How a scan works
 
 ```mermaid
@@ -77,101 +59,7 @@ flowchart LR
   vulnerability can be told apart from a target that was down, an endpoint that 404s, or a
   payload that never arrived.
 - Deterministic retries are always on. I2, an LLM feedback loop that re-judges based on
-  replay diffs, is opt-in (`SAST_AI_CLOSED_LOOP=1`) and has not shown a measured gain in our
-  testing.
-
-Where the time goes, measured on our own runs: on a 95-file Java target, replay and target
-round-trips took 45% of recorded stage time, the LLM stage 26%, deterministic re-runs 25% and
-static analysis 2%. On a 130-case benchmark shard it was 46% / 18% / 16% / 17%. The dominant
-cost is hitting the target, not inference.
-
----
-
-## Results
-
-Three evaluation sets are reported. They use different accounting and must not be combined
-into a single score. The numbers describe one conformance run on the reference targets, not a
-target-independent guarantee.
-
-### Java target, four-tier accounting
-
-A full re-scan of a public Java vulnerability test application (31 in-scope truth points). The
-dynamic denominator is 24 points: 31 minus 4 physically unreachable endpoints and 3
-property/configuration families that cannot be proven by sending a payload.
-
-`confirmed_replay` requires `verification_status == confirmed_exploitable`, an evidence rule
-without the `framework:` prefix, and at least one row in `replay_attempts` for that spec.
-
-| Run | What differs | Static (file) | Static (file+family) | Replay (file+family) | Red-line FP |
-|---|---|---|---|---|---|
-| Baseline | frozen build, full re-scan | 31/31 | 30/31 | 24/24 | 0/65 |
-| Route-blinded | route names and dispatch targets rewritten | 30/31 | 29/31 | 21/24 (87.5%) | 0/40 |
-| Stability A | identical config, second run | 31/31 | 30/31 | 24/24 | 1/62 |
-| Stability B | identical config, third run | 31/31 | 30/31 | 23/24 (95.8%) | 0/62 |
-
-- Stability is measured, not assumed. Two runs of the same frozen source with identical
-  configuration produced 24/24 and 23/24 — a one-point swing. The point that moved is an SSTI
-  case whose late value-level evidence arrived in one run and not the other. Do not quote this
-  as "stable at 100%".
-- Blinding route names costs 4 points of static file+family recall and 12.5 points of replay
-  recall. That gap is the measured value of knowing what the routes are called; it is the
-  reason route-name heuristics are treated as a prior rather than as evidence.
-- The single red line in Stability A is a real reflected XSS that the shipped truth table does
-  not register for that file. We chose to disclose it rather than edit the truth table to
-  absorb it. Under the looser pre-2026 definition the route-blinded run also reads 1 red line;
-  tightening the definition (requiring an actual replay attempt) is what moved it to 0, not a
-  fix, and we report it that way.
-- Static file+family is 30/31 in the three unblinded runs — the same point every time, which
-  is a known coverage gap, not run-to-run noise.
-
-Recompute with your own scan database:
-
-```bash
-python tools/jsc_four_tier.py --task-id <id> --verbose
-python tools/jsc_four_tier.py --task-id <id> --param-drift
-python tools/generalization_compare.py --mode stability --baseline <id1> --variant <id2>
-```
-
-### Cross-target baseline (RuoYi 4.5.1)
-
-A separate truth table (15 rows, 6 in scope) on a different framework and codebase. Static 4/4
-by point (6/6 by row), dynamic 4/4 (6/6), runtime replay 2/4 (2/6), red-line FP 0/2,
-confirmed-level FP 0/7. Of the four unconfirmed points, three are MyBatis `${}` confirmed as a
-static code property where the boolean-blind oracle condition did not hold, and one reached the
-sink but was not judged harmful. None of the four is a detection miss.
-
-This run builds a baseline only. It is not scored against the Java target's 24-point
-denominator, because the two truth tables have different sizes and different families.
-
-### OWASP Benchmark, 130-case shard
-
-79 true positives and 51 false positives, matched case-by-case against the official
-`expectedresults-1.2.csv`.
-
-Two accountings exist for this benchmark and they are not interchangeable. Earlier work used
-confirmation-state accounting before the strict replay definition existed, and those figures
-depend on route-layout priors. They are kept only because the gap between them is informative:
-
-| Accounting | TP | FP | Recall | Precision |
-|---|---|---|---|---|
-| Earlier accounting, normal layout, layout prior on | 78 | 0 | 98.7% | 100% |
-| Earlier accounting, layout obfuscated, layout prior off | 71 | 0 | 89.9% | 100% |
-
-The 8.9pp gap is the measured dependency on URL layout knowledge: 2740 routes were renamed and
-dispatch targets rewritten to produce the second row. Both rows predate the strict replay
-definition and are not comparable with the figure below.
-
-The current reading on the same 130 cases: 59 confirmed cases, 59 TP, 0 FP, 100% precision,
-74.7% recall, red-line FP 0/34.
-
-Zero false confirmations plus 74.7% recall is the honest summary. It is not "fully detected".
-The 20 missed true positives break down as 15 weak-randomness, 2 weak-hash, 2 SQL injection and
-1 weak-crypto. Weak randomness is 0/15 confirmed as an entire family: those are real defects,
-the scanner detects them, and the confirmation stage cannot currently prove them, because their
-specs are labelled `xss` and routed into the XSS verdict channel. See Known limitations.
-
-A passing red line means "we did not confirm a false vulnerability". It does not mean "we found
-everything".
+  replay diffs, is opt-in (`SAST_AI_CLOSED_LOOP=1`) and off by default.
 
 ---
 
@@ -346,12 +234,10 @@ SAVR/
 │   └── cli/                 # service server, scan task runner, benchmark CLI
 ├── probe-java/              # the IAST/RASP agent (Java, ByteBuddy) — built, not shipped
 ├── frontend/                # Vue 3 + Vite control panel
-├── tools/                   # reconciliation, shards, evaluation harness, one-off scripts
+├── tools/                   # release hygiene, CI gate, probe preflight, CodeQL queries
 ├── scripts/                 # entry points: fetch_tools, submit_scan_task, launch/
 ├── config/                  # committed, credential-free configuration
-├── data/                    # reference truth tables and a shard manifest
-├── tests/                   # unit and regression suite
-└── .github/workflows/       # ci (3 required checks) and benchmark
+└── .github/workflows/       # CI: static / test / frontend required checks
 ```
 
 ---

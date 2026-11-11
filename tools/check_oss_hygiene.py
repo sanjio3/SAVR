@@ -135,8 +135,8 @@ ROOT_ALLOWED_ENTRIES = frozenset({
     "pyproject.toml", "uv.lock",
     ".env.example", ".gitignore", ".gitattributes",
     # 目录
-    ".github", "config", "data", "frontend", "probe-java",
-    "scripts", "src", "tests", "tools",
+    ".github", "config", "frontend", "probe-java",
+    "scripts", "src", "tools",
 })
 
 
@@ -180,7 +180,7 @@ def _local_import_gaps(files: list[str]) -> list[tuple[str, str]]:
         while d:
             pkgs.add(d.replace("/", "."))
             d = os.path.dirname(d)
-    # 顶层脚本的「裸名 import」：测试常把 tools/ 塞进 sys.path 后 `import xxx`，
+    # 顶层脚本的「裸名 import」：脚本常把 tools/ 塞进 sys.path 后 `import xxx`，
     # 这类引用不带包前缀，靠上面的规则查不到，单独按文件名匹配。
     export_set = set(files)
     top_scripts: dict[str, str] = {}

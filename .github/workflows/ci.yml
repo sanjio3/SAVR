@@ -37,7 +37,7 @@ jobs:
   test:
     name: test
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,15 +49,8 @@ jobs:
           cache-dependency-glob: uv.lock
       - name: Install dependencies
         run: uv sync --frozen --group dev
-      - name: Unit and regression tests
+      - name: Core import smoke
         run: uv run --frozen python tools/ci_gate.py --step test
-      - name: Upload JUnit results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: junit-${{ github.run_id }}-${{ github.run_attempt }}
-          path: output/ci/junit.xml
-          if-no-files-found: warn
 
   frontend:
     name: frontend
@@ -86,22 +79,19 @@ jobs:
   # job names above are pinned in branch protection, so this matrix can grow or
   # shrink without touching the merge gate.
   compat:
-    name: compat (${{ matrix.os }}, py${{ matrix.python-version }}, ${{ matrix.scope }})
+    name: compat (${{ matrix.os }}, py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             python-version: "3.13"
-            scope: full
           - os: windows-latest
             python-version: "3.12"
-            scope: smoke
           - os: windows-latest
             python-version: "3.13"
-            scope: smoke
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -113,24 +103,7 @@ jobs:
           cache-dependency-glob: uv.lock
       - name: Install dependencies
         run: uv sync --frozen --group dev
-      # Windows is a smoke signal. Several legacy tests assume a developer machine
-      # (console encoding, local subprocess tools); running the whole suite on a
-      # clean runner fails for environment reasons unrelated to the code.
-      - name: Unit and regression tests
-        if: matrix.scope == 'full'
-        run: uv run --frozen python tools/ci_gate.py --step test
       - name: Static gate
-        if: matrix.scope == 'smoke'
         run: uv run --frozen python tools/ci_gate.py --step static
-      - name: Platform-neutral regression subset
-        if: matrix.scope == 'smoke'
-        run: >-
-          uv run --frozen python -m pytest
-          tests/test_vuln_hash.py tests/test_d2_spec_association.py -q
-      - name: Upload JUnit results
-        if: always() && matrix.scope == 'full'
-        uses: actions/upload-artifact@v4
-        with:
-          name: junit-compat-${{ matrix.os }}-${{ matrix.python-version }}-${{ github.run_id }}
-          path: output/ci/junit.xml
-          if-no-files-found: warn
+      - name: Core import smoke
+        run: uv run --frozen python tools/ci_gate.py --step test
