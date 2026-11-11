@@ -51,7 +51,7 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 from src.core.corpus_profile import StackProfile, active_profile
 

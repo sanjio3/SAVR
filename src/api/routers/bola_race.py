@@ -6,7 +6,7 @@
 - POST /api/bola-race/verify-bola  BOLA 多身份重放验证（运行时影响证明）
 - POST /api/bola-race/verify-race  RACE 并发重放验证（运行时影响证明）
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, Body, HTTPException
 

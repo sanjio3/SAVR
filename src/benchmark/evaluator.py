@@ -3,8 +3,7 @@ Benchmark 评估器
 计算准确率、覆盖率等指标
 """
 import logging
-from typing import List, Dict, Set
-from difflib import SequenceMatcher
+from typing import List, Dict
 
 from ..core.models import ScanResult, BenchmarkResult
 from .ground_truth import get_ground_truth, count_total_vulnerabilities

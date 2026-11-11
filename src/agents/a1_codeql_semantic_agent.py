@@ -20,7 +20,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.agents.a1_codeql_adapter import CodeQLAdapter
-from src.core.model_gateway import ModelGateway, gateway_from_config, resolve_llm_config
+from src.core.model_gateway import gateway_from_config, resolve_llm_config
 
 logger = logging.getLogger(__name__)
 from src.core.models import ScanResult, Vulnerability, rule_hit_label

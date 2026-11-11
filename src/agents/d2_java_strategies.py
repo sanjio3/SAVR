@@ -7,9 +7,14 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from .d2_types import VerificationResult
+
+
+def _sanitize_label_local(text: str) -> str:
+    """把标签收敛成只含安全字符的 token（供外部命令行工具使用）。"""
+    return re.sub(r'[^a-zA-Z0-9._-]+', '_', text or '').strip('_') or 'target'
 
 logger = logging.getLogger(__name__)
 
@@ -916,7 +921,6 @@ class D2JavaStrategiesMixin:
         for java_file in self._find_target_files(project_path, vulnerability, [".java"]):
             rel_path = str(java_file.relative_to(project_path)).replace("/", "\\")
             lines = java_file.read_text(encoding="utf-8", errors="ignore").splitlines()
-            request_prefix = ""
             current_signature = self._find_enclosing_signature(lines, selected_line) if lines else ""
             method_match = re.search(r'(\w+)\s*\(', current_signature)
             method_name = method_match.group(1) if method_match else "readFile"

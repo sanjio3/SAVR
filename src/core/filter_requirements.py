@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Sequence
 
 _HEADER_READ_RE = re.compile(
     r"\.\s*getHeader\s*\(\s*\"([A-Za-z0-9\-_]+)\"\s*\)|"

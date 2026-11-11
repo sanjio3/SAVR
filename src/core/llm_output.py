@@ -22,8 +22,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 

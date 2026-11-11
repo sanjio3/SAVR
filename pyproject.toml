@@ -43,6 +43,12 @@ extend-exclude = ["probe-java", "frontend", "tools/_archive", "scripts/_archive"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]
+# 这些规则在本仓库的历史代码上不作为门禁：
+#   E402      大量模块刻意「先设环境变量再导入」
+#   E702/E703 历史上存在一行多语句
+#   E741      单字母命名多见于索引与数学场景
+#   E731      lambda 赋值是既有写法
+ignore = ["E402", "E702", "E703", "E741", "E731", "F541"]
 
 [tool.uv]
 package = false

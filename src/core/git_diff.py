@@ -22,7 +22,6 @@ Results use the retest vocabulary ``fixed`` / ``not_fixed`` / ``uncertain``.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 # Result vocabulary (kept independent from the lifecycle module).

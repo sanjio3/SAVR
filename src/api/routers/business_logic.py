@@ -6,7 +6,7 @@
 - POST /api/business-logic/verify        单类目运行时重放验证（category + trigger_spec + target）
 """
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 
 from fastapi import APIRouter, Body, HTTPException
 

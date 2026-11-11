@@ -7,9 +7,14 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from .d2_types import VerificationResult
+
+
+def _sanitize_label_local(text: str) -> str:
+    """把标签收敛成只含安全字符的 token（供外部命令行工具使用）。"""
+    return re.sub(r'[^a-zA-Z0-9._-]+', '_', text or '').strip('_') or 'target'
 
 logger = logging.getLogger(__name__)
 

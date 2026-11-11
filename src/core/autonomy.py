@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 CONFIDENCE_RANK = {"low": 1, "medium": 2, "high": 3}
 IMPACT_RANK = {"low": 1, "medium": 2, "high": 3}

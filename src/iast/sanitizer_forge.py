@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Dict, List, Optional
 
-from src.core.sanitizer_miner import FilterSpec, simulate_filter, simulate_filter_safe
+from src.core.sanitizer_miner import FilterSpec, simulate_filter_safe
 
 # 确定性候选池：比旧的单一静态表丰富得多，覆盖常见的"绕过写法空间"。
 # 构造原则：同一个语义，准备多种表达形态，由 FilterSpec 决定哪些能活下来。

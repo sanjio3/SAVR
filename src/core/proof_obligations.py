@@ -6,9 +6,8 @@ from typing import Any, Dict, Iterable, List, Optional
 import re
 
 from .exploit_spec import (
-    empty_chain_proof, merge_exploit_specs, normalize_chain_proof, normalize_exploit_spec,
+    empty_chain_proof, normalize_chain_proof, normalize_exploit_spec,
     DIFFERENTIAL_PROOF_FAMILIES, _BUSINESS_LOGIC_FAMILY_ALIASES, canonical_business_logic_family,
-    derive_flow_type,
 )
 
 
@@ -319,7 +318,7 @@ def evaluate_proof_obligations(
     prerequisites = spec.get("prerequisites", {})
     success_signal = spec.get("success_signal", {})
     route = str(entry.get("route", "") or "")
-    method = str(entry.get("method", "") or "")
+    str(entry.get("method", "") or "")
     parameter_name = str(entry.get("parameter_name", "") or "")
     payload_family = str(payload.get("payload_family", "") or "")
     lower_text = merge_supporting_text(vuln, supporting_nodes)

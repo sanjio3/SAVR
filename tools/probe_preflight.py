@@ -41,7 +41,7 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from src.iast.probe_token import (  # noqa: E402
-    DEFAULT_DB_PATH, ProbeTokenError, lookup_db_token, resolve)
+    DEFAULT_DB_PATH, ProbeTokenError, resolve)
 
 API_BASE = os.environ.get("SAST_AI_API_BASE", "http://127.0.0.1:8000")
 

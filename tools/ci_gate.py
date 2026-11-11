@@ -31,6 +31,7 @@ LINT_FILES = (
     "tools/ci_gate.py",
     "tools/clean_clone_check.py",
 )
+LINT_DIRS = ("src", "tools", "scripts")
 
 # Importing these in a clean process proves the runtime dependency closure is
 # installed and the core package graph is loadable. None of them opens a database,
@@ -98,6 +99,14 @@ def step_static():
     if rc:
         return rc
     rc = run("ruff format", [sys.executable, "-m", "ruff", "format", "--check", *LINT_FILES])
+    if rc:
+        return rc
+    # The whole tree is linted with the same error-level rule set, so a defect
+    # introduced anywhere is caught while the historical style debt stays out
+    # of the gate.
+    rc = run("ruff check (whole tree)", [sys.executable, "-m", "ruff", "check", *LINT_DIRS])
+    if rc:
+        return rc
     if rc:
         return rc
     return syntax_check()

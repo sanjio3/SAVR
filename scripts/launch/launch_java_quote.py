@@ -13,7 +13,6 @@ fail-closed 报错，不再「各 launcher 各挑一个」造成静默丢事件�
 """
 import os
 import shutil
-import sqlite3
 import subprocess
 import sys
 import time

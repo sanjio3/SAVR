@@ -35,8 +35,8 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Sequence, Tuple
 
 # ── 平台族名（与 trigger_specs.family 对齐） ──────────────────────────────
 FAMILY_XSS = "xss"

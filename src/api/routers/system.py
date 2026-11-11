@@ -4,7 +4,6 @@ from src.api.dependencies import container
 from src.api.schemas import SystemStatusResponse, ToolSpecResponse
 from src.core.config import config
 from src.core.tool_registry import ToolRegistry
-from src.pipeline.sca.service import SCAPipelineService
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 

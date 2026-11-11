@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import html
 import re
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Optional
 from urllib.parse import unquote
 
 

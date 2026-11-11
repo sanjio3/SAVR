@@ -8,7 +8,7 @@ import socket
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List
 from src.core import workspace_runtime
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ class D2PlanningMixin:
             # 尝试提取JSON
             result = self._extract_json(response)
             return result
-        except:
+        except Exception:
             logger.warning(f"[D2] Failed to parse understanding response: {response[:200]}")
             return {
                 "trigger_condition": "Unknown",
@@ -97,7 +97,7 @@ class D2PlanningMixin:
                     dockerfile_content = f.read()
                     dockerfile_path = df_path
                     break
-            except:
+            except Exception:
                 continue
 
         # 查找项目中的API端点
@@ -111,11 +111,9 @@ class D2PlanningMixin:
 当前项目优先镜像: {preferred_project_image}
 """
         # 如果有本地镜像，强制使用，不允许docker_build
-        use_local_only = False
         local_image = preferred_project_image if local_images.get('images') else '无'
         if local_images.get('images'):
             local_docker_info += f"\n**强制要求**: 必须使用当前项目绑定的本地镜像 `{preferred_project_image}` 进行 docker_run！禁止使用 docker_build！"
-            use_local_only = True
 
         prompt = f"""
 # 漏洞验证计划制定 - 你是一个专业的安全研究员
@@ -381,7 +379,6 @@ class D2PlanningMixin:
     def _find_api_endpoints(self, project_path: str) -> str:
         """查找项目中的API端点"""
         endpoints = []
-        import os
         from pathlib import Path
 
         # 查找Java控制器文件
@@ -402,7 +399,7 @@ class D2PlanningMixin:
                     matches = re.findall(pattern, content)
                     for method, path in matches:
                         endpoints.append(f"{method.upper()} /{path}")
-            except:
+            except Exception:
                 continue
 
         return "\n".join(endpoints[:20])  # 限制数量
@@ -661,7 +658,7 @@ class D2PlanningMixin:
                 'evidence': result.get('evidence', []),
                 'fix_suggestion': result.get('fix_suggestion', '')
             }
-        except:
+        except Exception:
             logger.warning(f"[D2] Failed to parse conclusion: {response[:200]}")
             step_errors = []
             for item in execution.get('results', []):

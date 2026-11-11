@@ -11,7 +11,10 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Set
+
+if TYPE_CHECKING:  # pragma: no cover - 仅供类型标注，运行时不导入
+    from src.iast.orchestrator import DastImpact
 from urllib.parse import urljoin
 
 import requests
@@ -192,7 +195,7 @@ def _fallback_auth_cookies(target: Optional[Dict[str, Any]] = None,
     真的重新登录，而不是拿 TTL 内缓存的旧 cookie 把同一个 302 再打一遍。
     """
     try:
-        from src.iast.auth_session import AuthSessionManager, settings_from_workspace
+        from src.iast.auth_session import settings_from_workspace
     except Exception:
         return {}
     settings: Dict[str, Any] = {}
@@ -3515,7 +3518,7 @@ class D1Service:
         """
         from src.core.replay_plan import (
             build_replay_plan, plan_from_spec, classify_echo,
-            scan_read_candidates, make_self_limiting_marker,
+            make_self_limiting_marker,
         )
 
         out: Dict[str, Any] = {
@@ -3627,7 +3630,7 @@ class D1Service:
           2) 写路由的同路径/兄弟路径变体（/comment → /、/comments）。
         limit 硬上限 12，宁可少报也不烧预算。
         """
-        from src.core.replay_plan import scan_read_candidates, ECHO_RAW
+        from src.core.replay_plan import scan_read_candidates
 
         base_url = str((target or {}).get("service_url") or "").rstrip("/")
         headers = dict((auth or {}).get("auth_headers") or {})
@@ -3672,7 +3675,6 @@ class D1Service:
         如 B 的 user_id / email / owner 字段值)。
         accounts：{attacker: {auth_headers,auth_cookies}, victim: {...}} 或 attacker 在前的列表。
         """
-        from urllib.parse import urljoin
         spec = dict(trigger_spec or {})
         target = dict(target or {})
         # 统一受害者资源 id 字段名：victim_resource_id（不把 DAST 表的 resource_id 当受害者 id 兜底）。
@@ -3948,7 +3950,6 @@ class D1Service:
         不报错、不伪造数据。
         """
         import threading
-        from urllib.parse import urljoin
         spec = dict(trigger_spec or {})
         target = dict(target or {})
         method = str(spec.get("http_method") or "POST").upper()
@@ -4168,7 +4169,6 @@ class D1Service:
         [(pname, ploc, pval), ...] 追加注入（如计算逻辑变异数值）。
         """
         self._apply_endpoint_schema(spec)
-        from urllib.parse import urljoin
         base_url = str(target.get("service_url") or "").rstrip("/")
         endpoint = str(spec.get("target_endpoint") or "").lstrip("/")
         method = str(spec.get("http_method") or "GET").upper()
@@ -5386,7 +5386,6 @@ class D1Service:
         且金额直接采信。DAST 差分：取一个未付款订单，发 signType=none + 攻击者指定 canary 金额（如 0.01）
         的回调，读回订单应被标记为 PAID 且 payAmount=canary → 签名伪造确认（canary 注入点=攻击者金额）。"""
         from urllib.parse import urljoin
-        from decimal import Decimal, InvalidOperation
         spec = dict(spec or {})
         target = dict(target or {})
         accounts = accounts if isinstance(accounts, dict) else {}
@@ -5999,7 +5998,7 @@ class D1Service:
     @staticmethod
     def _parse_raw_response(raw: str) -> Dict[str, Any]:
         lines = raw.replace("\r\n", "\n").split("\n")
-        status = IdorService._status_from_summary(lines[0] if lines else "")
+        status = D1Service._status_from_summary(lines[0] if lines else "")
         headers: Dict[str, str] = {}
         body_lines = []
         in_body = False

@@ -15,7 +15,6 @@
 #     创建任务: 经 API / 前端创建扫描任务（归属 workspace + 下发 task_id），
 #               由 task_service → scan_task_runner → run_benchmark(task_id=...) 统一执行。
 #     注意: 离线 CLI 直跑入口已禁用（见 main 守卫），所有扫描须经由统一任务编排路径。
-import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import logging
@@ -33,7 +32,7 @@ from typing import Any, Dict, List, Optional
 from src.iast.spec_projection import sync_entry_projection
 
 try:
-    from tqdm import tqdm
+    from tqdm import tqdm  # noqa: F401  (可用性探测，不直接使用)
     HAS_TQDM = True
 except ImportError:
     HAS_TQDM = False
@@ -62,7 +61,6 @@ from src.core.proof_obligations import (
     has_auth_source_evidence,
     has_idor_source_evidence,
     has_ssrf_source_evidence,
-    is_auth_header_sanitized,
     is_ssrf_source_candidate,
     merge_a1_evidence,
     pick_nearest_candidate,
@@ -78,19 +76,17 @@ from src.core.tool_paths import (
     get_java_tools_dir,
 )
 from src.core.exploit_registry import get_exploit_entry
-from src.agents.runtime_contract import normalize_external_target, ExternalTarget
+from src.agents.runtime_contract import normalize_external_target
 from src.benchmark.report_manager import ReportManager
 from src.pipeline.a1 import A1PipelineService
 from src.pipeline.a2 import A2PipelineService
 from src.pipeline.d2 import D2PipelineService
 from src.application.entry_discovery_service import EntryDiscoveryService
-from src.application.finding_workflow_service import FindingWorkflowService
 from src.application.d1_service import D1Service
 from src.core.vuln_hash import enrich_finding_hash
 from src.application.sca_asset_service import SCAAssetService
 from src.infrastructure.db import Database
 from src.iast.correlation import IastCorrelationService
-from src.iast.canary import is_sink_reached
 from src.iast.sink_identity import iast_evidence_sink_reached_genuine
 from src.iast.trigger_spec_registry import (
     auto_register_from_a2 as _auto_register_a2_trigger_specs,
@@ -300,9 +296,7 @@ def _filter_framework_noise_files(files):
     return filtered
 
 
-# 重构文档 3.6：Docker 运行时探测逻辑已整体删除，外部 IAST 目标由 ExternalTarget 描述。
-
-    return status
+# 外部 IAST 目标由 ExternalTarget 描述，不再做 Docker 运行时探测。
 
 
 def summarize_a3_raw_output(raw_output: str) -> dict:
@@ -2449,7 +2443,7 @@ def _apply_a1_evidence_to_vulnerability(vuln, evidence):
     entry_candidates = list(evidence.get("entry_candidates", []) or [])
     source_candidates = list(evidence.get("source_candidates", []) or [])
     guard_candidates = list(evidence.get("guard_candidates", []) or [])
-    sanitizer_candidates = list(evidence.get("sanitizer_candidates", []) or [])
+    list(evidence.get("sanitizer_candidates", []) or [])
     ownership_candidates = list(evidence.get("ownership_candidates", []) or [])
     state_candidates = list(evidence.get("state_transition_candidates", []) or [])
     artifact_candidates = list(evidence.get("artifact_candidates", []) or [])
@@ -7646,7 +7640,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
 
     results = []
     failure_reasons = []
-    runtime_type = ''
     docker_attempted = False
     docker_used = False
     local_jar_attempted = False

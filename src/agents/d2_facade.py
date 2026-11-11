@@ -16,7 +16,6 @@ from typing import Any, Dict, List, Optional
 from .d2_types import VerificationResult
 from .runtime_contract import normalize_external_target
 from src.iast.adjudicator import (
-    FINAL_CONFIRMED_ATTRIBUTABLE,
     FINAL_NO_EVIDENCE,
     FINAL_TARGET_UNHEALTHY,
     _FINAL_STATE_RANK,
@@ -442,11 +441,6 @@ class D2Agent:
                 vr.final_state = FINAL_TARGET_UNHEALTHY
                 return vr
 
-        from src.iast.orchestrator import (
-            TriggerTransactionOrchestrator,
-            aggregate_iast_evidence,
-        )
-        from src.iast.adjudicator import D2Judge, I1Judge, I2Adjudicator
 
         specs = trigger_spec if isinstance(trigger_spec, list) else [trigger_spec]
 
@@ -1372,6 +1366,7 @@ def reconcile_late_iast_evidence(phase1_items, iast_service: Any, app_name: Opti
             continue
         # 判断「本轮没拿到任何探针记录」是探针组件缺陷（关键 hook 未织入）还是 A2/D1 攻击计划缺陷
         # （hook 就位但 canary 没投到正确入口）。证据缺失（无 hook_inventory）一律 unknown，不臆断。
+        from src.iast.orchestrator import TriggerTransactionOrchestrator
         try:
             _inv = TriggerTransactionOrchestrator.extract_hook_inventory(rows)
             _bl_cat = str(ts.get("business_logic_category") or ts.get("category") or "")

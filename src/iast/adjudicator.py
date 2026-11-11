@@ -485,7 +485,7 @@ class I2Adjudicator:
             "recorded": recorded,
         }
 
-    def adjudicate(self, workspace_id: Optional[int] = None, task_id: Optional[int] = None) -> Dict[str, Any]:
+    def summarize_closed_loop(self, workspace_id: Optional[int] = None, task_id: Optional[int] = None) -> Dict[str, Any]:
         """I2 闭环裁决汇总：覆盖率差集 + 反哺候选 +  完整 schema。"""
         audit = self.audit_coverage(workspace_id, task_id)
         feedback = self.harvest_feedback(workspace_id, task_id)

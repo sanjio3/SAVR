@@ -6,7 +6,7 @@
 import json
 import os
 import re
-from typing import List, Dict, Optional
+from typing import List, Dict
 from datetime import datetime
 from pathlib import Path
 import logging
@@ -1956,7 +1956,7 @@ class ReportManager:
                                             '但 D2 运行时未产出动态实证')
 
         mainline_verifications = [v for v in verifications if is_mainline_d2_item(v)]
-        executed_mainline_verifications = [v for v in mainline_verifications if is_executed_d2_item(v)]
+        [v for v in mainline_verifications if is_executed_d2_item(v)]
         excluded_fallback_verifications = [v for v in verifications if is_excluded_d2_fallback_item(v)]
 
         # §统一链路口径：D2 运行时指标直接取自流水线 D2 统一校验产物

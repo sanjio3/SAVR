@@ -4,7 +4,6 @@ A2.1 exploit contract planning agent.
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
-import json
 import logging
 import os
 import re

@@ -23,7 +23,6 @@
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)

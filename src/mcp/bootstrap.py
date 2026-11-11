@@ -36,7 +36,7 @@ import os
 import re
 import shlex
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 from src.agents import a2_tools
 from src.mcp.client import McpClient, McpToolBridge, StdioTransport

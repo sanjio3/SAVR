@@ -74,7 +74,6 @@ def _candidate_javas() -> List[str]:
       3. 常见 Windows 安装位置；
       4. 最后回退 PATH 搜索。
     """
-    sep = ";" if os.name == "nt" else ":"
     cands: List[str] = []
     # 1. 环境变量（指向 JDK 根目录，或已指向 bin/java）
     for var in ("JAVA_HOME", "YSO_JAVA_HOME", "JDK8_HOME", "JAVA8_HOME", "GADGET_JDK_HOME"):

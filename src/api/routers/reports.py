@@ -24,7 +24,6 @@ def _build_structured(task_id: int) -> dict:
     全部可视化维度（严重度、族、来源引擎、验证状态、sink 身份、闭环状态），只是没人读。
     本函数把这些维度一次算清，前端按维度画图 + 联动筛选，无需再解析 Markdown。
     """
-    import json as _json
 
     # 复用容器的 Database（同一 DB 真相 + 线程缓存连接 + 自身锁），
     # 不用另开 sqlite3 连接，避免 WAL 快照不一致与长事务锁竞争。

@@ -7,7 +7,7 @@ import re
 import json
 import yaml
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List
 from dataclasses import dataclass, field
 import logging
 
@@ -206,7 +206,7 @@ class R0ReconAgent:
                     if art is not None:
                         deps[art.text] = ver.text if ver is not None else 'unknown'
                 dep_files.append('pom.xml')
-            except:
+            except Exception:
                 pass
 
         # Python
@@ -223,7 +223,7 @@ class R0ReconAgent:
                             else:
                                 deps[line] = 'latest'
                 dep_files.append('requirements.txt')
-            except:
+            except Exception:
                 pass
 
         # JavaScript
@@ -235,7 +235,7 @@ class R0ReconAgent:
                     deps.update(data.get('dependencies', {}))
                     deps.update(data.get('devDependencies', {}))
                 dep_files.append('package.json')
-            except:
+            except Exception:
                 pass
 
         self.project_info.dependencies = deps
@@ -301,7 +301,7 @@ class R0ReconAgent:
                                         'method': method,
                                         'annotation': ann
                                     })
-                except:
+                except Exception:
                     pass
 
     def _extract_python_routes(self, http_routes: List, entry_points: List):
@@ -341,7 +341,7 @@ class R0ReconAgent:
                                     'line': i,
                                     'code': line.strip()
                                 })
-                except:
+                except Exception:
                     pass
 
     def _extract_js_routes(self, http_routes: List, entry_points: List):
@@ -377,7 +377,7 @@ class R0ReconAgent:
                                         'method': method,
                                         'framework': 'express'
                                     })
-                except:
+                except Exception:
                     pass
 
     def _analyze_data_flow(self):
@@ -435,7 +435,7 @@ class R0ReconAgent:
                                     'code': line.strip(),
                                     'type': 'external_call'
                                 })
-                except:
+                except Exception:
                     pass
 
         self.project_info.user_inputs = user_inputs
@@ -465,7 +465,7 @@ class R0ReconAgent:
                             parse_func = config_files[f]
                             parsed = parse_func(content)
                             configs[f] = parsed
-                    except:
+                    except Exception:
                         pass
 
         self.project_info.security_configs = configs
@@ -484,15 +484,14 @@ class R0ReconAgent:
         """解析YAML文件"""
         try:
             return yaml.safe_load(content) or {}
-        except:
+        except Exception:
             return {}
 
     def _parse_xml(self, content: str) -> Dict:
         """解析XML文件"""
         try:
-            import xml.etree.ElementTree as ET
             return {'xml_parsed': True}
-        except:
+        except Exception:
             return {}
 
     def get_summary(self) -> Dict:

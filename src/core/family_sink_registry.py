@@ -19,7 +19,7 @@
      command_execution / xss …）一律不动，避免把真漏洞的族改坏。
 """
 
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 # —— 专属 sink 白名单：族 → 只可能被该族合法主张的 sink 签名（前缀匹配）——
 # 取值来自探针上报的 iast_events.sink_file（JVM 类名.方法，如

@@ -44,7 +44,6 @@ import logging
 import os
 import re
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 

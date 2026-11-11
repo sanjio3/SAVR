@@ -4,12 +4,11 @@
 """
 import threading
 import time
-from typing import Dict, List, Optional, Any, Set
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
 import json
-from pathlib import Path
 
 from ..core.models import Vulnerability
 from ..agents.r0_recon_agent import ProjectInfo as R0ProjectInfo

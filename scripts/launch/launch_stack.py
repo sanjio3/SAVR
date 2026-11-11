@@ -15,9 +15,6 @@ import os
 import json
 import shutil
 import socket
-import errno
-import atexit
-import ctypes
 
 # 运行时路径 / token 一律走环境变量，未配置时用相对仓库根的可移植默认值。
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 项目根
@@ -200,7 +197,6 @@ def _backend_env():
     return env
 
 
-import socket
 
 _SINGLETON_SOCK = None
 

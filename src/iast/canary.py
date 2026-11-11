@@ -25,7 +25,7 @@ import re
 import secrets
 import string
 import urllib.parse
-from typing import Optional
+from typing import Dict, Optional
 
 IDENTITY_PREFIX = "s4st41"
 IDENTITY_HEX_LEN = 16

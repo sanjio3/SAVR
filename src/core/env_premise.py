@@ -40,7 +40,6 @@ env_premise 的两种写法
 """
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 # 判定三态

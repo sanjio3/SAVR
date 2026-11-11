@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import os
 import re
-from typing import List, Tuple
+from typing import List
 
 # ── 族集合 ────────────────────────────────────────────────────────────────
 # 键为平台族名（归一化后的小写形式）。

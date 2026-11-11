@@ -15,7 +15,7 @@
 不中和本族攻击）。只有「数据到了 sink 实参 且 消毒器针对本族」才构成合法的 definitive 阴性。
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 _WILDCARDS = ("*", "", "all")
 

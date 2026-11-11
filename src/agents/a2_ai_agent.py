@@ -1582,9 +1582,9 @@ class A2AIAgent:
         vulnerabilities = []
 
         try:
-            from src.core.llm_output import parse_llm_json, ParseDiagnostics
+            from src.core.llm_output import parse_llm_json
         except Exception:
-            from ..core.llm_output import parse_llm_json, ParseDiagnostics
+            from ..core.llm_output import parse_llm_json
 
         data, diag = parse_llm_json(response or "", finish_reason=finish_reason)
         if not diag.ok or data is None:

@@ -7,7 +7,7 @@ import subprocess
 import shutil
 import tarfile
 from pathlib import Path
-from typing import Iterable, List
+from typing import List
 import zipfile
 
 try:

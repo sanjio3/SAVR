@@ -4,7 +4,7 @@
 D1 操作器做多身份重放（BOLA）与并发重放（RACE）的运行时影响验证。IAST 探针侧
 authz/race 钩子属 Java 探针扩展（手册 3.11），不在 Python 侧实现，本模块只编排 Python 侧链路。
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from src.agents.a1_bola_analyzer import analyze_sources as _analyze_bola
 from src.application.d1_service import D1Service

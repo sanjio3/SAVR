@@ -234,7 +234,7 @@ def route_via_writer(code_root: Optional[str], sink_file: Any, sink_line: Any) -
     lower = {str(k).lower(): k for k in idx}
 
     # 找 sink 所在函数（同文件、行号 ≤ sink_line 里最大者）
-    own_key, own_line, own_meta = "", -1, {}
+    _own_key, own_line, own_meta = "", -1, {}
     for key, meta in idx.items():
         if not isinstance(meta, dict):
             continue
@@ -245,7 +245,7 @@ def route_via_writer(code_root: Optional[str], sink_file: Any, sink_line: Any) -
         except Exception:  # noqa: BLE001
             continue
         if ln <= line and ln > own_line:
-            own_key, own_line, own_meta = key, ln, meta
+            _own_key, own_line, own_meta = key, ln, meta
     # 读文件要用**索引里的真实相对路径**：`_under` 在剥不到 code_root 前缀时
     _real_rel = str(own_meta.get("file") or norm)
     full = os.path.join(str(code_root), _real_rel.replace("\\", os.sep).replace("/", os.sep))

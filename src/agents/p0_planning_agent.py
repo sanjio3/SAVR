@@ -4,7 +4,7 @@ P0 Planning Agent - 策略规划
 """
 import json
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)

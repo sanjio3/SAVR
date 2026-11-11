@@ -8,6 +8,7 @@ A2 语义分析有时会把 Java 类型签名（如 ``String, Object``）或类�
 """
 
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -16,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 from src.core.exploit_spec import (
     is_injection_family,
-    is_business_logic_family,
     canonical_business_logic_family,
     DIFFERENTIAL_PROOF_FAMILIES,
 )
@@ -842,7 +842,7 @@ def _resolve_controller_route_by_reference(vuln: Any, code_root: str) -> Optiona
     alias = m.group(1) if (m and m.group(1) and m.group(1) != cls) else ""
     alias_pat = re.compile(r"\b" + re.escape(alias) + r"\w*\b") if alias else None
 
-    root = Path(code_root)
+    Path(code_root)
     # 改用注解感知的控制器发现：主通道 *Controller.java（零回归），兜底按 @RestController/@Controller
     ctrls = _discover_web_controllers(code_root)
     if not ctrls:

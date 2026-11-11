@@ -15,7 +15,7 @@ import os
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from src.infrastructure.db import Database
 from src.iast.canary import CanaryMatcher, canary_key, is_sink_reached

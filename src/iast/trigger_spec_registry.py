@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from src.core.param_resolver import is_valid_param_name, is_valid_route, resolve_endpoint_from_source, resolve_trigger_endpoint, _is_probe_route
+from src.core.param_resolver import is_valid_param_name, is_valid_route, _is_probe_route
 from src.core.exploit_spec import canonical_business_logic_family, derive_flow_type, DIFFERENTIAL_PROOF_FAMILIES, is_injection_family
 from src.core.vuln_hash import _norm_family, canonicalize_vuln_for_hash, vulnerability_hash_v2
 from src.core.normalize import correct_family_by_evidence, normalize_family
@@ -390,7 +390,7 @@ def _victim_identifiers_from_accounts(accounts: Any) -> List[str]:
     )
     if not ranked:
         return []
-    attacker = ranked[0]
+    ranked[0]
     out = []
     for a in ranked[1:]:
         subject = str(a.get("subject") or "")

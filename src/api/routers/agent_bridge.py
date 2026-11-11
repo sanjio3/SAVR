@@ -17,7 +17,7 @@ import logging
 import os
 import threading
 from functools import partial
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Header, Request
 from starlette.concurrency import run_in_threadpool

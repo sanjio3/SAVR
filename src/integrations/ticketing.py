@@ -8,7 +8,7 @@ returns the prepared ticket so a caller (or a real adapter) can send it. GitLab/
 Jira adapters are stubbed with a clear extension point.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 
 def render_ticket_markdown(finding: Dict[str, Any]) -> str:

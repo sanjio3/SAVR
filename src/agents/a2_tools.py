@@ -67,7 +67,7 @@ def tool_code_search(query: str, limit: int = 5) -> Dict[str, Any]:
         if callable(fn):
             hits = fn(query, limit=limit) or []
             return {"ok": True, "source": "rag", "results": [str(h)[:400] for h in hits][:limit]}
-    except Exception as exc:
+    except Exception:
         # RAG 不可用不阻断，退化为 grep，交由下面统一处理
         pass
     return {"ok": True, "source": "grep-fallback",

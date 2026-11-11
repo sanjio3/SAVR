@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Dict, Optional
 
 from src.agents.d2_facade import create_d2_agent
 from src.pipeline.d2.manifest import D2_MANIFEST

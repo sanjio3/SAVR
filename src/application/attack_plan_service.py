@@ -175,7 +175,6 @@ class AttackPlanService:
                 generate_attack_plan,
                 bump_metric,
             )
-            from src.core.exploit_spec import normalize_exploit_spec
         except Exception as _e:
             logger.warning("[AP] RAG 计划模块加载失败（跳过增强）：%s", _e)
             summary["plan_source_counts"] = {"llm": 0, "deterministic": len(entries)}

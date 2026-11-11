@@ -51,7 +51,6 @@ from src.core.safe_patterns import (
     _SAFE_RULES,
     _canon_family,
     _match_rules,
-    _read_window,
     _resolve_abs,
     safe_implementation_hit,
 )

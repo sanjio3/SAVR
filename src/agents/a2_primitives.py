@@ -30,7 +30,6 @@ L=42 V=1 VP=0.87 LOC=q LP=0.92 S=w SP=0.61 K=0.78
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -162,7 +161,7 @@ def parse_primitives(text: str, expect: Optional[int] = None) -> List[Primitives
 def _user_prompt(code: str, filename: str, findings: List[Dict[str, Any]],
                  extra_context: str = "") -> str:
     fams = [str(f.get("family") or "") for f in findings]
-    sys_hint = _family_hint_block(fams)
+    _family_hint_block(fams)
     items = []
     for i, f in enumerate(findings, 1):
         items.append("%d. line=%s family=%s note=%s" % (

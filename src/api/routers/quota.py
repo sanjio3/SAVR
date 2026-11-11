@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Body, HTTPException
 
-from src.application.quota_service import QuotaExceededError, QuotaService
+from src.application.quota_service import QuotaService
 
 router = APIRouter(prefix="/api/quota", tags=["quota"])
 

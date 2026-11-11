@@ -51,7 +51,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Dict, FrozenSet, List, Tuple
 
 logger = logging.getLogger("capability_judge")
 

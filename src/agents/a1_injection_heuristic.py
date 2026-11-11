@@ -18,7 +18,6 @@
 # 注入类离线安全网：仅做危险 sink 存在性标记，不替代 CodeQL 数据流分析。
 IS_PRIMARY_PATH = False
 
-import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple

@@ -13,7 +13,7 @@ service.py:ingest_events 与 ingest_metrics.py），故本模块只做闭环核�
 import json
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 

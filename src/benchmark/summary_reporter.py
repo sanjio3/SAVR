@@ -2,8 +2,7 @@
 总结性报告生成器
 合并 A1/A2 结果，去重，生成最终报告
 """
-import json
-from typing import List, Dict, Set
+from typing import List, Dict
 from collections import defaultdict
 from datetime import datetime
 import logging
@@ -107,10 +106,9 @@ class SummaryReporter:
 
         # 去重
         unique_vulns = []
-        seen = set()
 
         for vuln in all_vulns:
-            key = self._normalize_vuln_key(vuln)
+            self._normalize_vuln_key(vuln)
             is_duplicate = False
 
             for seen_vuln in unique_vulns:

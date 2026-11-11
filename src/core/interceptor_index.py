@@ -182,7 +182,7 @@ def collect_interceptors(files: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
         # ① HandlerInterceptor
         for cm in _RE_INTERCEPTOR_CLS.finditer(content):
             header_start = max(0, cm.start() - 400)
-            header = content[header_start:cm.end()]
+            content[header_start:cm.end()]
             if not _RE_IMPL_INTERCEPTOR.search(content[header_start:cm.end() + 200]):
                 continue
             body = _class_body_for(content, cm)

@@ -31,7 +31,6 @@ attacker_control/payload_shape 强制 False、auth 族被 sanitizer 净化时强
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re

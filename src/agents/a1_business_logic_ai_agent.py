@@ -30,7 +30,7 @@ from src.agents.a1_codeql_adapter import CodeQLAdapter
 from src.agents.a1_race_analyzer import analyze_sources as _analyze_race
 from src.agents.a1_state_machine_analyzer import analyze_sources as _analyze_state_machine
 from src.agents.a1_vertical_privesc_analyzer import analyze_sources as _analyze_vertical
-from src.core.model_gateway import ModelGateway, gateway_from_config, resolve_llm_config
+from src.core.model_gateway import gateway_from_config, resolve_llm_config
 from src.core.models import rule_hit_label
 
 ALL_CATEGORIES = (

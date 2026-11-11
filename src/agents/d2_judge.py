@@ -9,7 +9,7 @@ runtime_confirmed（仅 IAST 命中）与 confirmed_attributable（IAST + DAST �
 最终 final_state 走五态（含 false_positive_sast_only，见 3.18）。
 """
 import json
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Optional
 
 from src.core.exploit_spec import normalize_exploit_spec
 from src.iast.orchestrator import (

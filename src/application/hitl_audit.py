@@ -7,7 +7,7 @@
 拦截（gated）都写审计，让「人入环」体现在关键决策而非每一步。
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from src.infrastructure.db import Database
 

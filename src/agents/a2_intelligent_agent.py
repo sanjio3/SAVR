@@ -28,12 +28,6 @@ from ..core.proof_obligations import (
     evaluate_proof_obligations,
     summarize_proof_context,
 )
-from .a2_ai_agent import (
-    A2AIAgent, AnthropicClient, AnthropicCompatibleClient, QwenClient, DoubaoClient, MiniMaxClient,
-    DeepseekClient,
-    load_anthropic_compatible_config,
-    FallbackLLMClient, _make_client,
-)
 from .analysis_result import AnalysisResult as A1AnalysisResult
 from .prompt_render import render_prompt
 from src.core import workspace_runtime
@@ -1061,7 +1055,7 @@ class A2SemanticAgent:
             return ""
         if r == "/":
             return ""
-        parts = [p for p in r.split("/") if p]
+        [p for p in r.split("/") if p]
         # 目录式残缺路由粒度太粗时拒收；但已知管理前缀（/admin /manage /console /sys）即便以
         # / 结尾也保留为类级前缀（去尾斜杠），由下游 _pick_admin_route 择优具体子路由。
         # 其他（如 /api/）仍按残缺路由拒收。
@@ -2461,7 +2455,7 @@ class A2SemanticAgent:
                     with open(path, 'r', encoding='utf-8', errors='ignore') as f:
                         full_content = f.read()
                     break
-        except:
+        except Exception:
             pass
 
         if not full_content:
@@ -2556,36 +2550,6 @@ class A2SemanticAgent:
             result['data_flow'] = ' '.join(data_flow_steps)
         elif sinks:
             result['data_flow'] = f"危险函数: {sinks[0]}"
-        else:
-            # 根据漏洞类型推断危险函数 (支持中英文)
-            vuln_lower = vuln_type.lower()
-            if 'deserialize' in vuln_lower or '反序列化' in vuln_type:
-                result['sink'] = 'ObjectInputStream.readObject()'
-                result['data_flow'] = '用户输入 -> ObjectInputStream.readObject() 反序列化'
-            elif 'command' in vuln_lower or '命令注入' in vuln_type or 'command injection' in vuln_lower:
-                result['sink'] = 'ProcessBuilder / Runtime.exec()'
-                result['data_flow'] = '用户输入 -> ProcessBuilder 命令执行'
-            elif 'path' in vuln_lower or 'traversal' in vuln_lower or '穿越' in vuln_type:
-                result['sink'] = 'Files.readAllBytes / FileInputStream'
-                result['data_flow'] = '用户输入 -> Files.readAllBytes 文件读取'
-            elif 'xss' in vuln_lower or 'cross-site' in vuln_lower:
-                result['sink'] = 'innerHTML / response.write'
-                result['data_flow'] = '用户输入 -> innerHTML 输出'
-            elif 'sql' in vuln_lower or 'injection' in vuln_lower:
-                result['sink'] = 'executeQuery / Statement'
-                result['data_flow'] = '用户输入 -> executeQuery SQL执行'
-            elif 'ssrf' in vuln_lower:
-                result['sink'] = 'openConnection / URL.openStream()'
-                result['data_flow'] = '用户输入 -> openConnection SSRF'
-            elif 'xxe' in vuln_lower:
-                result['sink'] = 'XMLParser / DocumentBuilder'
-                result['data_flow'] = '用户输入 -> XML解析 XXE'
-            elif 'csrf' in vuln_lower:
-                result['sink'] = '无直接危险函数 (配置问题)'
-                result['data_flow'] = 'CSRF防护缺失'
-            else:
-                result['data_flow'] = '危险函数存在于文件中'
-
         return result
 
     def assess_exploitability(self, vulnerability: Vulnerability, full_context: Dict) -> ExploitabilityResult:

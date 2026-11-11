@@ -6,13 +6,9 @@ POC 生成器
 """
 import re
 import logging
-import subprocess
-import json
-import base64
-from typing import Dict, List, Optional
+from typing import Dict, List
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
-from .tool_paths import find_ysoserial_jar
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +153,7 @@ def generate_context_aware_poc(vuln_info: Dict, endpoint_info: Dict) -> Dict:
         POC 数据字典
     """
     vuln_type = vuln_info.get('type', 'unknown')
-    code_context = vuln_info.get('code_snippet', '')
+    code_context = vuln_info.get('code_snippet', '')  # noqa: F841 - 暂未参与 PoC 生成
 
     # 决定使用的路径和参数
     path = endpoint_info.get('path', '')
@@ -324,7 +320,7 @@ def test_sql_injection(url, param):
         baseline_resp = requests.get(url, params={{param: "test"}}, timeout=10)
         baseline_len = len(baseline_resp.text)
         print(f"[*] Baseline response length: {{baseline_len}}")
-    except:
+    except Exception:
         baseline_len = 0
 
     for i, (payload, description) in enumerate(SQL_PAYLOADS, 1):
@@ -1600,21 +1596,17 @@ curl -L "{target_url}?{param}=javascript:alert(1)"
             "open redirect": "url_redirect",
             # 中文
             "sql注入": "sql_injection",
-            "sql injection": "sql_injection",
             "命令注入": "command_injection",
             "命令执行": "command_injection",
             "远程代码执行": "command_injection",
             "rce": "command_injection",
-            "xss": "xss",
             "跨站脚本": "xss",
             "存储型xss": "xss",
             "反射型xss": "xss",
-            "ssrf": "ssrf",
             "服务器端请求伪造": "ssrf",
             "路径穿越": "path_traversal",
             "目录遍历": "path_traversal",
             "任意文件读取": "path_traversal",
-            "xxe": "xxe",
             "xml外部实体": "xxe",
             "反序列化": "deserialization",
             "不安全反序列化": "deserialization",

@@ -161,7 +161,7 @@ class TaskService:
 
         try:
             QuotaService(self.db).assert_within_quota(workspace.id)
-        except QuotaExceededError as exc:
+        except QuotaExceededError:
             raise
         # 创建任务也放宽：路径可暂不存在（strict=False），由实际扫描执行阶段严格校验。
         validation = self.preprocess.validate_workspace_path(workspace, strict=False)

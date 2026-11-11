@@ -19,7 +19,6 @@ import logging
 import os
 import sqlite3
 import subprocess
-import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
