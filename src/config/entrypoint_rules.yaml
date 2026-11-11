@@ -1,0 +1,37 @@
+# Entry-point discovery rules (G5).
+#
+# Externalised, configurable rule set for :class:`EntryDiscoveryService`. Add
+# company-specific annotations or second-party package patterns here without
+# touching code. Each rule:
+#   entry_type: web_route | mq_consumer | scheduled_job | mcp_tool | rpc_method | ...
+#   pattern:    Python regex, matched per line (case-insensitive by default).
+#   confidence: high | medium | low   (regex defaults to medium unless raised)
+#   flags:      optional list, e.g. ["i"] for case-insensitive (default on).
+version: 1
+
+rules:
+  - entry_type: web_route
+    pattern: '@(Get|Post|Put|Delete|Patch|Request)Mapping\s*\(([^)]*)\)'
+    confidence: high
+  - entry_type: web_route
+    pattern: '@WebServlet\s*\(([^)]*)\)'
+    confidence: high
+    note: 'Servlet 路由：@WebServlet(value = "/x") / @WebServlet("/x") / @WebServlet(urlPatterns = "/x")。供纯 Servlet 应用发现入口。'
+  - entry_type: web_route
+    pattern: "@(app|router)\\.(get|post|put|delete|patch)\\s*\\(\\s*['\"]([^'\"]+)"
+    confidence: high
+  - entry_type: web_route
+    pattern: "@(app)\\.(route)\\s*\\(\\s*['\"]([^'\"]+)"
+    confidence: high
+  - entry_type: mq_consumer
+    pattern: '@(KafkaListener|RabbitListener|JmsListener)\s*\(([^)]*)\)'
+    confidence: high
+  - entry_type: scheduled_job
+    pattern: '@(Scheduled|Cron)\s*\(([^)]*)\)'
+    confidence: medium
+  - entry_type: mcp_tool
+    pattern: '@(Tool|McpTool)|registerTool\s*\('
+    confidence: medium
+  - entry_type: rpc_method
+    pattern: '@(GrpcService|DubboService|FeignClient|RpcService)\b'
+    confidence: medium

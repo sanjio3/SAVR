@@ -1,0 +1,80 @@
+# 本项目以仓库根为 import 根，不需要把 src/ 打成可安装包，故 packages 显式留空；
+# editable 安装只提供元数据。PEP 517 构建后端让干净环境里的 `pip install -e .` 可用。
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = []
+
+[project]
+name = "savr"
+version = "0.1.0"
+description = "Workflow-driven SAST + AI semantic analysis + dynamic verification platform"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "The SAVR Contributors" }]
+keywords = [
+    "sast", "dast", "iast", "rasp", "appsec",
+    "security", "vulnerability-scanner", "static-analysis",
+]
+dependencies = [
+    "anthropic>=0.18.0",
+    "fastapi>=0.115.0",
+    # 目标实例纪元探测（src/iast/target_epoch.py，D2 批次隔离）：读监听目标端口进程的
+    # create_time 作为实例身份。缺失即降级为探针心跳信号，不阻断主流程。
+    "psutil>=5.9.0",
+    "pydantic>=2.8.0",
+    "py7zr>=0.22.0",
+    "python-multipart>=0.0.9",
+    "pyyaml>=6.0",
+    "requests>=2.32.0",
+    "uvicorn>=0.30.0",
+    # D1 WebSocket 重放（src/application/d1_service.py）：缺失时该通道降级跳过。
+    "websockets>=12.0",
+]
+
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Java",
+    "Topic :: Security",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/sanjio3/SAVR"
+Repository = "https://github.com/sanjio3/SAVR"
+Issues = "https://github.com/sanjio3/SAVR/issues"
+Releases = "https://github.com/sanjio3/SAVR/releases"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27.0",
+    "pytest>=8.3.3",
+    "ruff>=0.14.5",
+]
+
+# Lint is opt-in per file: ci_gate.py enforces ruff only on the small set of
+# first-party tooling files that are already formatted. Widening the scope is a
+# separate change so a feature PR never carries a whole-tree reformat.
+[tool.ruff]
+line-length = 100
+extend-exclude = ["probe-java", "frontend", "tools/_archive", "scripts/_archive"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+# 这些规则在本仓库的历史代码上不作为门禁：
+#   E402      大量模块刻意「先设环境变量再导入」
+#   E702/E703 历史上存在一行多语句
+#   E741      单字母命名多见于索引与数学场景
+#   E731      lambda 赋值是既有写法
+ignore = ["E402", "E702", "E703", "E741", "E731", "F541"]
+
+[tool.uv]
+package = false
