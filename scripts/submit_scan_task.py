@@ -199,7 +199,9 @@ def main() -> int:
     args = ap.parse_args()
 
     DB = args.db
-    if not args.skip_preflight:
+    # A dry run writes nothing, so the stale-task-id preflight (which may also
+    # move rows into a backup) must not run for it.
+    if not args.skip_preflight and not args.dry_run:
         try:
             preflight_stale_task_id(DB, args.preflight_backup_dir)
         except Exception as e:

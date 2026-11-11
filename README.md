@@ -89,12 +89,22 @@ uv run python scripts/fetch_tools.py --dest tools --only codeql
 ollama pull qwen3:8b
 ```
 
+Edit `.env` for your host, ports and probe token. **SAVR does not load `.env`
+automatically** — pass it to uv with `--env-file .env` as shown below, or export
+the same keys in your shell. Start the backend with:
+
+```bash
+uv run --env-file .env python -m src.cli.service_server
+```
+
 `uv.lock` pins every dependency and `pyproject.toml` is the canonical declaration. The repository
 root is the import root, so no package installation step is needed. `uv run` is the supported
 entry point for every command in this document; a virtualenv on `PATH` works as well.
 
 The backend listens on `127.0.0.1:8000`. The frontend runs separately:
 `cd frontend && npm ci && npm run dev`, listening on `127.0.0.1:5173`.
+On Windows, `scripts/dev_all.ps1` starts both; `scripts/dev_backend.ps1` and
+`scripts/dev_frontend.ps1` start them individually.
 
 ---
 
@@ -143,7 +153,7 @@ Four things must be right:
 Verify the attachment before scanning; only `ready=true` means it is wired up:
 
 ```bash
-python tools/probe_preflight.py --workspace-id <id> --http
+uv run python tools/probe_preflight.py --workspace-id <id> --http
 ```
 
 It checks that the session row exists, the heartbeat is fresh, and an `X-Agent-Token` handshake
@@ -165,11 +175,21 @@ Two environment variables are useful: `SAST_AI_PROBE_JAR` overrides the probe ja
 
 ### Submit a scan
 
-Register a workspace pointing at your target, attach the probe, and submit a task through the
-API or the UI. A CLI entry point exists for debugging:
+Create a workspace that points at your target source, either in the UI
+(Workspaces → New) or with `POST /api/workspaces` carrying `name` and
+`target_path`. Attach the probe as shown above, then submit a task. A dry run
+prints the payload without writing anything:
 
 ```bash
-python -m src.cli.scan_task_runner --task-id <id> --target /path/to/target/src \
+uv run --env-file .env python scripts/submit_scan_task.py --name my-first-scan --dry-run
+```
+
+Drop `--dry-run` to submit. If the workspace is not the default one, pass
+`--workspace-id <id>`. The runner that executes a submitted task is also
+available for debugging:
+
+```bash
+uv run --env-file .env python -m src.cli.scan_task_runner --task-id <id> --target /path/to/target/src \
   --output-dir output/run1 --no-sca
 ```
 
@@ -182,7 +202,7 @@ match. When they do not, the ingest endpoint answers HTTP 200 with `accepted=0`,
 to misread as success:
 
 ```bash
-python tools/probe_preflight.py --workspace-id <id> --http
+uv run python tools/probe_preflight.py --workspace-id <id> --http
 ```
 
 `ready=true` means the session row exists, the heartbeat is fresh, and a handshake carrying
@@ -236,7 +256,7 @@ SAVR/
 
 Run these two checks before filing; they resolve a large share of reports:
 
-1. `python tools/probe_preflight.py --workspace-id <id> --http` — if this is not `ready=true`,
+1. `uv run python tools/probe_preflight.py --workspace-id <id> --http` — if this is not `ready=true`,
    events are being dropped at ingest and every replay will look like a miss.
 2. `uv run --frozen python tools/ci_gate.py` — confirms the failure is not a local environment problem.
 

@@ -690,7 +690,7 @@ def _shiro_rememberme_payloads(raw_b64: str, key_b64: str = "") -> List[str]:
 
         base64( IV(16B) || AES-CBC-PKCS5(序列化流) )
 
-    实测（tools/ShiroProbe.java，调 ``AesCipherService.decrypt``）：
+    两种输入形态的行为（用 ``AesCipherService.decrypt`` 验证）：
         form1（只有 ciphertext）      → decrypt 不报错，但结果与原文不符
         form2（IV || ciphertext）      → decrypt 结果与原文完全一致
 

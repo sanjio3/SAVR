@@ -45,7 +45,7 @@ flowchart LR
 - A1 跑 CodeQL 官方套件，加上针对官方查询不建模形态的自定义查询（`prepareCall`、Spring `JdbcTemplate`、弱哈希算法），并带一条确定性的启发式兜底，保证 CodeQL 建库失败不会静默产出一份空报告。
 - A2 每个 sink 文件调一次 LLM，同时返回判定和机器可用的触发规格，经 JSON 校验并带一轮修复。失败的文件记为 `analysis_error` 占位并在阶段契约里计数，绝不丢弃——因为被丢掉的文件和本来就干净的文件，在最终报告里长得一模一样。
 - D1/D2 执行重放。确认必须有结构化危害证据：sink 上的探针事件、族级判据（SQL 布尔对、路径穿越文件特征、表达式求值、反射），或带外回调。「到达 sink」和「模型说有害」这两者本身都不够。
-- 未确认的候选保留终态与失败归因，因此「漏了一个漏洞」和「靶场挂了」「端点在 404」「载荷没送到」可以区分开。
+- 未确认的候选保留终态与失败归因，因此「漏了一个漏洞」和「目标应用挂了」「端点在 404」「载荷没送到」可以区分开。
 - 确定性重跑始终开启。I2 是一个根据重放差分重新判定的 LLM 反馈闭环，需要显式开启（`SAST_AI_CLOSED_LOOP=1`）。
 
 ---
@@ -54,10 +54,10 @@ flowchart LR
 
 - Python 3.12+
 - Node.js 20+（前端）
-- JDK 11+ 与 Maven（构建 IAST 探针；探针是构建产物，不随仓库分发）
+- JDK 11+ 与 Maven（构建 IAST 探针；探针是构建产物，不包含在仓库内）
 - CodeQL CLI（静态分析阶段用）。`uv run python scripts/fetch_tools.py --dest tools --only codeql` 会把 bundle 解包到 `tools/codeql/`；也可以设 `CODEQL_BIN`，或把 `codeql` 放进 `PATH`。bundle 约 1GB，不入库。
 - 本地 LLM，由 Ollama 提供（默认 `qwen3:8b`），或任何 OpenAI 兼容端点
-- 一个运行中的 HTTP 靶场，并挂载本项目自带的 IAST java agent。靶场应用、JDK、Tomcat 与第三方二进制不在本仓库内分发，需要你自己提供
+- 一个运行中的 HTTP 目标应用，并挂载本项目自带的 IAST java agent。目标应用、JDK、Tomcat 与第三方二进制不在本仓库内分发，需要你自己提供
 
 主开发平台是 Windows。Linux 与 macOS 理论可用但未实测。
 
@@ -71,12 +71,17 @@ uv sync --frozen --group dev
 cp .env.example .env
 uv run python scripts/fetch_tools.py --dest tools --only codeql
 ollama pull qwen3:8b
-uv run python -m src.cli.service_server
+```
+
+按你的主机、端口和探针 token 改 `.env`。**SAVR 不会自动读取 `.env`**：要么像下面这样用 `uv run --env-file .env` 传入，要么在 shell 里 export 同样的变量。启动后端：
+
+```bash
+uv run --env-file .env python -m src.cli.service_server
 ```
 
 `uv.lock` 锁定全部依赖，`pyproject.toml` 是权威声明。仓库根目录就是导入根，不需要安装成包。本文档里的命令统一用 `uv run`；把虚拟环境加进 `PATH` 后直接调 `python` 也可以。
 
-后端监听 `127.0.0.1:8000`。前端单独跑：`cd frontend && npm ci && npm run dev`，监听 `127.0.0.1:5173`。
+后端监听 `127.0.0.1:8000`。前端单独跑：`cd frontend && npm ci && npm run dev`，监听 `127.0.0.1:5173`。Windows 下 `scripts/dev_all.ps1` 一次起两端，`scripts/dev_backend.ps1` 与 `scripts/dev_frontend.ps1` 分别起单个服务。
 
 ---
 
@@ -84,7 +89,7 @@ uv run python -m src.cli.service_server
 
 ### 构建探针
 
-IAST 探针是构建产物，不随仓库分发；源码在 `probe-java/`。需要 JDK 11 与 Maven：
+IAST 探针是构建产物，不包含在仓库内；源码在 `probe-java/`。需要 JDK 11 与 Maven：
 
 ```bash
 mvn -B -DskipTests -f probe-java/pom.xml clean package
@@ -94,9 +99,9 @@ jar cf probe-java/target/sec-probe-bootstrap.jar -C probe-java/target/classes co
 第一条产出 `sec-probe.jar`（探针主体），第二条产出 `sec-probe-bootstrap.jar`。后者只含
 `TaintHub` 一个类，必须放进 `-Xbootclasspath/a`：探针要在 JDK 类加载器启动之前就能看到它，
 否则 bootstrap 期的插桩拿不到共享状态。**两条命令都要跑，`mvn` 不会自动生成 bootstrap jar。**
-构建前先停掉靶场 JVM，否则 jar 被占用无法覆盖。
+构建前先停掉目标 JVM，否则 jar 被占用无法覆盖。
 
-挂载参数如下（取自 `scripts/launch/launch_java_quote.py`，可直接照拄）：
+挂载参数如下（取自 `scripts/launch/launch_java_quote.py`，可直接照抄）：
 
 ```bash
 java -Xbootclasspath/a:probe-java/target/sec-probe-bootstrap.jar \
@@ -123,40 +128,46 @@ java -Xbootclasspath/a:probe-java/target/sec-probe-bootstrap.jar \
 挂完先自检，`ready=true` 才算接上：
 
 ```bash
-python tools/probe_preflight.py --workspace-id <id> --http
+uv run python tools/probe_preflight.py --workspace-id <id> --http
 ```
 
 它同时校验会话行存在、心跳新鲜、`X-Agent-Token` 握手被接受且返回非空 `session_id`。
 它不写事件、不刷新心跳，所以不会把已经死掉的心跳伪装成活的。
 
-### 接入你自己的靶场
+### 接入你自己的目标应用
 
-本仓库不分发任何靶场源码，也不绑定特定靶场。接入方式是写一个启动脚本，把探针按上面的
+本仓库不分发任何目标应用源码，也不内置测试目标。接入方式是写一个启动脚本，把探针按上面的
 参数挂到你自己的应用上。`scripts/launch/launch_java_quote.py` 是最小完整示例：它起一个
 Spring Boot 应用、解析探针 jar 路径、从数据库取 token、拼好 JVM 参数。照它改成你的启动
 命令即可。
 
-`scripts/launch/launch_stack.py` 启动的是 SAVR 自己（后端 + 前端看门狗），与靶场无关。
+`scripts/launch/launch_stack.py` 启动的是 SAVR 自己（后端 + 前端看门狗），与目标应用无关。
 
 两个环境变量有用：`SAST_AI_PROBE_JAR` 改写探针 jar 路径，`SAST_AI_TOOLS_DIR` 指向
 `scripts/fetch_tools.py` 下载第三方工具的目录。
 
 ### 提交一次扫描
 
-注册一个指向靶场的工作区、挂上探针，通过 API 或界面提交任务。调试用的 CLI 入口是：
+先注册一个指向目标应用源码的工作区：在界面里「工作区 → 新建」，或调 `POST /api/workspaces`（字段 `name`、`target_path`）。挂好探针后提交任务，先用 `--dry-run` 看看将要写入的内容：
 
 ```bash
-python -m src.cli.scan_task_runner --task-id <id> --target /path/to/target/src \
+uv run --env-file .env python scripts/submit_scan_task.py --name my-first-scan --dry-run
+```
+
+去掉 `--dry-run` 即真正提交；工作区不是默认那个就补 `--workspace-id <id>`。执行已提交任务的 runner 也可以单独跑，用于调试：
+
+```bash
+uv run --env-file .env python -m src.cli.scan_task_runner --task-id <id> --target /path/to/target/src \
   --output-dir output/run1 --no-sca
 ```
 
 `--shard-file <path>` 可选：指向一个 JSON 分片清单，把扫描范围收窄到清单内的入口；
 不给就扫全量。分片清单的格式见 `src/core/scan_scope.py` 的加载逻辑。
 
-在把一轮指向外部靶场之前，先确认探针会话与 token 确实对得上。对不上时，摄取接口会返回 HTTP 200 且 `accepted=0`，很容易被误读成成功：
+在把一轮指向目标应用之前，先确认探针会话与 token 确实对得上。对不上时，摄取接口会返回 HTTP 200 且 `accepted=0`，很容易被误读成成功：
 
 ```bash
-python tools/probe_preflight.py --workspace-id <id> --http
+uv run python tools/probe_preflight.py --workspace-id <id> --http
 ```
 
 `ready=true` 表示会话行存在、心跳新鲜，且带 `X-Agent-Token` 的握手被接受并返回了非空 `session_id` 且无 `errors`。这个检查不写任何事件，也不刷新心跳，所以它不会把已经死掉的心跳弄成活着的。
@@ -189,7 +200,7 @@ SAVR/
 │   ├── iast/                # 探针摄取、覆盖率、族级判据
 │   ├── core/                # 共享原语：配置、族映射、阶段缓存
 │   └── cli/                 # 服务端、扫描任务执行器、基准 CLI
-├── probe-java/              # IAST/RASP 探针（Java + ByteBuddy）—— 构建产物，不随仓库分发
+├── probe-java/              # IAST/RASP 探针（Java + ByteBuddy）—— 构建产物，不包含在仓库内
 ├── frontend/                # Vue 3 + Vite 控制台
 ├── tools/                   # 发布卫生检查、CI 门禁、探针自检、CodeQL 查询
 ├── scripts/                 # 入口：fetch_tools、submit_scan_task、launch/
@@ -203,13 +214,13 @@ SAVR/
 
 先跑这两个检查，它们能解决很大一部分报告：
 
-1. `python tools/probe_preflight.py --workspace-id <id> --http` —— 如果不是 `ready=true`，事件正在被丢弃，每次重放都会看起来像漏检。
+1. `uv run python tools/probe_preflight.py --workspace-id <id> --http` —— 如果不是 `ready=true`，事件正在被丢弃，每次重放都会看起来像漏检。
 2. `uv run --frozen python tools/ci_gate.py` —— 确认问题不是本机环境造成的。
 
 开 issue 时请附上：
 
 - 你期望什么、实际发生了什么，一两句话。
-- 用的模型与提供方（通过 Ollama 的 `qwen3:8b`，或你自己的端点）、靶场应用、探针怎么挂的，以及你设了哪些 `run_env` 键。
+- 用的模型与提供方（通过 Ollama 的 `qwen3:8b`，或你自己的端点）、目标应用、探针怎么挂的，以及你设了哪些 `run_env` 键。
 - 该规格的终态 `verification_status` 与 `failure_attribution`，若涉及 LLM 阶段再加上 `stage_results.a2.contract`。这三个字段能解释大部分漏检，不需要对方看源码。
 - 相关日志行，不是整份日志。
 

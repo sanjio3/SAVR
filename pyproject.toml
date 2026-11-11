@@ -1,6 +1,5 @@
-# 2026-11-06：补齐 PEP 517 构建后端，干净环境里的 `pip install -e .` 才可用。
 # 本项目以仓库根为 import 根，不需要把 src/ 打成可安装包，故 packages 显式留空；
-# editable 安装只提供元数据。
+# editable 安装只提供元数据。PEP 517 构建后端让干净环境里的 `pip install -e .` 可用。
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
@@ -17,8 +16,8 @@ requires-python = ">=3.12"
 dependencies = [
     "anthropic>=0.18.0",
     "fastapi>=0.115.0",
-    # 靶场实例纪元探测（src/iast/target_epoch.py，D2 批次隔离）：读监听目标端口进程的
-    # create_time 作为「靶场实例身份」。缺失即降级为探针心跳信号，不阻断主流程。
+    # 目标实例纪元探测（src/iast/target_epoch.py，D2 批次隔离）：读监听目标端口进程的
+    # create_time 作为实例身份。缺失即降级为探针心跳信号，不阻断主流程。
     "psutil>=5.9.0",
     "pydantic>=2.8.0",
     "py7zr>=0.22.0",

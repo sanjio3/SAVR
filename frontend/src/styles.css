@@ -3,7 +3,6 @@
    调性 Agent-workspace / 中性底 + 单一强调色
    令牌先行：组件只引用变量，禁止硬编码色值
    ------------------------------------------------------------
-   2026-09-22 色板收敛（批次 1）：此前的「青绿主调 + 玫红强调」把两套色相都放在
    装饰层，导致同屏最多 6 个色相、底色非中性（body 还叠了三层渐变）。现在：
      - 表面统一走中性灰绿（饱和降到几乎看不见），由**留白与边框**承担分组，不再靠底色；
      - 强调色只保留一个（--color-accent），只给关键动作与当前态；
@@ -22,8 +21,6 @@
   --color-border-strong: #ced5d2;
 
   /* 高对比底 / 反色底上的前景色。
-     2026-09-22 复盘：批次 1 首次引入这两个概念，但当时的批量令牌化把「定义行」也一并
-     改写成了 `var(...)` 自引用（见下方 sev 组的同批事故），且 --color-on-strong /
      --color-invert-bg / --color-invert-ink 三个定义行整个丢失 → 全站 10+ 处 var() 悬空。
      这里补回显式字面值，并由 frontend/scripts/check-design-tokens.mjs 做门禁防复发。 */
   --color-on-strong: #ffffff;
@@ -103,7 +100,7 @@ body {
   margin: 0;
   font-family: var(--font-sans);
   color: var(--color-ink);
-  /* 2026-09-22：去掉原三层渐变（玫红径向 + 绿径向 + 线性）。底色不再是「有内容的画布」，
+  /*
      分组信息交给边框与留白；这也是「颜色太花」的第一来源。 */
   background-color: var(--color-bg);
   background-image: none;
@@ -474,7 +471,6 @@ button.settings-entry:hover {
 }
 
 /* ---------- 徽章（统一中性底 + 语义色只出现在文字/左色条） ----------
-   2026-09-22 收敛：原实现每个语义档都配一块浅色底（var(--surface-tint-ok)/var(--surface-tint-danger)/var(--surface-tint-warn)/var(--surface-tint-info)…），
    一屏里最容易堆成「彩色拼贴」。现在统一中性底 + 细边框，语义只用文字色表达；
    严重度额外给 3px 左色条，保证「一眼分级」而不铺色块。 */
 .badge {
@@ -767,7 +763,7 @@ tbody tr:hover {
   line-height: 1.1;
 }
 
-/* A2 方案二（2026-09-18）：聚合吸收成员条数的披露行。它不是主计数，须明显弱于数字，
+/*
    但必须可读、不被截断（「另 N 条为聚合成员」一旦看不全就失去披露意义）。 */
 .stat-note {
   font-size: 11px;
@@ -775,14 +771,13 @@ tbody tr:hover {
   white-space: normal;
 }
 
-/* A4 方案二（2026-09-18）：运行期分轴计数口径的说明行。 */
 .running-counter-hint {
   margin: 10px 0 0;
   font-size: 12px;
   line-height: 1.5;
 }
 
-/* 2026-09-22：.accent-card 已删除 —— 模板零引用，且其「玫红→绿」双色相渐变
+/*
    是全站唯一的双色相底色，属「颜色太花」的典型。需要强调卡时用 .glow-card（中性底 + 阴影）。 */
 
 .glow-card {
@@ -906,7 +901,7 @@ code {
   background: var(--st-ok);
 }
 
-/* ---------- 横向步骤流（2026-09-23 由纵向改回横向·紧凑版）----------
+/*
    纵向版一屏 10 行高度占用过大；改横向后宽屏一行放下、窄屏按 flex-wrap 自动折行。
    承接批次 1/2 的颜色整改（不倒退）：状态色仍只落在 26px 小圆环与状态文字上，整行不铺色；
    当前步改为底部 2px 强调条定位（横向时左贴边条不再是「行内导航」的自然语义）。
@@ -1087,7 +1082,7 @@ code {
   50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--st-run) 0%, transparent); }
 }
 
-/* 2.2 监控化（2026-09-19）：流程节点任务计数徽标 + 运行中节点已耗时。
+/*
    脉冲动画与失败红标沿用既有 .step-running / .step-failed 规则，不重复定义。 */
 .step-badge {
   font-size: 11px;
@@ -1439,7 +1434,7 @@ code.token {
 .flow-rule { border-color: var(--sev-info); background: var(--surface-tint-info); color: var(--sev-info); }
 
 /* ============================================================
-   新增组件（P0/P1 落地）
+   新增组件
    ============================================================ */
 
 /* 进度条（列表卡片 / 阶段详情 / 顶栏运行条） */
@@ -1567,7 +1562,7 @@ code.token {
   font-variant-numeric: tabular-nums;
 }
 
-/* 阶段任务清单（2026-09-17 落地：替代阶段快照卡片，展示每个阶段具体在做什么）。
+/*
    阶段头为可点击行，展开后列出后端 pipeline_view 提取的真实任务条目。 */
 .stage-task-list {
   display: grid;
@@ -1638,7 +1633,7 @@ code.token {
   font-size: 12px;
 }
 
-/* 2026-09-18 修复：空态提示 / 截断提示这类 muted 条目只有一个文本节点。
+/*
    注意 li 自身也是三列网格（继承 .stage-task-item），文本节点会成为匿名网格项落进
    10px 的第一列，中文被迫逐字换行、渲染成竖排一列（实测展开 D2 的空态
    「该阶段暂无明细任务」高 149px 竖排）。
@@ -1667,7 +1662,6 @@ code.token {
 .task-name { font-weight: 500; word-break: break-all; }
 .task-detail { color: var(--color-muted); word-break: break-all; }
 
-/* 单 task 运维视图（2026-09-17 落地）：状态卡网格 + 端口可达性徽章 */
 .ops-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));

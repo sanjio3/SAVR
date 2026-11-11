@@ -425,7 +425,7 @@ class CodeQLAdapter:
     def _env_with_mvn_shim(project_path: Optional[str] = None) -> Dict[str, str]:
         """兼容入口：转调模块级 ``_env_with_mvn_shim``（含构建 JDK 绑定）。
 
-        保留这个方法名是因为单测与外部脚本都在用 ``CodeQLAdapter._env_with_mvn_shim``，
+        保留这个方法名是因为已有调用方依赖 ``CodeQLAdapter._env_with_mvn_shim``，
         改成模块函数后旧调用方不该跟着改。
         """
         return _env_with_mvn_shim(project_path)

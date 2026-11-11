@@ -59,7 +59,6 @@ REQUIRED_TRACKED = (
     "scripts/fetch_tools.py",
     "scripts/launch/launch_stack.py",
     "scripts/launch/launch_java_quote.py",
-    "scripts/launch/start_dev.ps1",
     "frontend/package.json",
     "frontend/package-lock.json",
     "probe-java/pom.xml",
@@ -76,7 +75,7 @@ def _tracked() -> list[str]:
 def _pending() -> list[str]:
     """尚未进索引、但 `git add -A` 会收进去的文件。
 
-    issue 模板全部绕过检查；发布时它们同样是干净 clone 的一部分。改为一并扫描，
+    GitHub 元数据文件同样属于干净 clone 的一部分，一并扫描；
     已忽略的运行时产物（app.db、logs、.pytest_tmp_*）不在此列。
     """
     out = subprocess.run(

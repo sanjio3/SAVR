@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# 基础：解释器 / 前端 / 测试缓存
+# Python, frontend and tool caches
 # ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
@@ -30,7 +30,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # ---------------------------------------------------------------------------
-# 运行时 / 一次性产物
+# Generated artifacts and local run output
 # ---------------------------------------------------------------------------
 .a3-*/
 .a3-runtime/
@@ -42,7 +42,7 @@ _pytest_*.txt
 test_*.txt
 replay_pid*.log
 package-lock.json
-# 前端是可部署应用，锁文件入库以保证 CI 与外部用户装到同一套依赖版本
+# The frontend lockfile is committed so CI and deployments install the same tree.
 !frontend/package-lock.json
 SKILL.md
 test-project/*.zip
@@ -50,7 +50,6 @@ stack_status.json
 .resolve_version_marker
 stack-backend.log
 stack-frontend.log
-owasp-full-watchdog.log
 hs_err_pid*.log
 nul
 
@@ -64,7 +63,7 @@ poc.ser
 cmd_payload.txt
 
 # ---------------------------------------------------------------------------
-# 本机内部记录与私有配置：不随公开发行版分发
+# Local configuration and secrets. Copy the .example files instead.
 # ---------------------------------------------------------------------------
 .workbuddy-ai/
 .workbuddy/
@@ -77,8 +76,6 @@ data/_old_dirs_*/
 .env
 .env.*
 !.env.example
-# 本机密钥与配置：精确文件名 + 常见变体，防止改个名字就被 git add -A 带上公开仓库。
-# 公开的脱敏样例是 config/config.example.yaml 与 .env.example，不匹配下面任何一条。
 config.yaml
 config/config.yaml
 configs/config.yaml
@@ -87,17 +84,14 @@ configs/config.yaml
 **/*.local.yaml
 **/secrets.yaml
 **/secrets.yml
-# 本机专属运行 profile（含绝对路径与靶场密钥），只提交脱敏模板 run_profiles.yaml
 config/run_profiles.local.yaml
-升级文档.md
-记忆文档.md
 .idea/
 .vscode/
 .DS_Store
 .serena/
 
 # ---------------------------------------------------------------------------
-# 第三方二进制 / 编译产物（按需用 scripts/fetch_tools.py 下载）
+# Third-party binaries, downloaded on demand with scripts/fetch_tools.py
 # ---------------------------------------------------------------------------
 src/pipeline/d2/resources/tools/*.exe
 src/pipeline/d2/resources/tools/*.jar
@@ -113,69 +107,50 @@ tools/gadget_builder/lib/*.jar
 .codeql-db-*/
 
 # ---------------------------------------------------------------------------
-# 本机专用运维脚本：工作区保留供本地整栈使用，但硬编码了本机 JDK / 靶场目录，
-# 不属于可分发工程；部署方式见 README 的 Configuration 一节。
+# Local-only helper scripts. Only the whitelisted entry points are distributed.
 # ---------------------------------------------------------------------------
 frontend/vite.config.ts.timestamp-*.mjs
 scripts/_archive/
 tools/_archive/
-# launch_ruoyi_full.py 依赖本机 JDK8 / MySQL / 靶场源码布局，保持本地专用、不随仓库分发
-launch_ruoyi_full.py
-
-# 文档已内联进 README，docs/ 不再分发；本机残留一并忽略。
 docs/
 
-# 本机一次性诊断 / 评测脚本（工作区保留，不随仓库分发）
-# fetch_tools.py 是 README quickstart 的依赖，必须留在索引里。
 scripts/*
 !scripts/fetch_tools.py
 !scripts/README.md
 !scripts/submit_scan_task.py
-# 开发入口：start_dev.ps1 指向 scripts/dev_all.ps1，三者一起分发才不断链
 !scripts/dev_all.ps1
 !scripts/dev_backend.ps1
 !scripts/dev_frontend.ps1
-# 靶场/栈启动器。scripts/* 是整目录忽略，子目录必须逐层放行，否则 scripts/launch/ 整个被挡。
 !scripts/launch/
 scripts/launch/*
 !scripts/launch/launch_java_quote.py
 !scripts/launch/launch_stack.py
-!scripts/launch/start_dev.ps1
-# 本机一次性抽样监控/对账脚本：依赖未分发的本机真值与辅助脚本，不随仓库分发
-tools/reconcile_task_647.py
-tools/watch_task_647.py
-tools/owasp_run_shards.py
-tools/owasp_shards.py
-tools/register_full_target_session.py
-tools/spawn_detached.py
-tools/gadget_builder/verify_live.py
+
 tools/mvn_shim/*
 !tools/mvn_shim/mvn
 !tools/mvn_shim/mvn.cmd
 tools/*.cmd
 
+# Local-only helpers kept in the working tree, never distributed
+tools/_wb_*.txt
+tools/_wb_*.java
+tools/_ollama_keeper.py
+tools/metric_layers.py
+tools/reconcile_task_*.py
+tools/watch_task_*.py
+tools/*shard*.py
+tools/register_full_target_session.py
+tools/spawn_detached.py
+tools/gadget_builder/verify_live.py
+
 # ---------------------------------------------------------------------------
-# data/ 是运行时数据目录（SQLite 库、工作区、分片、扫描产物），整体不入库。
-# 参考真值表与分片清单不再随仓库分发：用户扫自己的靶场时没有对应真值。
-# 需要「真值表内点」保护时，用 SAST_AI_TRUTH_FILES 指向自己的 CSV。
+# Runtime data: SQLite database, workspaces, shards and scan output.
+# Truth files are supplied by the deployment via SAST_AI_TRUTH_FILES.
 # ---------------------------------------------------------------------------
 data/*
 
-# 本机专用守护 / 对账脚本（含本机 Ollama 与靶场路径，工作区保留）
-tools/_ollama_keeper.py
-tools/metric_layers.py
-
-# 2026-11-07 本机一次性诊断明细与重复探针副本。原 `tools/_wb_*.py`
-# 只挡 .py，这两个文件会被 `git add -A` 收进公开仓库；明细含开发机逐条
-# 证据与路径，ShiroProbe 副本与 tools/ShiroProbe.java 内容重复（后者有
-# 生产引用，必须保留）。二者本机保留、仅排除分发。
-tools/_wb_*.txt
-tools/_wb_shiro_probe.java
-
-# 一次性交付总览（不随仓库分发）
+# Local generated reports and CI scratch output
 overview.md
-
-# 本机运行记录不入库
 output/ci/
 output/benchmark/
 *.junit.xml

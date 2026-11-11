@@ -796,11 +796,9 @@ def ollama_chat(messages: List[Dict[str, str]], model: str = DEFAULT_MODEL,
                 timeout: Optional[float] = None, format_mode: str = "json") -> str:
     if timeout is None:
         timeout = llm_timeout_default()
-    # 单文件实测 25~78s（think 全用在推理上、最后还被剥掉）。显式 think=false 后
-    # 同样输入 2.0~2.6s（**10~30 倍**），输出长度一致（146 字符）。config.yaml 的
-    # ollama.think=false 早已写明「关思考命中 4/4、开思考 0~3/4」，本模块之前没接。
+    # 开启推理会显著拉长单文件耗时，而推理内容最终会被剥掉，因此默认关闭；
+    # 可用 SAST_AI_LLM_THINK=1 打开。
     _think = str(os.environ.get("SAST_AI_LLM_THINK", "0")).strip().lower() in ("1", "true", "yes")
-    # （453 的 01002/01003/01004 就是本轮被判 false_positive 直接整例漏掉）。
     # 采样温度降到 0 + 固定 seed，把「同一份代码两次跑结论不同」的概率压到最低。
     # 需要 A/B 对照时可用 SAST_AI_LLM_TEMPERATURE 覆盖。
     try:

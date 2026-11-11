@@ -101,7 +101,7 @@ def _acquire_singleton_lock(task_id: int, output_dir: Path) -> "Optional[int]":
 def parse_args():
     parser = argparse.ArgumentParser(description="Background scan task runner")
     # 由 task_runner 从任务 options 下发，最终由 run_benchmark 写入 SAST_AI_SHARD_FILE。
-    parser.add_argument("--shard-file", default="", help="分片清单 JSON 路径（全集靶场按片扫描）")
+    parser.add_argument("--shard-file", default="", help="分片清单 JSON 路径（按片缩小扫描范围）")
     parser.add_argument("--task-id", required=True, type=int)
     parser.add_argument("--target", required=True)
     parser.add_argument("--output-dir", required=True)
