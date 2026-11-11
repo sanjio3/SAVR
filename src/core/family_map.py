@@ -1,18 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""CodeQL rule_id → 平台族 的唯一映射入口（2026-11-01，P1）。
+"""CodeQL rule_id → 平台族 的唯一映射入口。
 
 ## 解决什么问题
 
 平台内部族名有三套写法（DB 的 snake_case、`exploit_spec` 的 kebab-case、报告的中文标题），
 而 CodeQL 的原生 query 名之前**没有任何映射**——`_map_rule_to_type` 的兜底是
 
-    tail.replace("-", " ").title()      # java/log-injection -> "Log Injection"
+    tail.replace("-", " ").title      # java/log-injection -> "Log Injection"
 
 于是 `type` 字段里出现了 `log injection`、`http response splitting`、`format string controlled`
 这类带空格的字符串，一路流到 `trigger_specs.family`。
 D2 的证明模板按族索引，**族名不在字典里就没有模板可套**，spec 结构性停在 unconfirmed
-（本轮实测：21 条原生名 spec 里 17 条零确认）。
+。
 
 ## 设计约定
 
@@ -20,7 +20,7 @@ D2 的证明模板按族索引，**族名不在字典里就没有模板可套**�
    配置即生效，不做进程级缓存，避免测试顺序耦合）。
 2. 未登记的 rule_id 返回 `unmapped` 并打 WARNING —— **不再猜**。
 3. `unsupported` 段登记「平台没有对应族」的规则：返回 `unmapped`，但 reason 更明确，
-   且 `is_d2_supported()` 为 False，调用方据此把它排除在动态分母之外（显式决策，不是静默丢）。
+   且 `is_d2_supported` 为 False，调用方据此把它排除在动态分母之外（显式决策，不是静默丢）。
 4. 本模块只做「名字归一」，不判真假、不改证据。
 """
 from __future__ import annotations

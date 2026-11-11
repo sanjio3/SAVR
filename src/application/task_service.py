@@ -15,17 +15,14 @@ from src.pipeline.a0.service import A0PreprocessService
 logger = logging.getLogger(__name__)
 
 
-# M14：破坏性闸门在后续扫描中持续全批准（2026-10-03 决议，历史数据不补）。
 # 落地方式不是「删掉闸门」，而是把缺省与未知值统一收口到 off：
-#   - resolve_approval_mode() 是唯一解析入口，缺省 off、未知值当 off 并打 warning；
+#   - resolve_approval_mode 是唯一解析入口，缺省 off、未知值当 off 并打 warning；
 #   - 提交侧仍接受调用方显式传 approval_mode（保留人工收紧的可能），
-#     但会落一条 note 到 summary.hitl，让「这轮闸门是不是全批准」可被对账查出来。
 APPROVAL_MODES = ("off", "ask_on_risky_tools", "strict")
 DEFAULT_APPROVAL_MODE = "off"
 FULL_APPROVAL_POLICY = "destructive-gate-full-approval"
 # progress 事件保留：最近 N 条（细粒度尾迹）。配合 6h 时间窗 + 每 5 分钟采样，
 # 审计视角仍能看到「起跑 → 骨架 → 收尾」全过程，而体积从 0.5GB/任务降到 MB 级。
-# 2026-10-04：此前单靠 6h 窗（OWASP 任务只跑 1.5–3.5h ⇒ 一条都删不掉）导致
 # scan_task_events 膨胀到 9.02GB，占 app.db 的 83%。详见 post-persist 的保留策略注释。
 _PROGRESS_KEEP_TAIL = 200
 
@@ -80,14 +77,12 @@ class TaskService:
         if task is None:
             raise ValueError(f"Task {task_id} not found")
         if task.output_dir:
-            # 2026-09-16（待请示批准）：reset_directory 底层 shutil.rmtree 在 Windows 下目录被占用时
             # 抛 PermissionError[WinError 32]，原先未捕获会透传为 HTTP 500。改为 best-effort：
             # 删目录失败也保证库行清除，避免停任务端点 500。
             try:
                 self.preprocess.reset_directory(Path(task.output_dir))
             except OSError as _e:
                 logger.warning("[delete_task] 输出目录删除失败（best-effort 继续删库行）：%s", _e)
-        # 2026-10-04（取消能力）：必须先停运行/排队中的任务再删库行。
         # 反过来的话 ThreadPoolExecutor 的队列里还留着这个任务，轮到它时照样拉起子进程 ——
         # 实测 历史轮次 被删后仍被依次拉起空跑（CodeQL 建库、占槽位），把快环任务饿死。
         if task.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
@@ -132,11 +127,11 @@ class TaskService:
         self.task_repository.delete_by_workspace(workspace_id)
 
     def purge_all_tasks(self) -> Dict[str, int]:
-        """删除全部任务及其全部子表残留（2026-10-02 发难清单 Q5 落地）。
+        """删除全部任务及其全部子表残留。
 
         背景：旧 delete 只删 scan_tasks 一行，trigger_specs / model_runs / hypotheses /
         vuln_blackboard / scan_runs / scan_task_events / findings / reports 全部残留
-        （实测 vuln_blackboard 单表残留 2 万+ 行），task_id 复用后旧 spec 被当成本轮
+        ，task_id 复用后旧 spec 被当成本轮
         重放目标。级联删已下沉到 TaskRepository；本方法额外清理「task_id 已无对应
         scan_tasks 行」的孤儿残留，并 best-effort 移除各任务输出目录。
 
@@ -161,7 +156,6 @@ class TaskService:
         workspace = self.workspace_repository.get(payload["workspace_id"])
         if workspace is None:
             raise ValueError(f"Workspace {payload['workspace_id']} not found")
-        # 配额闸门（2026-09-22）：提交前先评估该工作区的硬上限策略，超限直接拒绝新任务。
         # 不自动杀在跑任务——只在入口拦新任务 + 告警。
         from src.application.quota_service import QuotaExceededError, QuotaService
 
@@ -222,18 +216,14 @@ class TaskService:
                 "output_format": payload.get("output_format", "both"),
                 "approval_mode": normalize_approval_mode(payload.get("approval_mode", DEFAULT_APPROVAL_MODE)),
                 "tool_allowlist": list(payload.get("tool_allowlist") or []),
-                # 2026-09-24：闸门按「动作类别」放行的白名单；批准后由 resolve_task_hitl_action 写入。
                 "act_allowlist": list(payload.get("act_allowlist") or []),
-                # 2026-10-20：任务级 LLM 扫描强度覆盖（前端设置页 / 提交任务时下发）。
                 # 只进本任务的 options，不写全局配置 —— 项目是多任务并发的。
                 "llm_overrides": dict(payload.get("llm_overrides") or {}),
-                # 2026-10-03（分片作用域）：全集靶场按片扫描的分片清单路径（绝对路径）。
                 # task_runner 会透传给扫描子进程；为空即旧的全量行为。
                 "shard_file": str(payload.get("shard_file") or "").strip(),
-                # 2026-11-06：任务级环境开关随 options 落库，由 scan_task_runner
-                # 的 _apply_task_run_env() 在子进程启动时注入 os.environ。
+                # 的 _apply_task_run_env 在子进程启动时注入 os.environ。
                 # 只做键/值字符串化（与消费端 str(k)/str(v) 对齐），不在这里改开关语义。
-                # 缺了这一行，REST 提交的任务永远丢 run_env（629 / 630 实测）。
+                # 缺了这一行，REST 提交的任务永远丢 run_env。
                 "run_env": {str(k): str(v) for k, v in
                             dict(payload.get("run_env") or {}).items()},
                 # M11：DAST 配置自检结果（不拦截提交，但随任务留痕并推事件到前端）。
@@ -329,9 +319,6 @@ class TaskService:
                         allowlist.append(tool_id)
                     options["tool_allowlist"] = allowlist
                     hitl_summary["tool_allowlist"] = allowlist
-                # 2026-09-24：批准链路接通。闸门是「按动作类别」放行的（比对 act_allowlist），
-                # 而此前批准只写工具级 tool_allowlist，act_allowlist 全项目从无写入 ——
-                # 结果「批准后重跑仍被拦」。这里把该动作的真实不可逆类别写入 act_allowlist，
                 # 使 resume/resubmit 重跑到 D2 时同一类别不再被闸门短接。
                 act_cat = str(item.get("category") or "").strip()
                 if act_cat:
@@ -382,7 +369,6 @@ class TaskService:
     def suspend_task(self, task_id: int) -> Dict[str, Any]:
         """软挂起：将任务标记为 SUSPENDED（供人工复核期间持有，不杀在跑进程）。
 
-        语义（2026-09-23）：HITL 闸门本身不阻塞流水线——被拦的不可逆动作只是「跳过验证、
         记录 pending」，任务照常推进到终态。suspend 是对「已完成/排队中」任务的复核持有标记；
         若任务正在运行，状态会在其自身终态事件到达时被改写为终态（挂起不阻断在跑进程）。
         """
@@ -453,7 +439,7 @@ class TaskService:
         payload: Dict,
         error_message: Optional[str] = None,
     ) -> None:
-        """写任务终态（2026-09-19 加固，对应 run 21 事故）。
+        """写任务终态。
 
         两点修正：
         1. finished_at 优先取事件载荷里的真实结束时刻（孤儿回收会显式带上报告 generated_at
@@ -473,7 +459,6 @@ class TaskService:
             kwargs["error_message"] = error_message
         try:
             self.task_repository.update(task_id, **kwargs)
-            # 写后校验（run 24 事故第二道保险）：update 不抛异常 ≠ 真的写进去了
             # （DB 锁退避用尽后可能静默失败）。终态写不进去等价于任务永久卡 running，
             # 所以这里回读一次；非终态就重试一次，仍失败则显式告警，绝不静默放过。
             _want = str(getattr(status, "value", status)).lower()
@@ -500,7 +485,6 @@ class TaskService:
                         "detail": f"终态期望 {_want}，回读为 {_got}（已重试一次）",
                     })
             # 孤儿轮次收口：任务进入终态后，scan_runs 里该 task 所有未收口的 run 必须闭合，
-            # 否则会像 task-8 那样留下永远 running 的陈旧记录（id=8 自 2026-09-14 未闭合）。
             if str(status).lower() in ("failed", "completed") and self.db is not None:
                 try:
                     from src.core.blackboard import close_open_runs
@@ -541,12 +525,12 @@ class TaskService:
         self._post_persist_finalize(task_id, workspace_id)
 
     def _post_persist_finalize(self, task_id: int, workspace_id: int) -> None:
-        """findings 落库之后的派生步骤（2026-09-14 新增）。
+        """findings 落库之后的派生步骤。
 
         根因：所有以 findings 为锚的派生步骤（IAST 事件→finding 关联归因、黑板同步）此前都写在
         benchmark_cli 的报告流程里执行，而 findings 表由本方法在扫描结束之后才写入。于是派生步骤
         执行时 findings 还是空的，导致 iast_events.correlated_finding_id 全为 NULL
-        （task 7 实测 1430 条事件 0 条关联，而同一函数在 findings 落库后手工执行可关联 799 条）。
+        。
         结论：必须把这类派生步骤挪到 findings 落库之后再跑一遍。
 
         幂等、fail-open：失败只告警，不影响任务终态。
@@ -554,7 +538,7 @@ class TaskService:
         db = self.db
         if db is None:
             return
-        # 0) 重建假说表（Q1 第三因：差集载体）。以 spec 为假说来源、事件/裁决为观测来源，
+        # 0) 重建假说表。以 spec 为假说来源、事件/裁决为观测来源，
         #    收敛到 proposed/confirmed/refuted/open 四态，open 即差集成员。
         try:
             from src.core import hypotheses as _hyp
@@ -564,7 +548,7 @@ class TaskService:
                         task_id, counts, diff.get("open_count"))
         except Exception as _e:
             logger.warning("[post-persist] 假说表刷新失败（不阻断）：%s", _e)
-        # 1) IAST 事件 → finding 关联归因（Q1 第四因：观测必须能回指 finding，差集才有粒度）
+        # 1) IAST 事件 → finding 关联归因
         try:
             from src.iast.service import IastService
             svc = IastService(db)
@@ -573,12 +557,10 @@ class TaskService:
             logger.info("[post-persist] IAST 关联归因 task=%s bola=%s sink=%s", task_id, bola, sink)
         except Exception as _e:
             logger.warning("[post-persist] IAST 关联归因失败（不阻断）：%s", _e)
-        # 2) 事件保留策略（2026-10-04 重做）：**时间窗 + 条数双闸，外加审计采样**。
         #    沿革与教训（别再退回单条件）：
         #      · 09-14 最初是「每任务只留最近 30 条」——有效，但有人以「30 条会裁光长跑
         #        任务的进度轨迹、事后不可审计」为由改成「最近 6 小时」。
         #      · 单靠 6h 窗等于没窗：OWASP 任务本身只跑 1.5–3.5h，全部事件都落在窗内，
-        #        一条都删不掉。实测 run 90 留 2,733 条 / 0.502GB，单任务 0.5GB；
         #        100 个任务把 `scan_task_events` 撑到 9.02GB（占 app.db 的 83%）。
         #    现在三条一起上，才能同时满足「不膨胀」与「可审计」：
         #      a) 6 小时时间窗（兜住跨阶段的粗粒度轨迹）；
@@ -622,10 +604,9 @@ class TaskService:
                                 task_id, len(_rows), len(_keep))
         except Exception as _e:
             logger.warning("[post-persist] 事件保留策略执行失败（不阻断）：%s", _e)
-        # 3) 黑板收口（Q6 治本，2026-09-14 落地）：把黑板同步挪到 findings 落库之后。
         #    根因：sync_blackboard 原先只在 benchmark_cli 报告流程里跑（扫描内），那时 findings
         #    还没写入（findings 由本方法所在的收尾链路写），黑板因此只覆盖 spec 侧
-        #    （task 7 实测：黑板 66 行 vs findings 去重 533 个 vhash）。放在这里后，
+        #    。放在这里后，
         #    黑板 valid_vh（findings ∪ specs）才能覆盖 findings 侧。
         #    并且：失败与不一致不再静默（原先 run_id=None 只 warning、整块 try/except 兜底），
         #    改为写 task_alert 事件（前端可见）+ ERROR 日志，并加「黑板行数 >= findings 去重 vhash 数」断言。
@@ -673,14 +654,12 @@ class TaskService:
                 })
             except Exception:
                 pass
-        # 4) IAST 运行时关联摘要重算（2026-09-19：修 iast_summary 恒全零）
         _post_hoc_sink: int | None = None
         #    根因：benchmark_cli 在 reporting 阶段生成 iast_summary，而 findings 表由本类的
         #    _handle_runner_result 才落库 —— 生成时 findings 尚空，而 IastCorrelationService
         #    以 findings 为根做关联，于是 total_hypotheses 恒 0、各比率恒 0。
         #    实测 历史轮次 连续八轮 iast_summary.stats 全为零，属普遍性时序缺陷而非个别故障。
         #    修法：findings 落库后重算并回写 final_report.json，前端「运行时确认」才显示真实抵达数
-        #    （run 21 实测由 0 恢复到 sink_reached=54 / exploit_confirmed=74）。
         try:
             import json as _json
             from pathlib import Path as _Path
@@ -711,10 +690,6 @@ class TaskService:
                     )
         except Exception as _e:
             logger.warning("[post-persist] iast_summary 重算失败（不阻断）：%s", _e)
-        # 5) D2 结果可信度守卫（2026-09-20）
-        #    背景：run 23 的 D2 塌陷根因不是检测能力，而是**重放期靶场不可达**——
-        #    2026-09-20 17:24:22 java-sec-code 优雅退出（code=0，看门狗 5s 重建），
-        #    新 JVM 直到 17:30~17:31 才启动完 Spring Boot。而 run 23（16:59:30~17:34:35）
         #    的 D1/D2 重放窗口正落在该停机+启动区间内 → 重放请求打不到被插桩的应用：
         #    运行期 iast_arrivals 32→1，且收尾重算的 sink 抵达也从 50 掉到 8。
         #    这类轮次的 D2 数字**不可用于对账与差分门禁**，必须显式告警，而不是静默产出低值。
@@ -796,7 +771,6 @@ class TaskService:
                 # D1 的统一重放已并入 verify 链路（见 benchmark_cli 的 D1 指标聚合），
                 # 执行门禁因此与 i1/d2/i2 一致：verify 开启即真实运行。占位状态若只看 enable_idor
                 # 会被标成 skipped，导致前端在扫描前 2/3 显示「D1 跳过」而后端实际在重放
-                # （2026-09-13 run 27 实测：显示 skipped，终态带回 31 条 TriggerSpec 重放数据）。
                 "d1": self._stage("D1 操作器", "pending" if (enable_verification or payload.get("enable_idor", False)) else "skipped"),
                 "i1": self._stage("I1 链路监听器", "pending" if (enable_verification or payload.get("enable_idor", False)) else "skipped"),
                 "d2": self._stage("D2 验证/裁决器", "pending" if (enable_verification or payload.get("enable_idor", False)) else "skipped"),
@@ -858,7 +832,7 @@ class TaskService:
                         _stage["message"] = f"等待 {_dep} 完成"
                         break
 
-        # §179/i1/I1 监听器伴随 D1 重放、i2/I2 裁决伴随 D2 校验，在统一链路里与 d1/d2 并发，
+        # /i1/I1 监听器伴随 D1 重放、i2/I2 裁决伴随 D2 校验，在统一链路里与 d1/d2 并发，
         # 不直接参与顺序门禁；依据 d1/d2 真实状态派生，使预声明的 i1/i2 阶段随进度推进而非卡在 pending。
         # 关键：i1/i2 必须全程跟随 d1/d2 的任何状态（pending/blocked/running/completed/failed/skipped），
         # 否则会出现"d1 还没开始，i1 已显示完成"的错乱。
@@ -910,10 +884,8 @@ class TaskService:
 
         summary["pipeline"] = pipeline
 
-        # 2026-10-25（20.3.4 阶段耗时埋点）：把 CLI 返回的 phase_times 落到 summary 顶层。
         # 背景：benchmark_cli 早就把各阶段耗时算好并放进返回值（'phase_times': phase_times），
         # 但 _merge_task_summary 只挑 pipeline/stage_results 等键合并，**phase_times 被丢掉** ⇒
-        # run 469 的 summary 里查不到任何阶段耗时 ⇒「总耗时 7721s 里 A1+A2+D2 只占 53%，
         # 剩下 46.9% 不知道花在哪」这个问题一直无解。
         # 本次只做「搬运」：不改任何阶段的行为、不影响任何判定，纯观测补齐。
         _pt = payload.get("phase_times")
@@ -947,7 +919,7 @@ class TaskService:
             or _terminal
         )
         # 键名统一（一处修全部）：payload 里的 stage_results 历史上被改名写进 summary["results"]，
-        # 导致 summary.stage_results 在库中从未存在（task-9 实测为 None），前端所有读 stage_results.*
+        # 导致 summary.stage_results 在库中从未存在，前端所有读 stage_results.*
         # 的面板（A2 漏斗 / SCA / AP）恒为空。现双写同一 dict 对象：
         #   - "results"       保留，兼容既有读取方（reporting / 旧 task 数据 / 外部脚本）
         #   - "stage_results" 规范键名，前端新读法统一用它

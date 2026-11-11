@@ -1,8 +1,7 @@
 """Prompt 模板安全渲染。
 
-背景（R4 回归事故）：
     A2 审计提示词模板（src/prompts/audit_prompts.yaml）用 Python 的
-    ``str.format()`` 渲染。``format()`` 会把模板里**所有** ``{xxx}`` 当成占位符，
+    ``str.format`` 渲染。``format`` 会把模板里**所有** ``{xxx}`` 当成占位符，
     一旦提示词正文中出现字面花括号——例如路由示例 ``/order/{id}``、``/address/{id}``——
     就会抛 ``KeyError: 'id'``。
 
@@ -13,7 +12,6 @@
 约定：
     调用方只替换自己**显式传入**的键，其余占位符一律当作字面量原样保留。
     这样提示词里可以安全地书写 ``{id}`` / ``{orderId}`` 之类的路由示例，
-    不必再人肉转义成 ``{{id}}``（历史上正是漏转义导致的事故）。
 """
 
 from __future__ import annotations
@@ -52,7 +50,6 @@ def render_prompt(template: str, **kwargs) -> str:
     if not template:
         return template
 
-    # §4.3（2026-09-19）：`{skill_hints}` 是 audit_file 模板里的可选槽位（规则库补充要点）。
     # 调用方忘了传时，若不给默认值，render 后会把字面量 `{skill_hints}` 留给模型。这里统一
     # 兜底为空串，保证任何渲染路径都不会泄漏该占位符（显式传入时以传入值为准）。
     kwargs.setdefault("skill_hints", "")

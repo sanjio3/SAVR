@@ -12,22 +12,19 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * 平台通信客户端（根因修复）。
+ * 平台通信客户端。
  *
  * 本探针 jar 经启动器 -Xbootclasspath/a 挂到 bootstrap 类加载器。引导层只委派 java.base
  * 与该参数追加的 jar，不委派平台类加载器，因此平台模块类 java.net.http.HttpClient 在链接期
- * 解析不到 → NoClassDefFoundError → 被 FailOpen 吞掉 → 零插桩（java-sec-code 即此症状：
  * 8080 正常监听但 iast_events.sink_reached 恒为 0）。
  *
  * 改用 java.base 的 HttpURLConnection：① 引导层可见，彻底消除链接期崩溃；② 天然 HTTP/1.1，
  * 规避 JDK HttpClient 对 http:// 默认升级 h2c 致 uvicorn 返回 422 丢事件的隐患；③ 用
  * Proxy.NO_PROXY 直连 127.0.0.1:8000，绕过沙箱 / 企业代理的 HTTP 拦截。
  *
- * <p>2026-09-13 二次修正：HttpURLConnection 底层走 java.net.Socket，会被宿主应用注册的全局
- * {@code Socket.setSocketImplFactory} 拦截。java-sec-code 的 SSRF 演示端点（/ssrf/**）一旦被调用
- * 就注册该 factory，且其 {@code stopHook} 因 SocketHookImpl 不检查开关而失效，导致此后
- * <b>所有</b> 到内网地址的 socket 被拒 —— 探针上报 127.0.0.1:8000 全废，表现为
- * dropped N events after send failure、心跳停摆、D2 全部 no-iast-evidence。
+ * 某些目标应用会注册全局 {@code Socket.setSocketImplFactory}；若其卸载钩子未检查开关，
+ * 此后所有内网 socket 都可能被拒，导致探针上报与心跳一并失效。因此这里不依赖全局
+ * socket factory，只使用引导层可见的 HttpURLConnection 直连上报地址。
  *
  * <p>故上报通道改为 <b>NIO（java.nio.channels.SocketChannel）</b>：
  * ① SocketChannel 属 java.base，bootstrap 可见（不像 java.net.http 需额外模块）；

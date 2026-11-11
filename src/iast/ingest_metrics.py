@@ -10,7 +10,7 @@
 - total_written：实际落库 iast_events 的行数。
 - pending_depth：当前正在刷盘的事件数（背压深度的瞬时值）。
 - last_batch_size / last_flush_ms：最近一批大小 / 该批「解析+落库」总耗时(ms)。注意计时起点在
-  解析之前——只计刷盘会得到虚高排空速率（解析阶段任务归属查询实测占端到端 98.7%）。
+  解析之前——只计刷盘会得到虚高排空速率。
 - last_drain_rate：排空速率(条/秒)，按进入流水线的事件数计（真实流量去重率极高，故不按写行数）。
 - last_write_rate：落库速率(条/秒)，按实际写入 iast_events 的行数计。
 - flushes：刷盘次数。
@@ -80,12 +80,10 @@ class IngestMetrics:
             self.last_flush_ms = flush_ms
             self.last_flush_at = time.time()
             # 排空速率必须按「进入流水线处理的事件数」而非「实际写入行数」计算：
-            # 实测 target-mall 预热期去重率 95.6%，按 written 计算会让全去重批次显示 0 条/秒，
             # 运维会误判吞吐崩了。written 单独出 last_write_rate 反映真实落库速率。
             #
-            # 2026-09-18（F2）：除数加分辨率下限，保证「确实发生了刷盘」时速率为有限非 0。
             # 触发背景：F2 的连接复用把单次查询开销从 792µs 降到 5µs，小批次真实耗时首次落到
-            # 时钟可测范围以下（time.time() 在 Windows 粒度约 15.6ms），旧式 `if flush_ms > 0
+            # 时钟可测范围以下（time.time 在 Windows 粒度约 15.6ms），旧式 `if flush_ms > 0
             # else 0.0` 会输出 0 条/秒 —— 与上面那条已修的「全去重批次显示 0」是同一类误判，
             # 只是触发路径不同。计时器已换 perf_counter（见 service.ingest_events），此处再设
             # 1µs 的下限兜底：低于该值的只有当批条数极少（单测量级）时才可能出现，真实负载批次

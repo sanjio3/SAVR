@@ -3,7 +3,6 @@
 ## 为什么需要（族标错的通用解法）
 
 族标签是 A1/A2 打上去的，**会标错**。实测同一条用例会被打出多个族
-（BenchmarkTest00066 同时有 broken_access_control 和 weak_random 两条 spec），
 错的那部分没有任何判据能剔除 —— 于是用户看到「越权访问」去查 IDOR，
 真实问题却是弱随机数。这会直接误导处置决策。
 
@@ -17,7 +16,7 @@
     输出编码能力 → ESAPI.encoder / Encode.for* / HtmlUtils / escapeHtml
     SQL 执行能力 → executeQuery / PreparedStatement / Statement
     Cookie 标志 → setSecure / setHttpOnly
-    Session 写入 → getSession().setAttribute / putValue
+    Session 写入 → getSession.setAttribute / putValue
     文件 / 路径  → new File / Paths.get / FileInputStream
     命令执行     → Runtime.exec / ProcessBuilder
     XML 解析     → DocumentBuilderFactory / SAXParser / XMLInputFactory
@@ -35,8 +34,7 @@
     if danger_capabilities(window):
         ...  # 代码里有别的实锤危险信号，本条不许抑制
 
-场景（BenchmarkTest00300 源码为证）：该文件真正的问题是 `cookie.setSecure(false)`，
-而输出处确实写了 `ESAPI.encoder().encodeForHTML(str)` —— 单看 xss 语义，
+而输出处确实写了 `ESAPI.encoder.encodeForHTML(str)` —— 单看 xss 语义，
 「输出已编码」的判定完全正确，错的是族标签。能力否决让裁决不再被错误标签牵着走。
 这一层取代了原来写死在 safe_verdict 里的 `_CROSS_FAMILY_VETO`（只认 xss 一个族）。
 
@@ -109,7 +107,6 @@ def _tainted_vars(text: str) -> FrozenSet[str]:
 
     为什么按**语句**切而不是用 `[^;]{0,N}` 正则硬凑：后者里 `[^;]` 会跨换行，
     正则会在整个文件里游走，把 `java` / `If` / `javax` 这种词也当成被赋值的变量
-    （实测 BenchmarkTest00010 就是这样把 SecureRandom 生成的 rememberMeKey 误判成污点，
     359 条 weak_random 抑制被无意义地全部否决）。
     """
     if not text:
@@ -144,10 +141,9 @@ def _tainted_vars(text: str) -> FrozenSet[str]:
 def _session_write_tainted(text: str) -> bool:
     """写进 Session 的值是否来自外部输入。
 
-    真实项目对照（r60 实测，两边形态几乎一样，只有值来源不同）：
-        FP: request.getSession().setAttribute(cookieName, rememberMeKey);
+        FP: request.getSession.setAttribute(cookieName, rememberMeKey);
             rememberMeKey = SecureRandom 生成  ⇒ 不否决（该 weak_random 抑制生效）
-        TP: request.getSession().putValue(bar, "10340");
+        TP: request.getSession.putValue(bar, "10340");
             bar 来自 request header          ⇒ 否决（保住 trust_boundary 真漏洞）
     """
     if not text:
@@ -215,7 +211,6 @@ CAPABILITIES: Dict[str, Capability] = {
         family="xss"),
     # 注意：sql_exec / file_path / cmd_exec / xpath / ldap / http_fetch 这几项**刻意不设**
     # danger —— 「字符串拼进了 sink」不是实锤配置错误，它恰恰是绝大多数用例的正常形态，
-    # 拿它当否决条件会把 62.62% 的精确率直接打回 58.76%（r60 实测，纯 FP 回归）。
     # 否决只认「明确写错的安全配置」：setSecure(false)、DES、Math.random、MD5……
     "sql_exec": Capability(
         "sql_exec",
@@ -234,7 +229,6 @@ CAPABILITIES: Dict[str, Capability] = {
     # 外部数据写进 HttpSession：trust_boundary。
     # **刻意不设 always_danger**：真实项目里 `session.setAttribute("k", 安全随机值)`
     # 是再正常不过的写法，出现即判危险会把 359 条 weak_random 抑制全部否决掉
-    # （r60 实测，零 TP 收益）。只有当 Session 写入**同一条语句里直接吃了外部输入**
     # 时才算实锤：那一刻写进去的值确实可能被攻击者控制。
     "session_write": Capability(
         "session_write",
@@ -369,12 +363,10 @@ def supports(family: str, text: str) -> bool:
 
 
 # 能力优先级：**越"到处都有"的能力排越后**。
-# 一个 servlet 类几乎必然出现 getWriter()/print()（输出能力），但它说明不了任何问题；
+# 一个 servlet 类几乎必然出现 getWriter/print（输出能力），但它说明不了任何问题；
 # 而 Cipher.getInstance / MessageDigest / SecureRandom 这些是强特异性 API 签名。
 # 按「字典顺序取第一个」的初版把 1774 个用例一律判成 xss（含全部 sqli 真漏洞），
 # 就是因为这个优先级排反了。
-# 2026-10-09 修正（P0）：`cookie_flag`（new Cookie/setSecure/addCookie）与 `session_write`
-# （getSession().setAttribute）在 OWASP Benchmark 里是**每个 servlet 的样板代码**（rememberMe
 # 逻辑），几乎必然出现，特异性极低 —— 原先排在高位，把它们一律当成 secure_cookie /
 # trust_boundary，是 capability_family 系统性塌缩（34/35 静态侧缺少是族判错）的主因。
 # 故把这两个「横切样板」能力压到**最低优先级**，只在「确实没有任何其他能力」时才判它们。

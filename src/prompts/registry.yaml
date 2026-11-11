@@ -1,6 +1,6 @@
-# 提示词清单（§4.1，2026-09-19）
+# 提示词清单
 #
-# 把 src/prompts/ 下散落的模板收敛为带版本/hash/golden/changelog 的清单。
+# 把 src/prompts/ 下散落的模板收敛为带版本/hash/changelog 的清单。
 # 内容不在此重复，只登记「文件 + key + 版本元数据」，由 prompt_registry 读 yaml 取正文。
 #
 # 选择器（prompt_registry.PromptRegistry.get）：
@@ -17,7 +17,7 @@ prompts:
       - version: terminal-first-v1
         file: audit_prompts.yaml
         key: audit_file
-        golden_ref: java-sec-code@R34
+        golden_ref: ""
         changelog: "主线 Java 单文件审计模板（注入类 + 业务逻辑类 + 三类易漏高危形态）"
 
   audit_batch:
@@ -26,7 +26,7 @@ prompts:
       - version: terminal-first-v1
         file: audit_prompts.yaml
         key: audit_batch
-        golden_ref: java-sec-code@R34
+        golden_ref: ""
         changelog: "批量文件审计模板"
 
   validate_vulnerability:
@@ -35,7 +35,7 @@ prompts:
       - version: terminal-first-v1
         file: audit_prompts.yaml
         key: validate_vulnerability
-        golden_ref: java-sec-code@R34
+        golden_ref: ""
         changelog: "IAST 观测集对 SAST 假说的二次校验模板"
 
   # 以下三个族模板此前从未被代码加载（dead），登记进注册表后可由

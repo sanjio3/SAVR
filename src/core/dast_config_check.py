@@ -1,4 +1,4 @@
-"""DAST 配置自检闸门（Part2 定稿本轮 M11，2026-10-03 落地）。
+"""DAST 配置自检闸门。
 
 要抓的是两类「配置看着有、实际跑不出判据」的洞：
     1. **base_url 为空**：D1/D2 的所有重放都发不出去，表现为一整轮 no-arrival，
@@ -35,7 +35,7 @@ def _app_row(db: Any, app_id: str) -> Optional[Dict[str, Any]]:
     if db is None or not app_id:
         return None
     # Database.execute 的 fetchone 是关键字参数（src/infrastructure/db.py），
-    # 写成 db.execute(sql, p).fetchall() 会在真实库上拿空并被 except 吞掉 —— 已踩过。
+    # 写成 db.execute(sql, p).fetchall 会在真实库上拿空并被 except 吞掉 —— 已踩过。
     try:
         row = db.execute(
             "SELECT app_id, app_name, base_url, auth_type, role_boundaries_json "
@@ -114,10 +114,9 @@ def check_dast_config(db: Any, app_id: str, workspace_id: Any = None,
     ws = _ws_settings(db, workspace_id) if workspace_id is not None else {}
     app = _app_row(db, app_id)
     if app is None:
-        # 2026-10-08（M11 降噪）：app 未登记不再直接判 blocking。重放真正用的是
         # workspace.settings_json.service_url（见 _ws_settings docstring）；此前在
         # app_not_found 分支短路返回「重放将无目标可打」，从未检查 workspace 生效地址，
-        # 导致 OWASP 分片跑批（重放实际打得通、55 条 confirmed 实证）每片都背一条
+        # 导致 OWASP 分片跑批每片都背一条
         # blocking 假告警。现在：workspace 配了生效地址 → 降级为 info（走 workspace 配置）；
         # 真没配 → 维持原 blocking。
         ws_url = _effective_base_url({}, ws)
@@ -166,7 +165,7 @@ def check_dast_config(db: Any, app_id: str, workspace_id: Any = None,
     # 判据不看「role 列里写了什么」，而看「这一组账号是不是同一个主体」。
     # 踩过的坑：workspace-4 的 role 列装的是**权限角色**（user/admin），
     # attacker/victim 只存在于 account_id —— 按 role 标签分组会取空，
-    # 于是双账号同主体的假确认风险被整个漏掉（真实库实证过）。
+    # 于是双账号同主体的假确认风险被整个漏掉。
     # 所以这里直接按 subject 分组：≥2 个账号同主体即判风险，
     # 越权判据一定会被自己的数据满足。
     if enable_verification and len(accounts) >= 2:

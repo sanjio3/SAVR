@@ -53,9 +53,9 @@ def _ts() -> str:
 def _parse_iso(s: Any) -> Optional[float]:
     """把 iast_sessions / iast_events 的 ISO 时间戳解析成 epoch 秒。
 
-    服务端 `src/iast/service.py::_now()` 用 `datetime.utcnow().isoformat()` 落库，
+    服务端 `src/iast/service.py::_now` 用 `datetime.utcnow.isoformat` 落库，
     是**无时区的 UTC 字符串**；`env_readiness.py` 的 now 也取 utcnow，偏移互相抵消，
-    但本模块的 now 是 `time.time()`（真 epoch）。若用裸 `datetime.timestamp()`，
+    但本模块的 now 是 `time.time`（真 epoch）。若用裸 `datetime.timestamp`，
     naive 串会被按本地时区解释，UTC+8 机器上 `now - hb` 凭空多出 8 小时，
     刚上报心跳的在线探针也会被判离线。这里与 `target_epoch.py` 保持同一口径：
     naive 一律按 UTC，带时区的串保留原偏移。
@@ -225,7 +225,6 @@ def preflight_workspace(workspace_id: int, *, db_path: str = DEFAULT_DB_PATH,
                         opener=None) -> Dict[str, Any]:
     """未显式给三元组时，按 workspace 枚举已注册会话并要求至少一个 ready。
 
-    ws4 历史上存在两个会话（``java-sec-code/jsc`` 与 ``sec-code/java-sec-code``），
     不能武断挑一个；这里逐个体检，只要有一个对齐且在线就放行，并把全部结果
     写进 ``sessions`` 供审计。仍然不猜 token —— 每个会话都走 resolve + 一致性断言。
     """

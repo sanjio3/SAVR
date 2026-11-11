@@ -1,5 +1,4 @@
 # 各族「真 sink」token（值级闸判定 payload at_sink/absent 用）
-# 数据化自 src/core/sink_value_gate.FAMILY_SINK_TOKENS（M2 后端侧，2026-10-20）。
 # 纯加法：现有 Python 硬编码保留为 fallback；本文件是后续 printf / M3 族归因 / 4.3 探针
 # 匹配器的可扩展底座（扩展 token 改 YAML，不动代码）。
 # token 为子串匹配，取值来自 iast_events 实测 sink_file 分布。

@@ -1,4 +1,4 @@
-"""A0 环境识别（重构文档 §3.14，职责②落地，确保 D1 可发 DAST）。
+"""A0 环境识别。
 
 目标：在 D1 真正发攻击流量前，确认「目标服务起得来 + 探针挂得上 + 三者绑定一致」，
 否则阻断，避免 D1 打到半路才发现环境坏了。输入为 iast_sessions 的
@@ -8,7 +8,6 @@ target_url + app_name + agent_id（来自 3.10 注册）。
 1. 目标可达性（target liveness）：对 target_url 发 HTTP HEAD/GET 探测。连接拒绝 /
    超时 / DNS 失败 → 不可达（阻断）；2xx / 3xx / 4xx → 可达；单次 5xx 仅重试+告警，
    连续 N 次（默认 5，见 EnvCheckConfig.target_down_consecutive）5xx 才判不可达（软判死，
-   避免 target-mall 瞬时 5xx 误杀整轮重放）。
 2. 探针在线（probe liveness）：(a) 心跳 last_heartbeat_at 距今 < heartbeat_ttl_sec；
    或 (b) iast_events 中该 (app_name, agent_id) 最近 ingested_at 距今 < event_ttl_sec。
 3. 一致性（consistency）：app_name / agent_id 与探针实际上报一致（注册不变量已保）。
@@ -25,15 +24,13 @@ from datetime import datetime
 from typing import Any, Callable, Dict, Optional, Tuple
 
 
-# ---------- 配置（env_check，§3.14）----------
+# ---------- 配置----------
 @dataclass
 class EnvCheckConfig:
     probe_timeout_ms: float = 2000.0          # 探活超时（毫秒）
     target_down_codes: Tuple[int, ...] = tuple(range(500, 600))  # 5xx → 视为不可达的候选
     target_down_consecutive: int = 5          # 连续 N 次 5xx 才判死；单次 5xx 仅重试+告警，
-                                              # 避免 D1 回放刚结束、target-mall 瞬时 5xx 时在 D2 门前被误杀
-                                              # （实测 task-5：探针心跳/事件均正常，却因单次 5xx 阻断整轮重放）
-    # 探活候选路径（2026-09-08 落地 Fix #3）：优先探 DB 无关端点（静态资源 / 健康检查），
+                                              #
     # 避免「探活打到 DB 端点」自毒化——靶场 H2 内存库在重放负载下崩、根路径 5xx，探活本身
     # 也 5xx → 误判靶场不可达、阻断整轮重放。任一候选返回 2xx/3xx/4xx 即视为「进程存活」
     # （4xx 含静态资源不存在，证明进程在线、非 DB 自毒化）；仅当全部候选都连接失败或持续 5xx
@@ -42,9 +39,8 @@ class EnvCheckConfig:
         "/favicon.ico", "/health", "/actuator/health",
         "/robots.txt", "/index.html", "/",
     )
-    # 心跳新鲜窗口。2026-10-10 r73 实证放宽：原 30s 在 D1 重放洪峰下会被 JDK11 Tomcat
     # 的 GC 停顿卡死心跳线程 → 心跳过期且事件回探也空窗 → A0 硬门禁把整片任务 kill
-    # （实测 4 片：crypto/ldapi/sqli-1/sqli-3，靶场进程全程存活，属误杀）。
+    # 。
     # 30s 是按「心跳每 10s 一次」的健康态定的，没考虑重放洪峰下 STW 停顿可达数十秒，
     # 现放宽到 120s（仍远小于「探针真死」的量级，不失门禁意义）。可用环境变量覆盖。
     heartbeat_ttl_sec: float = float(os.environ.get("SAST_AI_ENV_HEARTBEAT_TTL_SEC", "120.0"))
@@ -61,7 +57,7 @@ class EnvironmentReadiness:
     consistent: bool
     checked_at: str
     detail: Dict[str, Any] = field(default_factory=dict)
-    version_matched: bool = True  # §4.2 版本钉死；默认 True 以保持既有无会话路径语义
+    version_matched: bool = True
 
     def is_ready(self) -> bool:
         return self.target_reachable and self.probe_online and self.consistent and self.version_matched
@@ -99,7 +95,6 @@ def default_http_probe(target_url: str, timeout_ms: float) -> int:
 
     失败重试 3 次（指数退避 0.5/1.0s）：D1 回放洪峰可能瞬时占用目标，导致一次性 2.0s
     超时。门禁不应因瞬时抖动直接 abort 整轮扫描——实测 task-5 即因此（D1 回放刚结束、
-    target-mall 瞬时变慢）在 D2 门前被误杀，而探针心跳/事件当时均正常。
     """
     import time
     import requests
@@ -132,15 +127,14 @@ def default_http_probe(target_url: str, timeout_ms: float) -> int:
 def wake_probe(target_url: str, *, settle_sec: float = 3.0) -> bool:
     """主动向目标发一次请求，唤醒探针的心跳 / 事件上报。返回请求是否送达。
 
-    为什么需要它（2026-10-30 本轮/555 实证）：
     探针心跳是 60s 周期的 HTTP POST 回平台，事件也是 HTTP 上报。后端在 A1/A2 阶段
     繁忙（CodeQL 建库 / LLM 推理 / SQLite 单写者锁）时，这两个请求会排队超时，
     探针进入静默 —— 但**进程一直活着**。此时按「最近有信号」判活就会误判离线：
       - A0 门禁直接把整轮扫描挡死（本轮/554）；
       - D2 每个事务前的廉价复探判 not ready ⇒ 该批 spec 全落 target_unhealthy
-        ⇒ invalidated（本轮实测 63 条，confirmed=0）。
+        ⇒ invalidated。
     探针 hook 了 HttpServletRequest/Response，所以**请求本身**就会产生新事件并刷新
-    心跳（实测根路径 302 即产生 2~4 条事件）。故：判活失败时先敲一下门再判。
+    心跳。故：判活失败时先敲一下门再判。
 
     不校验状态码：302/401/404 都证明进程在跑且已进 servlet 链路。
     """
@@ -186,7 +180,6 @@ def check_environment_readiness(
     detail: Dict[str, Any] = {"target_url": target_url, "app_name": app_name, "agent_id": agent_id}
 
     # 步骤 1：目标可达性
-    # 软判死策略（§3.14 修订）：单次 5xx 不直接判不可达——target-mall 在 D1 回放洪峰后可能瞬时
     # 返回 5xx，但探针心跳/事件正常，此时应重试而非阻断整轮重放。仅当连续 N 次（默认 5）
     # 5xx 才判定目标持续不可用；任意一次 2xx/3xx/4xx 即视为存活。连接拒绝/超时/DNS 失败属
     # 与目标完全不通，仍立即判不可达（非瞬时抖动）。
@@ -197,7 +190,6 @@ def check_environment_readiness(
     else:
         target_reachable = False  # 默认不可达；任一候选返回 2xx/3xx/4xx 才翻 True（避免 5xx/连接失败误判可达）
         probe = http_probe or default_http_probe
-        # Fix #3（2026-09-08）：多候选路径探活，优先 DB 无关端点。任一候选返回 2xx/3xx/4xx
         # 即视为靶场进程存活（4xx 含静态资源缺失，证明在线、非 DB 自毒化）；仅当全部候选
         # 连接失败或持续 5xx 才判不可达。避免「根路径 5xx（DB 崩）」误杀整轮重放。
         _candidates = list(config.probe_paths) or [""]
@@ -246,7 +238,7 @@ def check_environment_readiness(
     # 步骤 2 + 3：探针在线 + 一致性（依赖 iast_sessions / iast_events）
     probe_online = False
     consistent = False
-    version_matched = True  # §4.2；会话 mismatch 时翻 False
+    version_matched = True
     session_row = None
     if app_name and agent_id:
         session_row = db.execute(
@@ -258,7 +250,7 @@ def check_environment_readiness(
         session = dict(session_row)
         consistent = True
         detail["session_id"] = session.get("id")
-        # §4.2 版本钉死：会话注册时已校验探针版本与钉死 SAST 版本，mismatch 硬阻断发流量。
+        #  版本钉死：会话注册时已校验探针版本与钉死 SAST 版本，mismatch 硬阻断发流量。
         version_status = (session.get("version_status") or "unknown")
         detail["version_status"] = version_status
         if version_status == "mismatch":

@@ -21,7 +21,6 @@
    所以「没登记」必须等于「按该 provider 的常态对待」，而不是一律当成小模型——
    否则一个没登记的新云端模型会被按 4096 裁剪输入，白白丢掉大半证据。
 2. **配置优先于内置**。config/model_capabilities.yaml 存在则用配置，便于不动代码调参。
-   覆盖语义是**按 name 逐项覆盖**，不是整体替换（2026-09-19 修正）：外部 yaml 里只写
    `local-small` 一项时，云端画像（claude-large / glm-large / cloud-medium …）必须保留，
    否则接本地模型的那一刻会把云端档位全部弄丢，回退成 SAFE_FALLBACK。
    新增项默认追加到末尾（最后才参与匹配）；若某项写了 `prepend: true`，则插到表头优先匹配。
@@ -75,7 +74,6 @@ class ModelProfile:
     supports_tools: bool = False
     supports_json_mode: bool = False
     # 是否默认开启「思维链」（目前只有 Ollama 原生客户端消费此字段）。
-    # 默认 False：2026-09-19 实测 8B 上开思考会与正文争抢输出预算，更慢更不稳定且无质量收益。
     use_thinking: bool = False
 
     # 调度参数
@@ -286,7 +284,6 @@ def _merge_profiles(base: List[ModelProfile], overrides: List[Dict[str, Any]]) -
     原位覆盖的意义：命中顺序 = 列表顺序，用户改 `local-small` 的并发/上下文时不该顺带
     改变它的匹配优先级；只有显式声明 prepend 的新档位才会被插到表头优先匹配。
 
-    2026-09-19 修正（实测暴露）：同名档位必须**逐字段**覆盖，不能整体替换。
     原实现用 `_profile_from_dict(raw)` 造一个全新档位顶上去，于是 yaml 里没写的键
     会退回 `_profile_from_dict` 的默认值 —— 只想调 `recommended_concurrency` 的
     外部档位会把 `match_patterns` 清空，该档位再也匹配不上任何模型名，只能靠
@@ -347,7 +344,6 @@ def load_profiles(force_reload: bool = False) -> List[ModelProfile]:
 def resolve_profile(model: str = "", provider: str = "") -> ModelProfile:
     """按模型名（优先）与 provider 解析画像；无匹配时按 provider 类型选兜底档。
 
-    兜底分两档（2026-09-19 新增）：provider 明确是云端 → CLOUD_FALLBACK（不裁输入），
     其余（本地/未知）→ SAFE_FALLBACK（按小模型保守裁剪）。
     本地 provider(ollama) 额外用 /api/show 的真实 num_ctx 覆盖内置上下文值。
     """
@@ -384,7 +380,6 @@ def _apply_runtime_overrides(profile: ModelProfile, model: str, provider: str) -
     """
     if (provider or "").strip().lower() not in ("ollama", "ollama-native"):
         return profile
-    # 2026-09-20：任务级覆盖优先于探测。前端【设置】里用户可以按模型能力调 ctx，
     # 该值由 run_benchmark 写进 SAST_AI_LLM_CTX_OVERRIDE（子进程内生效、不外溢），
     # 必须比 /api/show 的 Modelfile 值优先 —— 否则「设了 4096 却仍按 8192 裁剪输入」，
     # 请求 num_ctx 小于裁剪预算时 Ollama 会静默丢提示词头部。
@@ -531,7 +526,6 @@ _ASCII_CHARS_PER_TOKEN = 4.0
 def estimate_tokens(text: str) -> int:
     """CJK 感知的 token 估算（**故意保守**，宁可少喂也不要溢出上下文）。
 
-    为什么不能再用 `len(text) / 4`：2026-09-19 对 qwen3:8b 实测 prompt_eval_count，
     本项目的真实提示词（中文指令 + 英文代码）只有 2.34~2.38 字符/token，
     纯中文低到 1.67 —— 写死 4 字符/token 会把 8192 上下文的小模型高估约 1.7 倍，
     27.6k 字符的输入实际接近 11.6k token，直接超出 8192，Ollama 会静默丢弃提示词头部

@@ -1,7 +1,6 @@
-"""净化器挖掘（2026-10-02 落地，造弹路线重写第一步）。
+"""净化器挖掘。
 
 取代旧的「按名字猜净化器」路线（a1_injection_heuristic 里只有
-`\\bsanitize\\s*\\(|HtmlPolicyBuilder|Jsoup.clean` 那条弱正则，连 java-sec-code 自己的
 `secCheck(filepath)` 都匹配不到）。新路线是**行为判定 + 跨文件跳转 + 规则抽取**：
 
 1. 守卫发现不看名字，只看行为：方法体里是否对污点值「条件返回/抛出」，或是否做
@@ -79,10 +78,8 @@ def _split_top_plus(expr: str) -> List[str]:
     return [p for p in parts if p]
 
 
-# 按源码根做模块级缓存（2026-10-02）：attach_filter_spec 每条 spec 都会调用一次，
 # 若每次新建 SourceNavigator，则文件缓存与类索引无法跨 spec 复用，140+ 条 spec 会
 # 重复读盘、重复 os.walk 建索引。改为按 code_root 复用同一实例。
-# 缓存键修复（2026-10-02 发难清单 Q9）：os.path.abspath 不做大小写归一也不解析软链接，
 # 同一 code_root 以「相对/绝对/大小写不同/软链」四种写法传入会得到 4 个键、4 次全量建索引。
 # 改为 realpath + normcase（Windows 大小写不敏感归一），四种写法收敛到同一缓存项；
 # 淘汰策略由「满即清全表」改为 LRU（OrderedDict move_to_end + 淘汰最久未用），
@@ -177,10 +174,8 @@ class SourceNavigator:
     def resolve_const(self, path: str, name: str, _depth: int = 0) -> Optional[str]:
         """解析类常量里的正则字符串（如 FILTER_PATTERN = Pattern.compile("^[a-zA-Z0-9_.-]+$")）。
 
-        真实靶场（java-sec-code 的 SecurityUtil.cmdFilter）把规则放在常量里，方法体只有
-        `FILTER_PATTERN.matcher(input).matches()` —— 不解析常量就抽不出任何规则。
+        `FILTER_PATTERN.matcher(input).matches` —— 不解析常量就抽不出任何规则。
 
-        2026-10-02 发难清单 Q8 升级为「常量求解器」，三路兜底：
           1) 字面量（含 "a" + "b" 字符串拼接合并）；
           2) 变量间接（NAME = OTHER_CONST → 递归解析 OTHER_CONST，深度限 3）；
           3) 配置注入（NAME 由 @Value("${key}") / getProperty("key") 填充 → 读 application.properties/yml）。
@@ -269,7 +264,6 @@ class SourceNavigator:
         """解析 import 行 → {简单类名: 全限定名}，供跨类调用跳转使用。
 
         只收显式单类导入；通配符（import a.b.*;）与同包隐式由 import_context /
-        same_package_classes / expand_wildcard 处理（2026-10-02 发难清单 Q6）。
         """
         return self.import_context(path)["explicit"]
 
@@ -320,7 +314,6 @@ class SourceNavigator:
     def resolve_call(self, target: str, method: str, from_path: str) -> Tuple[str, str]:
         """跟随跨类调用：SecurityUtil.cmdFilter(...) → 定位 SecurityUtil 文件并取 cmdFilter 方法体。
 
-        2026-10-02 发难清单 Q6：解析优先级按 Java 语义收敛——
         显式单类 import > 同包隐式 > 通配符 import 展开 > 全局按类名兜底。
         """
         if not target or not method:
@@ -343,7 +336,6 @@ class SourceNavigator:
     def superclass_of(self, path: str) -> Optional[str]:
         """取 extends 的父类名（用于上溯父类重写）。
 
-        2026-10-02 发难清单 Q7：旧正则 `extends\\s+([A-Za-z_$][\\w$]*)` 遇
         「全限定/内部类父类 extends com.foo.Outer.Inner」会截在 com —— 上溯直接断链。
         现抓完整限定名（允许点号）并剥离泛型实参（extends Base<String> → Base）。
         """
@@ -356,7 +348,6 @@ class SourceNavigator:
     def lombok_fields(self, path: str) -> List[Tuple[str, str]]:
         """识别 lombok 注解类并返回字段 [(字段名, 类型)]；无 lombok 注解返回 []。
 
-        2026-10-02 发难清单 Q7：lombok 的 getter/setter/isX 编译期才生成，源码里没有，
         守卫判定会因「方法体取不到」而漏掉挂在访问器上的约束。这里按注解预扫识别。
         """
         lines = self._lines(path or "")
@@ -412,7 +403,6 @@ class SourceNavigator:
         body = self.method_body(path, method)
         if body:
             return body, path
-        # lombok 访问器兜底（2026-10-02 Q7）：@Data/@Getter/@Setter 类的 getX/setX/isX
         # 编译期才存在，源码 method_body 取不到；这里合成等价方法体再参与守卫判定。
         body = self.lombok_accessor_body(path, method)
         if body:
@@ -481,7 +471,7 @@ class FilterSpec:
         self.transforms = list(transforms or [])
         self.case_sensitive = bool(case_sensitive)
         self.decode_first = bool(decode_first)
-        # 归一化感知（Q1）：守卫在匹配前对污点做 Normalizer.normalize / 双重解码，
+        # 归一化感知：守卫在匹配前对污点做 Normalizer.normalize / 双重解码，
         # 会让「允许集外的危险字符」在匹配前变成「允许集内字符」，静态字符集无法覆盖
         # → 含归一化的 spec 不得判 non_bypassable（fail-open 到 undetermined）。
         self.has_normalization = bool(has_normalization)
@@ -698,7 +688,7 @@ def _candidate_files(raw: Dict[str, Any]) -> List[str]:
 
 def attach_filter_spec(payload: Dict[str, Any], code_root: Optional[str] = None,
                        db: Any = None, llm_complete: Optional[Callable[[str], str]] = None) -> Dict[str, Any]:
-    """生产侧入口（2026-10-02）：沿路径抓守卫 → 抽 FilterSpec → 回填 payload["raw"]。
+    """生产侧入口：沿路径抓守卫 → 抽 FilterSpec → 回填 payload["raw"]。
 
     回填两个字段，供消费侧（d1_service._sanitizer_aware_synth / benchmark_cli 升变体）使用：
       - raw["filter_spec"]：结构化约束（FilterSpec.to_dict）
@@ -758,7 +748,6 @@ def attach_filter_spec(payload: Dict[str, Any], code_root: Optional[str] = None,
         return raw["sanitizer_miner"]
 
     # 3) 跟随跨类调用：真实靶场把过滤器放在另一个类里
-    #    （java-sec-code /codeinject/sec → SecurityUtil.cmdFilter(filepath)）。
     #    不跟这条调用就永远只能看到处理函数本身，抽不出规则。
     _follow_seeds: List[Tuple[str, str]] = []
     for g in list(guards):
@@ -801,7 +790,6 @@ def attach_filter_spec(payload: Dict[str, Any], code_root: Optional[str] = None,
 
     # 4) 并上「库内置闸门」约束（自写层之外还有库内拒绝名单）：
     #    自写净化器判断"能不能绕"，库内置闸门判断"绕过去还有没有用"，两者必须同时满足。
-    #    2026-10-02（发难清单 Q1）：机制条目先过运行时事实校验（JDK 版本 / classpath），
     #    明确不满足的条目跳过并落原因；事实未知 fail-open 放行，绝不因事实缺失误杀链路。
     _mech_specs: List[FilterSpec] = []
     _mech_depends: Dict[str, List[str]] = {}
@@ -968,7 +956,7 @@ def extract_path_prefix_spec(body: str) -> FilterSpec:
 
     识别两类信号（两者都要有才认，否则宁可判不出）：
       1. 基址字面量：new File("/var/www", name) / Paths.get("/var/www").resolve(...)
-      2. 逃逸校验：getCanonicalPath()/toRealPath() + startsWith(base)
+      2. 逃逸校验：getCanonicalPath/toRealPath + startsWith(base)
 
     **has_normalization 恒置 True**（关键设计）：Java 的 getCanonicalPath 会解析符号链接，
     Python 侧模拟不了——base_dir 下挂一个指向 /etc 的软链，静态判定必然漏。
@@ -1061,7 +1049,7 @@ def simulate_filter(spec: Optional[FilterSpec], payload: str) -> bool:
 #   4. 内联标志 (?s)(?m)(?u) 改变匹配语义（点是否跨行、\w 是否 Unicode）。
 # 这些情况下 Python 近似不可信 → 标记「不支持」，调用方不得据此判 non_bypassable。
 #
-# TODO（跨仓库，sec-probe.jar 侧落地）：对最关键族（命令注入白名单等）接 JVM 真 Pattern 互校——
+# TODO：对最关键族（命令注入白名单等）接 JVM 真 Pattern 互校——
 # 用靶场同 JDK 起最小校验子进程跑 Pattern.matches，与 Python 近似分歧时以 JVM 为准并记告警。
 # 本仓库侧已具备 : 三态 simulate_filter_safe（None=不支持）+ 超时保护 + filter_regex_supported 静态预筛，
 # 调用方（filter_verdict / sanitizer_forge）已对 None fail-open，不据此判 non_bypassable。
@@ -1139,7 +1127,7 @@ def simulate_filter_safe(spec: Optional[FilterSpec], payload: str) -> Optional[b
     None 表示 Python 近似不可信：调用方应 fail-open（不当 non_bypassable，交运行时裁决），
     而非把「带占有量词的强过滤器」当无过滤器放行。
 
-    ReDoS 防护（Q4）：正则求值带超时。Unix 用 SIGALRM 可在主线程中断；Windows 无可靠可中断
+    ReDoS 防护：正则求值带超时。Unix 用 SIGALRM 可在主线程中断；Windows 无可靠可中断
     超时，故直接依赖 `filter_regex_supported` 的静态灾难性回溯启发式（嵌套量词已判 None）。
     若超时（Unix）或求值抛 re.error，一律返回 None（fail-open），绝不把「判不出」当「放行」。
     """

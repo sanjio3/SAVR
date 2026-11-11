@@ -5,10 +5,9 @@ import net.bytebuddy.asm.Advice;
 /**
  * 弱随机源 sink 专用 advice（取代 BootstrapGenericSinkAdvice）。
  *
- * <p>根因（OWASP BenchmarkTest00418 实证）：{@code java.security.SecureRandom extends
  * java.util.Random} 且未覆写 nextDouble/nextFloat/nextLong/nextInt/nextBoolean，ByteBuddy
  * 的 {@code named("java.util.Random")} 是**精确类型匹配**，挡不住继承调用 ——
- * {@code SecureRandom.getInstance("SHA1PRNG").nextDouble()} 会被错误地当成弱随机源上报，
+ * {@code SecureRandom.getInstance("SHA1PRNG").nextDouble} 会被错误地当成弱随机源上报，
  * 产生 weak_random 误报。
  *
  * <p>修复必须在 advice 内看 receiver 的**真实类型**：CSPRNG 子类一律跳过，不发射任何 sink

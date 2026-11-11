@@ -1,4 +1,4 @@
-"""提示词版本化注册表（§4.1，2026-09-19）。
+"""提示词版本化注册表。
 
 把散落在 ``src/prompts/`` 的提示词模板收敛成一个带 **版本 / hash / golden_ref /
 changelog** 的清单，并提供「族名 → 语言 → default」的分级回退选择。
@@ -126,7 +126,7 @@ class PromptRegistry:
     # ---- 查询 ----
     def get(self, name: str, version: Optional[str] = None,
             family: Optional[str] = None, language: Optional[str] = None) -> Optional[PromptEntry]:
-        """分级回退选择（§4.1-3）：
+        """分级回退选择：
 
         优先级：name@family@language → name@family → name@version(显式) → name@default。
         这样族专属模板（如 sql_injection）真正可被选中，而不是永远走 default。
@@ -213,8 +213,7 @@ def load_prompts_dict(version: Optional[str] = None) -> Dict[str, str]:
     同时把 {key}.hash / {key}.version 也一并返回，供调用方做缓存 salt 与版本归因。
     未命中注册表的 key（旧代码直接读 yaml 的情况）这里不会包含，但不影响——旧路径仍可用。
 
-    ``version``（§4.1 修复，2026-09-20）：按版本感知选择模板正文。此前本函数直接把
-    ``all()`` 里每个版本的正文都写进 ``out[pe.name]``，同名多版本会互相覆盖，且调用方
+    ``all`` 里每个版本的正文都写进 ``out[pe.name]``，同名多版本会互相覆盖，且调用方
     （A2）从不传版本 → ``prompt_version`` 只进 metadata、从不真正驱动模板选择。
     现在改为**逐名调用 ``registry.get(name, version=...)``**：命中指定版本用该版本正文，
     未命中按 default → 最新版本回退（分级回退语义与 ``PromptRegistry.get`` 一致）。

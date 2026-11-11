@@ -1,4 +1,4 @@
-"""① 缓存确定性阶段（2026-09-26 落地）。
+"""① 缓存确定性阶段。
 
 背景：同一静态靶场（benchmark-sample-200 等代码字节不变），A1/CodeQL 与 A2 对静态
 finding 的 LLM 语义分析是**确定性**的——输入不变输出就不变。回归轮完全可以复用这两段
@@ -40,10 +40,8 @@ _CONFIG_SOURCES = (
     "src/pipeline/a2/service.py",
     "src/agents/a2_intelligent_agent.py",
     "src/agents/a2_ai_agent.py",
-    # 2026-09-27 补入：落盘的是**后处理之后的最终 a2_results**，而 _backfill_code_snippets /
     # _merge_a1_evidence_into_a2_results / _pre_resolve_a2_endpoints / proof_second_pass /
     # plan_pocs 全在 benchmark_cli 里执行 —— 它们直接塑造缓存内容，必须计入哈希。
-    # 不纳入的后果：改了后处理仍命中旧缓存（round-17/18 正是靠这个缺口复验命中），长期会读到
     # 陈旧产物。纳入后改 benchmark_cli 即自动 bust；代价是它改动频繁、缓存更常失效，
     # 但正确性优先 —— 缓存只是加速手段，读到错产物比慢更致命。
     "src/cli/benchmark_cli.py",
@@ -57,9 +55,7 @@ def _project_root() -> Path:
 def _file_path_of(f: Any) -> Optional[str]:
     """扫描文件对象统一取出磁盘路径（string / .path 属性 / dict 三形态）。
 
-    2026-10-03 踩坑：FileScanner.scan() 返回的是 **dict**（path/rel_path/name），
     getattr(dict, "path") 永远返回 None，于是 dict 项被静跳过 → 哈希退化成「空输入哈希」
-    → 同工作区里**任意两个不同作用域算出同一个缓存键**。OWASP 分片 16 片全命中 run 53
     的 xpathi 产物（a1 finding_count 一片 159、trigger_specs 全是 /xpathi-00/*）就是这么来的。
     这里必须和 scan_scope._path_of_file 用同一套键表。
     """
@@ -119,11 +115,9 @@ def compute_target_code_hash(files: List[Any], scan_root: str = "") -> str:
 
 
 def _src_tree_fingerprint() -> bytes:
-    """对 src/ 下全部 *.py 做确定性内容指纹（2026-10-04 补）。
+    """对 src/ 下全部 *.py 做确定性内容指纹。
 
     为什么不能只靠上面的白名单：`_CONFIG_SOURCES` 是**手工维护**的，任何没被列进去的文件
-    改动都不会让缓存失效。2026-10-04 实测：改 `src/core/vuln_hash.py` 的族名归一后提交复跑，
-    run 89 的 `a2_poc.duration_seconds` 是 0.0（run 88 是 2769s）——**阶段缓存命中**，
     A1/A2 拿到的仍是旧族名产物，于是「修复后复跑」验的是修复前的代码，结论不可信。
 
     这类失误比慢更致命：闭环的最后一环（复跑验证）会静默失效。所以这里改成对整个 src/
@@ -197,7 +191,6 @@ def _cache_path(workspace_id: int, key: str) -> Path:
 def load_latest_stages(workspace_id: int) -> Optional[Tuple[List[Any], List[Any]]]:
     """加载该 workspace 下**最新**的一份 A1/A2 产物（忽略 cache key）。
 
-    用途（2026-10-31）：调试 D 阶段（D1 重放 / D2 裁决）时的加速开关。
     背景：`compute_config_hash` 把整个 src/ 树指纹并进 key（这是对的，防「复跑验的是
     修复前代码」，见 `_src_tree_fingerprint` 注释），代价是**改任何 .py 都会 bust**，
     于是调一条 D2 判据也要等 35 分钟的 A2 重跑。实测本轮因此白等约 70 分钟。

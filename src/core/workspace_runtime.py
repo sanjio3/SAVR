@@ -1,9 +1,7 @@
 """
 Per-workspace runtime overrides（靶场专属路由 / 标记 / 镜像 / 探针类名 / JDK 路径 / 端点表）。
 
-背景：扫描引擎长期被两个互斥靶场（java-quote、target-mall）的硬编码对照表污染——
 java-quote 的 /debug/import、/api/quote/random、setQuoteCache 标记散落在 report_manager /
-a2 / d2 / endpoints.yaml；target-mall 的 sink→路由兜底表散落在 param_resolver。新靶场接入时
 若继续往核心塞对照表，会系统性污染其他靶场。
 
 本模块是唯一的收口点：所有「靶场专属」值都从这里读。默认值 = 历史上硬编码的并集（保证不配置时
@@ -58,7 +56,6 @@ _DEFAULTS: Dict[str, Any] = {
         "image": "java-quote-ctf:latest",
         "chain_id_prefix": "deserialization:project_chain",
     },
-    # —— sink 文件 → 真实业务入口（target-mall 专属，但作为默认兜底）——
     "sink_file_route_overrides": {
         "DeserializeUtil": [
             {"route": "/profile/import", "method": "POST", "param": "data", "location": "body"},
@@ -97,7 +94,6 @@ _DEFAULTS: Dict[str, Any] = {
             {"route": "/login", "method": "POST", "param": "username", "location": "body"},
         ],
     },
-    # —— sink 族 → 真实业务入口（target-mall 专属，作为默认兜底）——
     "sink_family_route_overrides": {
         "deserialization": [
             {"route": "/profile/import", "method": "POST", "param": "data", "location": "body"},
@@ -116,7 +112,6 @@ _DEFAULTS: Dict[str, Any] = {
             {"route": "/order/invoice", "method": "GET", "param": "id", "location": "query"},
         ],
     },
-    # —— 探针噪声过滤（target-mall 专属 FrameworkProbeController）——
     "probe_class_names": ["FrameworkProbeController", "ProbeController", "sec-probe", "fw/"],
     "probe_controller_markers": [
         "FrameworkProbeController", "ProbeController", "HealthProbeController",
@@ -136,7 +131,6 @@ _DEFAULTS: Dict[str, Any] = {
         "test-java:latest": 2,
     },
     # —— gadget 构造用 JDK 根 ——
-    # 2026-11-06 开源 P0：本机绝对路径不再进仓库。由 SAST_AI_JDK_CANDIDATES
     # （os.pathsep 分隔）或 workspace 的 workspace_runtime_config 提供；未配置时为空，
     # 由 a1_codeql_adapter 的跨平台 JDK 扫描兜底。
     "jdk_candidates": [p for p in os.environ.get(

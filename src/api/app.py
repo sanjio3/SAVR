@@ -28,7 +28,6 @@ from src.api.routers.iast import router as iast_router
 from src.api.routers.agent_bridge import router as agent_bridge_router
 from src.api.routers.bola_race import router as bola_race_router
 from src.api.routers.business_logic import router as business_logic_router
-from src.api.routers.round_report import router as round_report_router
 from src.api.routers.oob import router as oob_router
 
 
@@ -36,10 +35,9 @@ logger = logging.getLogger(__name__)
 
 
 def configure_file_logging() -> None:
-    """应用日志落盘（2026-10-19，Phase 4.1 前置）。
+    """应用日志落盘。
 
     背景：此前项目**没有任何 logging 配置**，`[D2]` / `[value-gate]` / `[retryable]` 这些
-    关键判定日志全部只到 stdout，进程一重启就没了。直接后果：r111 的 hash 任务产物齐全
     却卡在 status=running，无法归因（finalize 明明有回读+重试，说明根本没走到）。
     没有落盘日志，所有性能/收尾问题的诊断都是盲的。
 
@@ -109,7 +107,6 @@ def create_app() -> FastAPI:
     app.include_router(agent_bridge_router)
     app.include_router(bola_race_router)
     app.include_router(business_logic_router)
-    app.include_router(round_report_router)
     app.include_router(oob_router)
 
     @app.on_event("startup")
@@ -124,7 +121,6 @@ def create_app() -> FastAPI:
         except Exception as exc:  # 启动自检绝不阻断服务拉起
             logger.warning("[startup] 孤儿任务回收异常（不影响启动）：%s", exc)
 
-        # 半截状态根治（run 24 事故）：启动自检只在重启时跑一次，而 watcher 线程可能在后端
         # 活着的时候死掉（future 异常被线程池静默吞），此后没有任何机制再收口。这里补一个
         # 常驻的低频 reconcile 守护线程：运行期反复扫「非终态且本进程无 watcher」的任务。
         try:

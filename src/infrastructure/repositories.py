@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def _norm_source(raw: Any) -> str:
-    """P2-2（2026-09-13）：findings.source 落库归一（choke point）。
+    """P2-2：findings.source 落库归一（choke point）。
 
     source 此前直存 A2 原文 type 字符串（sql注入 / xxe (xml external entity) /
     url重定向 等），同族中英文并存导致统计与对账在 findings/trigger_specs 两张表口径
@@ -190,10 +190,9 @@ class TaskRepository:
             rows = self.db.execute("SELECT * FROM scan_tasks WHERE workspace_id = ? ORDER BY id DESC", (workspace_id,), fetchall=True) or []
         return [self._row_to_task(row) for row in rows]
 
-    # task_id 残留根治（2026-10-02 发难清单 Q5，评审通过「全部落地」）：
     # 旧 delete 只删 scan_tasks 一行，trigger_specs / model_runs / hypotheses /
     # vuln_blackboard / scan_runs / scan_task_events / findings / reports 全部残留
-    # （实测 DB：vuln_blackboard 单表就留有 task_id=50 的 21648 行）。submit 脚本的
+    # 。submit 脚本的
     # D-1 预检只清「下一个预测 id」，绕过脚本直接调 REST 时全量残留。
     # 现在级联删下沉到仓库层：删任务必删子表，顺序为子表在前、父表在后。
     TASK_CHILD_TABLES = (
@@ -314,7 +313,7 @@ class TaskEventRepository:
 
 
 def _normalize_file_path(raw_file: str, project_root: str) -> str:
-    """mapper findings 路径归一（2026-09-18 决议）。
+    """mapper findings 路径归一。
 
     收尾写入层落库时，file_path 列存在三种形态混杂：绝对路径（D:\\...\\src\\...）、
     相对路径（src\\...）、以及其他（已相对）。为统一口径、消除「同一文件绝对/相对两种
@@ -363,11 +362,10 @@ class FindingRepository:
             components = enriched.get("hash_components") or {}
             # P2-2：source 过归一 choke point（原文保留在 raw_json）
             source = _norm_source(enriched.get("source") or enriched.get("agent") or enriched.get("display_family") or "")
-            # R23-1（a1_evidence 落库时序）：A1 证据必须随本任务收尾的 INSERT 一次落定。
             # 历史实现不含该列，A1 证据只能靠 trigger_spec_registry 在注册期用「全局 vhash」
             # UPDATE 滞后写入 —— 而登记发生时本任务行尚未落库（findings 由本方法收尾统一重写），
             # 该 UPDATE 只能命中「上一轮已完成任务」的同 vhash 行，于是表现为：每个 task 的
-            # a1_evidence 实为下一轮 A1 产物、最新一轮恒为 {}（task-7 实测 378/378 全空）。
+            # a1_evidence 实为下一轮 A1 产物、最新一轮恒为 {}。
             # 这里显式写入，彻底消除跨任务滞后与污染。
             _a1_ev = enriched.get("a1_evidence")
             if isinstance(_a1_ev, str):
@@ -381,7 +379,6 @@ class FindingRepository:
                 a1_evidence_json = self.db.dumps(_a1_ev or {})
             # 逐行容错：单条 finding 写入失败（FK/约束/类型异常）只记警告并跳过该条，
             # 绝不中断整轮事务——否则 DELETE 已执行而 INSERT 中断会导致本任务全部 findings 静默丢失。
-            # 2026-09-15 item 3：SCA 命名空间从 finding_type 剥离。source=='sca' 的 finding 其
             # display_title 形如 "SCA: <component> <advisory>"，不应塞进 finding_type（否则 by_type
             # 聚合把同一族 SCA 拆成几百种取值）。组件/编号拆到独立列，finding_type 仅留族名 "sca"。
             _sca = enriched.get("sca") or {}
@@ -394,10 +391,9 @@ class FindingRepository:
                 _sca_comp = ""
                 _sca_adv = ""
                 _finding_type = normalize_type(enriched.get("display_title") or enriched.get("type", "Unknown"))
-                # Q2（2026-09-21）族名误归因根因：findings.finding_type 此前直接由 display_title/type
                 # 归一落库，而上游 A2 自由文本会把 CRLF 判成「命令注入」、URLRedirect 判成 ssrf、
-                # URLWhiteList 判成 path_traversal——错概念原样落库，只能靠 round_report._finding_match
-                # 的 4 元组兜底容忍族名漂移（「路由对、族不对」）。这里按同样的**确定性证据**
+                # URLWhiteList 判成 path_traversal——错概念原样落库，只能靠确定性的 4 元组证据
+                # 兜底容忍族名漂移（「路由对、族不对」）。这里按同样的**确定性证据**
                 # （路由 / 源文件名 / sink API）纠正，与 trigger_spec_registry 的 spec 侧纠族同源。
                 # 安全边界：①位于 vuln_hash 之后（hash 已随参算好）→ 不会打断 spec↔finding 哈希绑定；
                 # ②沿用规则表的「可覆盖族集合」与 file_dedicated 授权 → 不会越权改窄正确族名。
@@ -450,7 +446,6 @@ class FindingRepository:
                 )
         if _dropped:
             logger.error("[FindingRepository] task=%s 共 %d 条 finding 因写入异常被跳过（其余已落库）", task_id, _dropped)
-        # 阶段漏斗（2026-10-31）：报告条目 → findings 行 的收敛比。
         # 这一层的缺口如果只靠「findings 表里查不到」发现，就会误判成「规则没生效」。
         try:
             from src.core.stage_funnel import record, family_hist
@@ -463,7 +458,7 @@ class FindingRepository:
             pass
         # 数据卫生：清掉「无对应 finding 行」的孤儿 trigger_spec。
         # 杠杆一（孤儿清理改全局）：旧实现按「同 task」匹配（f.task_id = ts.task_id）判断孤儿，
-        # 会把「finding 仅存在于更早 task」的本 task 合法 spec 误删（表现为 A2 登记 N 条、跑完流水线变 M 条）。
+        # 会把「finding 仅存在于更早 task」的本 task 合法 spec 误删。
         # 正确口径见 trigger_spec_registry.reconcile_orphan_specs：只要该 vulnerability_hash_v2 在 findings
         # 表**任何 task** 存在，spec 就非孤儿（漏洞真实、重放目标有效，不得剪掉 D1 待重放的 spec）；
         # 仅当全局都查无此 hash 的 finding 时才视为真孤儿（A2 假说未被持久化为 finding）予以清理。
@@ -513,7 +508,6 @@ class FindingRepository:
             if not row:
                 return
             summary = Database.loads(row["summary_json"]) or {}
-            # 2026-09-07 黑板体系：展示计数一律从 vuln_blackboard 派生（单一真相源），
             # 不再各自以 trigger_specs 行数自存快照。那类「事后对账补丁」由此收敛为
             # 「黑板派生 + 一致性自检」，黑板未同步时回退实表行数（保证老任务不受影响）。
             truth = None
@@ -572,17 +566,15 @@ class FindingRepository:
                     apb["metrics"]["entries"] = apb["entries"]
                     apb["metrics"]["by_family"] = apb["by_family"]
 
-            # 2) a2_poc.registered_trigger_specs = 真相（已登记 TriggerSpec 即当前实表行数）
+            # 2) a2_poc.registered_trigger_specs = 真相
             for bucket in (summary.get("results", {}), summary.get("stage_results", {})):
                 a2 = bucket.get("a2_poc") if isinstance(bucket, dict) else None
                 if isinstance(a2, dict):
                     a2["registered_trigger_specs"] = truth
 
             # 3) d1.candidate_count = 真相，并过滤 replayed_specs_detail 到当前仍存在的 spec
-            #    2026-09-18（E1 评审「删顶层冗余键」）：只写 results —— 前端 stageMetric()
             #    读的是 summary.results[stage][metric]，那是计数唯一的消费路径。
             #    pipeline.d1 顶层那份没有任何读取方，且与 pipeline.d1.metrics 口径分裂
-            #    （run 18 实测顶层 80/60、metrics 71/71；run 17 顶层 64/52、metrics 44/44），
             #    故此处不再写顶层，并顺手清掉历史脏值。
             _res_d1 = (summary.get("results") or {}).get("d1")
             if isinstance(_res_d1, dict):
@@ -612,7 +604,6 @@ class FindingRepository:
     def _reaggregate_d1_summary(self, task_id: int) -> None:
         """按本 task 当前 trigger_specs 实际数量，收敛 pipeline.d1.metrics 的重放计数快照。
 
-        2026-09-18（E1 评审「删顶层冗余键」）：计数统一落 metrics，
         pipeline.d1 顶层不再持有 candidate_count / replayed_count。
         """
         try:
@@ -632,8 +623,6 @@ class FindingRepository:
             replayed = metrics.get("candidate_count") or 0
             # candidate_count 不应超过实际 spec 数（清理后收敛）；取两者较小者，并修正文案。
             new_candidate = min(replayed, spec_count) if replayed else spec_count
-            # 2026-09-17（待请示 §4.6-2.2）：candidate_count 与 replayed_count 口径一致，
-            # 显式列出二者消除歧义；2026-09-18 起一并写 metrics（顶层键废弃）。
             metrics["candidate_count"] = new_candidate
             metrics["replayed_count"] = new_candidate
             d1["metrics"] = metrics
@@ -641,7 +630,6 @@ class FindingRepository:
             d1.pop("replayed_count", None)
             d1_message = d1.get("message", "")
             if d1_message:
-                # 2026-09-18（E1）：DAST / IAST 计数同样只存在于 metrics，原先读顶层恒为 0。
                 _impacts = metrics.get("finding_count") or 0
                 _arrivals = metrics.get("iast_arrivals") or 0
                 d1["message"] = (
@@ -660,8 +648,6 @@ class FindingRepository:
     def list(self, workspace_id: Optional[int] = None, task_id: Optional[int] = None) -> List[FindingRecord]:
         """读 findings。
 
-        2026-10-05（r58 整改方案 2 消费口同步）：排除**已绑定到被抑制 spec** 的 finding。
-        这里刻意用「读取层过滤」而不是删数据 —— r58 那种历史任务已经把 FP 写进
         findings 与报告里了，删数据是不可逆的；而抑制的语义是「这条不该算数」，
         读取时不算数就足够了，且对历史数据同样生效（零迁移、零删除）。
         实现上先取该 task 下被抑制 spec 的 finding_id 集合（一次小查询），
@@ -723,7 +709,6 @@ class FindingRepository:
         title = raw.get("attack_chain_summary") or raw.get("display_title") or raw.get("description") or current.title
         raw = enrich_finding_hash(raw)
         vuln_hash = str(raw.get("vulnerability_hash_v2") or "")
-        # 2026-09-15 item 3：与 persist_finding 一致的 SCA 分流。source=='sca' 或带 sca 子字典时，
         # finding_type 统一 "sca"，组件/编号拆到独立列；其余走 normalize_type（与写路径口径一致）。
         _sca = raw.get("sca") or {}
         _is_sca = (raw.get("source") == "sca") or (raw.get("display_family") == "sca") or bool(_sca)
@@ -885,14 +870,12 @@ class ModelRunRepository:
         workspace_id: Optional[int] = None,
     ) -> int:
         now = datetime.utcnow().isoformat()
-        # 2026-09-19（P1-7 埋点归属）：task_id 优先用显式传入值，否则回退到扫描进程内约定的
         # 环境变量（benchmark_cli.run_benchmark 在子进程启动时写入）。之所以用环境变量而非
         # 逐层透传，是因为 LLM 调用分散在多个线程/agent，逐层传参改动面太大且易漏。
         if task_id is None:
             import os
             env_tid = (os.environ.get("SAST_AI_CURRENT_TASK_ID") or "").strip()
             task_id = int(env_tid) if env_tid.isdigit() else None
-        # 2026-09-22：工作区前向归属。workspace_id 优先用显式传入值；否则若已知 task_id，
         # 按 task_id → scan_tasks.workspace_id 解析，使未来行自动带上工作区（无需逐层透传）。
         # 历史 task_id 为 NULL 的调用仍无法归因，保持 NULL（不伪造）。
         if workspace_id is None and task_id is not None:
@@ -1729,7 +1712,7 @@ class AuditLogRepository:
 
 
 class FixFeedbackRepository:
-    """Records developer feedback on fix suggestions (第四版 G7 / §2.3)."""
+    """Records developer feedback on fix suggestions (第四版 G7 / )."""
 
     def __init__(self, db: Database):
         self.db = db

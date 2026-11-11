@@ -1,4 +1,4 @@
-"""replay_intents 仓储（2026-10-25，plan §19.1 / 20.4.1）。
+"""replay_intents 仓储。
 
 探索图 + 单步意图的落点。ARTEX 的本质不是 planner-worker 角色划分，而是：
 1. 状态外置——LLM 上下文只有「当前状态」，历史全在库里；

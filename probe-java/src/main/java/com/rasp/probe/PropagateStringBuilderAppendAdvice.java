@@ -13,7 +13,7 @@ import net.bytebuddy.asm.Advice;
  * <p>Split from the old {@code PropagateStringBuilderAdvice}: ByteBuddy rejects any
  * advice class carrying two {@code @OnMethodExit} methods with "Duplicate advice", which
  * fail-opened the whole StringBuilder/StringBuffer/StringJoiner transform. The
- * {@code toString()} half lives in {@link PropagateStringBuilderToStringAdvice}.
+ * {@code toString} half lives in {@link PropagateStringBuilderToStringAdvice}.
  */
 public final class PropagateStringBuilderAppendAdvice {
     private PropagateStringBuilderAppendAdvice() {

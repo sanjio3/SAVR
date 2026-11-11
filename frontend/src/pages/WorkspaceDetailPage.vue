@@ -498,7 +498,6 @@ async function registerIastTarget() {
 // sec.app.name / sec.agent.token / sec.app.packages，支持 -D 系统属性或 SEC_* 环境变量。
 const registeredSession = ref<IastSession | null>(null);
 const backendBaseUrl = computed(() => `${window.location.protocol}//${window.location.hostname}:8000`);
-// 2026-11-06 开源 P0：JDK 与探针 jar 路径属于部署环境，仓库不内置本机绝对路径。
 // 默认给可移植的 PATH java 与相对路径，用户可在表单里直接改成实际路径。
 const probeJarPath = ref<string>("probe-java/target/sec-probe.jar");
 const selectedJdkPath = ref<string>("java");

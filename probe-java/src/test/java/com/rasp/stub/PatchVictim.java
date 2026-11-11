@@ -3,7 +3,7 @@ package com.rasp.stub;
 /**
  * 方法级虚拟补丁的验证靶类 (手册 11.2.5)。
  *
- * <p>刻意放在 {@code com.rasp.stub}：{@code baseBuilder()} 的 ignore 列表含
+ * <p>刻意放在 {@code com.rasp.stub}：{@code baseBuilder} 的 ignore 列表含
  * {@code com.rasp.probe.}，桩类若放探针包内会被直接忽略、永不织入。
  *
  * <p>刻意<b>非 final</b>：{@code VirtualPatchRegistry.rejectReason(Class)} 按手册

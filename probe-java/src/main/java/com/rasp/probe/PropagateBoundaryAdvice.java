@@ -11,10 +11,9 @@ import java.nio.charset.StandardCharsets;
  * 构造后，原 String 内容在载体里取不到 (toString 只剩 class@hash)，导致 sink 处 canary
  * 现场断言在「String -> 载体」边界丢失，XXE / 路径穿越 / 文件上传等族永远 no-arrival。
  * 本 advice 在构造完成时刻把源内容按载体身份登记进 TaintHub.CARRIER_CONTENT，
- * 由 HookRuntime.sample() 在 sink 处兜底回收。静态工厂形态（Paths.get）见
+ * 由 HookRuntime.sample 在 sink 处兜底回收。静态工厂形态（Paths.get）见
  * {@link PropagateBoundaryStaticAdvice}。
  *
- * <p>历史坑（2026-09-14，禁回退）：本类曾同时含 onCtor 与 onStatic 两个 {@code @OnMethodExit}，
  * 被整体绑定到一个匹配器时 ByteBuddy 1.15.11 抛
  * {@code IllegalStateException: Duplicate advice for Delegate to ...onCtor(...) and ...onStatic(...)}，
  * 六个边界类整类插桩失败（watchdog 日志累计 152 次 failed-open）。
@@ -22,7 +21,6 @@ import java.nio.charset.StandardCharsets;
  * 该新增类，java.lang.Class / ClassLoader / Method / Field / Thread / Executor* 等一批原本能
  * 插桩的 java.base 类全部 NoClassDefFoundError（9945 次），应用起不来。
  *
- * <p><b>真正的根因（2026-09-14 定位，前两次结论都是错的，禁回退）</b>：不是「advice 不能有两个
  * 方法」也不是「不能引用新增类」，而是 <b>advice 类没有登记到
  * {@code ByteBuddyHookInstaller#injectBootstrapHelpers}</b>。ByteBuddy 把 advice 方法体内联进
  * java.base 目标类，内联后的字节码由 bootstrap 加载器解析，而 {@code sec-probe.jar} 只在 system
@@ -41,9 +39,9 @@ public final class PropagateBoundaryAdvice {
     /**
      * 构造器形态。注意匹配器必须排除零参构造器：本 advice 读 {@code @Advice.Argument(0)}，
      * 而 java.nio.file.Paths 有一个 private 无参构造器，匹配上去会抛
-     * "private java.nio.file.Paths() does not define an index 0"，进而污染 advice 类、
+     * "private java.nio.file.Paths does not define an index 0"，进而污染 advice 类、
      * 导致 java.lang.Class / ClassLoader / Method / Field / Thread / Executor* 等一批
-     * java.base 类 NoClassDefFoundError（实测 9945 次，应用起不来）。
+     * java.base 类 NoClassDefFoundError。
      */
     @Advice.OnMethodExit
     public static void onCtor(@Advice.Origin("#t.#m") String origin,

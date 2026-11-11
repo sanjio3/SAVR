@@ -17,7 +17,7 @@ import net.bytebuddy.asm.Advice;
  * {@link TaintGate} can decide per sink family (分治). An unrecognized sanitizer maps to
  * the empty family set — it defuses nothing, the safe default.
  *
- * <p>Installed via {@code baseBuilder()} (UsingUnsafe injection) on application-classloader
+ * <p>Installed via {@code baseBuilder} (UsingUnsafe injection) on application-classloader
  * types (commons-text / commons-lang3 / Spring HtmlUtils); references the bootstrap
  * {@link TaintStore}. The paired {@code unescape*} methods stay in
  * {@link PropagateLibStringAdvice} — they re-introduce raw dangerous content and must

@@ -7,7 +7,6 @@ import net.bytebuddy.asm.Advice;
  * <ul>
  *   <li>mapper interfaces (proxied via MapperProxy), and</li>
  *   <li>the native SqlSession / Executor path used by {@code SqlSessionFactoryBean}
- *       (the case in target-mall, where MapperProxy.invoke is never called).</li>
  * </ul>
  * Every read funnels through {@code Executor.query}, so hooking it captures the
  * accessed domain object from the {@code MappedStatement} id
@@ -28,7 +27,7 @@ public final class ExecutorQueryAdvice {
             if (mappedStatement == null) {
                 return;
             }
-            // MappedStatement.getId() -> "com.sanjio.mall.mapper.AddressMapper.findById"
+            // MappedStatement.getId -> "com.sanjio.mall.mapper.AddressMapper.findById"
             String stmtId = String.valueOf(mappedStatement.getClass()
                     .getMethod("getId").invoke(mappedStatement));
             String method = methodOf(stmtId);
@@ -98,7 +97,6 @@ public final class ExecutorQueryAdvice {
         if (lower.matches("^(find|get|select|load|query)by(code|orderno|username|name|email|phone|token)$")) {
             return true;
         }
-        // 3) R23 收口 polish：单对象动词 + 单数名词（覆盖 *ById / *ByXxx 之外的单对象操作，
         //    如 deleteComment(id) / getOrder(1) / findUser(uid) / loadAddress(aid) / updateComment(cid)）。
         //    仅当名词不以 s / list / all / page 结尾，避免误收 findComments / findAll / selectList
         //    等返回集合的 1:N 查询（否则会像 ProductMapper.findAll 那样产生全量噪声）。

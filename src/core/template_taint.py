@@ -1,6 +1,5 @@
 """模板层不安全输出点（sink）抽取与 Thymeleaf 视图解析。
 
-背景（2026-09-10，块4 #17/#18）：
 反射型/存储型 XSS 的 sink 常常不在 Java 里，而在 Thymeleaf 模板的 ``th:utext`` 上。
 Java 侧只看到 ``model.addAttribute("keyword", keyword)``，看不到它最终有没有被转义；
 模板侧只看到 ``th:utext="${keyword}"``，看不到值从哪来。单看任何一侧都判不出来，

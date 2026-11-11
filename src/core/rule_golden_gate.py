@@ -1,7 +1,6 @@
-"""Skill（规则单元）golden 回归门禁（2026-09-20）。
+"""Skill（规则单元）golden 回归门禁。
 
 背景：``src/config/rules/*.yaml`` 里每个 skill 都声明了 ``golden`` 正/负样本与
-``gate.min_recall``，但 2026-09-20 实测确认**两者在代码中零消费者**：
 
   - ``grep -rn "min_recall" src/ scripts/ tests/`` → 零命中；
   - ``rule_feedback_service`` 走的是另一套东西（taint rule 的 source/sink/sanitizer →
@@ -26,7 +25,6 @@ from typing import Any, Dict, List, Optional, Tuple
 from src.core.rule_registry import RuleSkill, load_rules, reload_rules
 from src.core.tool_paths import get_repo_root
 
-# 靶场仓库与 SAVR 同级（<targets-root>/{SAVR,java-sec-code,target-mall}）
 DEFAULT_CORPUS_ROOT = get_repo_root().parent
 
 
@@ -180,7 +178,7 @@ def evaluate_rules(
 def _item_bounds(lines: List[str], skill_id: str) -> Optional[Tuple[int, int]]:
     """定位 ``skills:`` 列表中某个 skill 的文本区间 ``[start, end)``。
 
-    必须兼容两种 YAML 写法（实测都会出现）：
+    必须兼容两种 YAML 写法：
 
       - 手写风格（本项目规则文件）：``- id: cve-2022-22978`` —— 列表标记与 id 同行；
       - ``yaml.safe_dump`` 默认输出：按键名**排序**，id 常不在首位，

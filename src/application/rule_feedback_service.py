@@ -1,6 +1,6 @@
 """Taint rule feedback closure (G6).
 
-Implements the whitebox rule feedback loop from the first-edition spec §2.7:
+Implements the whitebox rule feedback loop from the first-edition spec :
 AI-discovered source/sink/sanitizer patterns become ``taint_rule_candidates``;
 a human confirms one; on confirmation the rule is rendered into the generated
 rule file and a regression is run against the golden set. The merge is only

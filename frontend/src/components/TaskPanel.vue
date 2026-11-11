@@ -60,7 +60,6 @@ const showProgress = computed(
 );
 
 // F8：运行中且当前阶段已跑超过 45 分钟 → 提示可能卡住（数据来自 pipeline 的阶段 started_at）
-// 2026-09-22 走查修正：原用 Date.parse(active.started_at) 与 Date.now() 相减，而服务端时间戳是
 // UTC-naive → 在 UTC+8 下凭空多算 8 小时，任何 running 阶段都会立刻越过 45 分钟阈值误报卡死。
 const stuckStage = computed(() => {
   if (!isRunning.value) return null;

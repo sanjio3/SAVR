@@ -20,7 +20,6 @@ class FunctionInfo:
     line: int
     return_type: str = ""
     parameters: str = ""
-    # 结构化形参（2026-11-02）：`[{"annotations": [...], "type": "MultipartFile", "name": "file"}]`。
     # 为什么要它：`parameters` 是给人看的字符串，下游要判断「这个参数是文件、是字节流、
     # 还是普通字符串」才能决定**编码方式**（multipart / 二进制 / json / query）。
     # 只靠名字猜不出来（`file` 可能是 String，`data` 可能是 MultipartFile），必须看类型。
@@ -133,7 +132,6 @@ class CodeIndexer:
     def _extract_servlet_route(annotation_line: str) -> str:
         """从 @WebServlet 注解提取路由。
 
-        覆盖形态（OWASP Benchmark 全量 205 类实测为 value= 单值）：
         @WebServlet("/x") / @WebServlet(value = "/x") / @WebServlet(urlPatterns = "/x")
         以及 value/urlPatterns 数组 { "/a", "/b" } 取第一个。
         """
@@ -194,7 +192,7 @@ class CodeIndexer:
 
     @staticmethod
     def _split_top_level(params: str) -> List[str]:
-        """按顶层逗号切形参（保护 `<>`、`[]`、`()` 内的逗号）。"""
+        """按顶层逗号切形参（保护 `<>`、`[]`、`` 内的逗号）。"""
         out: List[str] = []
         depth = 0
         cur: List[str] = []
@@ -236,10 +234,8 @@ class CodeIndexer:
         return result
 
     def _index_java_file(self, lines: List[str]):
-        # 2026-11-02：**锚定行首**。原正则 `(public\s+)?class\s+(\w+)` 用 search 匹配，
         # 注释里出现 "Check deserialize class using black list" 就会被当成类声明
         # （class=using）⇒ current_class 被改写、类级注解标志被清掉 ⇒ 后续方法全丢入口。
-        # 实测 Deserialize.java 因此掉了 2 个入口。锚定 + 允许前置修饰符才可靠。
         class_pattern = re.compile(
             r"^\s*(?:(?:public|protected|private|abstract|final|static)\s+)*class\s+(\w+)")
         method_pattern = re.compile(
@@ -249,12 +245,10 @@ class CodeIndexer:
         current_class = ""
         class_base_route = ""
         current_class_is_servlet = False
-        # 2026-11-02：类级注解决定「这个类到底有没有 HTTP 入口」。
         # 此前 http_entry 只判 `http_route and visibility=='public'`，于是任何类里带
         # @RequestMapping 的方法都被当成入口 —— 实测 `ClassDataLoader` 类上没有 @Controller，
         # Spring 从不注册该路由，D1 打过去 404/115B，白打一条。
         current_class_is_controller = False
-        # 2026-11-02：`@WebFilter` + `doFilter` 是**真实的 HTTP 入口**（每个匹配请求都过它），
         # 但此前完全没建模 ⇒ 过滤器里的 sink 拿不到入口、param 推断恒失败
         # （实测 `@WebFilter(urlPatterns="/x")` 的 `doFilter` 里 `request.getHeader("Origin")`
         # 能确定性推断出 Origin，却因「所在方法不是入口」被丢弃）。
@@ -286,9 +280,7 @@ class CodeIndexer:
                     if "@RequestMapping" in annotation:
                         class_base_route = self._extract_java_mapping_path(annotation)
                     if "@WebServlet" in annotation:
-                        # P0-1（2026-09-25）：把 benchmark 评分侧的 Servlet 入口解析接入通用
                         # 入口发现——此前 code_indexer 只认 Spring 注解，纯 Servlet 工程
-                        # （OWASP Benchmark 205 个 @WebServlet 类）索引出 0 个 HTTP 入口，
                         # 导致下游 entry_candidates 空、252/253 候选 no_trigger_spec。
                         class_info.annotations.append("servlet")
                         servlet_route = self._extract_servlet_route(annotation)
@@ -317,7 +309,6 @@ class CodeIndexer:
             if not method_match:
                 pending_annotations = []
                 continue
-            # 2026-11-02 实杀：窗口匹配会把**同一个方法声明**在后续每一行都重复命中
             # （窗口覆盖 6 行、逐行前进），而 `line_num` 记的是「窗口起始行」而不是
             # 「声明所在行」⇒ 行号错、同方法被索引 5~6 次。以前靠「同名 key 覆盖」把
             # 重复吃掉（于是行号恒等于最后一个窗口的起始行，也是错的）；
@@ -326,7 +317,7 @@ class CodeIndexer:
             _decl_line = line_num + _window[: method_match.start()].count("\n")
             # 只在「声明确实行在当前行」时才建条目：
             # 否则窗口在声明之前的若干行就会先命中，那时类级注解/入口标志还没就位
-            # （实测 Servlet 的 doPost 因此丢了 http_entry），而且会重复建条目。
+            # 而且会重复建条目。
             # 这里 continue 但**不清空** pending_annotations —— 方法注解在声明上一行，
             # 必须留到声明行才消费。
             if _decl_line != line_num:
@@ -347,7 +338,7 @@ class CodeIndexer:
             servlet_entry = None
             if current_class_is_servlet and method_name in self._SERVLET_ENTRY_METHODS:
                 # Servlet 入口：路由在类级 @WebServlet，挂到 doGet/doPost 等入口方法；
-                # protected/public 的 HttpServlet override 都算（Benchmark 实测为 public）。
+                # protected/public 的 HttpServlet override 都算。
                 if class_base_route:
                     servlet_entry = f"{self._SERVLET_ENTRY_METHODS[method_name]} {class_base_route}"
             elif current_class_is_filter and method_name == "doFilter":
@@ -366,18 +357,15 @@ class CodeIndexer:
             func_key = f"{self._current_file}:{method_name}"
             # 同一行会被「窗口匹配」重复命中多次（`_window` 覆盖 6 行，逐行前进）——
             # 以前靠「同名覆盖」把重复吃掉，加了重载后缀后重复就会累积
-            # （实测 Servlet 用例的 http_entries 从 2 变 6）。这里按 (名, 行) 先去重。
+            # 。这里按 (名, 行) 先去重。
             if any((v.name == method_name and v.line == _decl_line)
                    for v in self.functions.values()
                    if getattr(v, "file", None) == self._current_file):
                 pending_annotations = []
                 continue
-            # 2026-11-02 实杀：**重载方法会互相覆盖**。key 只有「文件:方法名」，
             # 同名重载后一个直接顶掉前一个 ⇒ 前一个的定义、行号、callers 全部丢失。
-            # 实测 RuoYi 的 `JobInvokeUtil` 有两个 `invokeMethod`（`invokeMethod(SysJob)` 在 L23、
             # `invokeMethod(Object,String,List)` 在 L49），索引里只剩 L49 那个 ⇒
             # sink 在第 37 行（`Class.forName(beanName)`）时找不到所属函数 ⇒ 路由反查失败
-            # ⇒ 真值表里唯一一条 in_scope 的 command_execution 一条候选都产不出。
             # 修法：重载按出现顺序加 `#2`/`#3` 后缀，**首个保留原名**（callers 仍按原名连边）。
             if func_key in self.functions:
                 _n = 2
@@ -518,11 +506,9 @@ class CodeIndexer:
             )
             self.files[self._current_file]["functions"].append(synthetic_name)
 
-    # 单函数 callees/callers 列表长度上限（防御性封顶）。背景（2026-10-17 事故）：
     # 原实现按裸方法名解析 callee，Java servlet 的 doGet 普遍调用 doPost(...)，
     # 于是每个 doGet 链到索引内**全部** 2740 个同名 doPost，调用图二次方爆炸，
     # code_index.json 膨胀到 1.9GB；runner 加载后系统内存耗尽，a2_poc 阶段
-    # 新建线程失败（can't start new thread），半全量扫描 run 362 崩死。
     _MAX_RELATIONS = 200
 
     def _declared_type(self, file_path: str, var_name: str) -> str:
@@ -545,7 +531,7 @@ class CodeIndexer:
         for func_key, func_info in self.functions.items():
             functions_by_name[func_info.name].append(func_key)
 
-        # 文件 -> 主类名（Java/PHP 类名与文件名一致），供「Class.method()」类限定解析
+        # 文件 -> 主类名（Java/PHP 类名与文件名一致），供「Class.method」类限定解析
         file_class: Dict[str, str] = {}
         for cls_name, cls_info in self.classes.items():
             file_class.setdefault(cls_info.file, cls_name)
@@ -576,8 +562,7 @@ class CodeIndexer:
                 # 二次正则开销），再按类限定规则解析目标。
                 for m in call_re.finditer(body):
                     qualifier, cand = m.group(1), m.group(2)
-                    # 2026-11-02 修：原先无条件跳过「同名调用」，把**跨类同名调用**也跳了。
-                    # 实测 `SSRF.request()` 里调 `HttpUtils.request(url)`，因为两者都叫
+                    # 实测 `SSRF.request` 里调 `HttpUtils.request(url)`，因为两者都叫
                     # `request` 被跳过 ⇒ `HttpUtils.java:request` 的 callers 恒为空 ⇒
                     # 工具类 sink 的参数回溯全部断链（param 空 32 条卡在这）。
                     # 只有「裸调用且同名」（即真的自递归）才该跳过。
@@ -594,7 +579,6 @@ class CodeIndexer:
                         # 变量接收者：先按同文件里的字段/局部变量声明推断静态类型；
                         # 推断不到时，**仅当该方法名在全项目唯一**才连（唯一 ⇒ 不可能造
                         # 「一个 doGet 连全部 doPost」的爆炸边）。反编译产物常缺字段声明
-                        # （r111 回归：GatewayController.evaluationService.evaluate(rule)）。
                         targets = []
                         _vtype = self._declared_type(file_path, qualifier)
                         if _vtype:
@@ -615,7 +599,6 @@ class CodeIndexer:
                                 target_info.callers.append(func_key)
 
     def save_index(self, index: Dict, path: str):
-        # 紧凑序列化（2026-10-17）：原 indent=2 在边爆炸场景下把 1.9GB 写到磁盘；
         # 调用图修复后本应是小文件，紧凑格式作为纵深防御再降一个量级。
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(index, handle, ensure_ascii=False, separators=(",", ":"))

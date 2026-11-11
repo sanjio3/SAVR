@@ -15,7 +15,7 @@ A2 `llm_concurrency=10`、`a2_contract_planner` 默认 10（上限 16）、D1 �
 
 本模块是一个进程内单例同时提供：
 
-1. 并发闸门 `acquire()`：所有 provider 客户端在发起请求前取票；
+1. 并发闸门 `acquire`：所有 provider 客户端在发起请求前取票；
 2. 可选的令牌桶限速 `tokens_per_minute`：挡住短时间突发；
 3. 排队可观测：等待时长、排队深度、拒绝数——没有这三项，调本地模型时无法判断
    「是模型慢」还是「是我们把队列挤爆了」。
@@ -65,7 +65,7 @@ class LLMRateGate:
     """进程级 LLM 并发闸门 + 可选令牌桶。
 
     线程安全；惰性构造（import 无副作用）。所有 provider 客户端统一在
-    `request_chat_completion` 入口调用 `acquire()`，从而覆盖到每一条调用路径。
+    `request_chat_completion` 入口调用 `acquire`，从而覆盖到每一条调用路径。
     """
 
     def __init__(self) -> None:

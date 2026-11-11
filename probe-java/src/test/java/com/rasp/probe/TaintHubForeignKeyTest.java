@@ -21,12 +21,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 回归测试：第二次死锁（容器锁 ↔ JVM 内部锁）的防线。
  *
- * <p>事故（2026-09-22，java-sec-code 靶场 run 29）：单锁化之后仍有环，因为环的一条边穿过了
  * JVM 内部锁：
  * <pre>
  *   exec-3: 持 HUB_LOCK，等 jimage(SharedImageReader) 锁
- *     mapContainsKey → WeakHashMap.containsKey → key.hashCode()
- *     → ByteBuddy 惰性 TypeDescription.hashCode() → TypePool.doResolve
+ *     mapContainsKey → WeakHashMap.containsKey → key.hashCode
+ *     → ByteBuddy 惰性 TypeDescription.hashCode → TypePool.doResolve
  *     → ClassFileLocator → ClassLoader.getResourceAsStream → BasicImageReader.findLocation
  *   exec-5: 持 jimage 锁，等 HUB_LOCK
  *     BasicImageReader.findLocation → ImageStringsReader.get → java.lang.String.<init>（被插桩）

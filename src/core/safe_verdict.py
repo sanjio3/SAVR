@@ -1,15 +1,12 @@
-"""统一安全裁决入口（r58 精确率整改：把 A1 的抑制能力下沉到全阶段，含 A2）。
+"""统一安全裁决入口。
 
 ## 为什么有这个模块
 
-r58 全族归因（见 r58全族归因与修复方案.md）定位到的第一根因：
 
     `safe_patterns.filter_scan_results` 的**唯一调用点**是 `src/pipeline/a1/service.py:303`，
-    `src/agents/a2_*` 零 import。而 OWASP BenchmarkTest00052 的 trigger_spec 写着
     `source=a2` / `verdict=✅ A2:真漏洞-有跨文件调用` ——
     **A2 独立判定并直接落库，A1 的抑制根本没机会生效**。
 
-    后果：平台早就写好的判据大面积失效。实测 r58（平台口径）：
         safe_patterns["weak_random"]["secure_random_only"]  → 226 个 FP 本该被抑制
         safe_patterns["xss"]["encoder_present"]              →  44 个 FP
         safe_patterns["weak_crypto"]["strong_cipher_only"]   →  11 个 FP
@@ -33,7 +30,7 @@ r58 全族归因（见 r58全族归因与修复方案.md）定位到的第一根
    「TPR 降 ≤3pp」硬约束的兜底。
 4. 附加规则是**互斥式**的：`safe_getter_source` 要求文件里**没有**
    getTheParameter / getTheCookie，因为那两个确实透传 request、是真外部源
-   （真值口径实测它们含 17 个 TP，误杀会直接掉召回）。
+   。
 
 ## 用法
 
@@ -66,15 +63,9 @@ logger = logging.getLogger("safe_verdict")
 # 窗口半径与 safe_patterns._WINDOW 保持一致（同源，别单独调）。
 _WINDOW = int(os.environ.get("SAST_AI_SAFE_PATTERN_WINDOW", "15") or 15)
 
-# ── 规则准入白名单（r58 全族数据验证，未验证的一律不启用）──────────────
 # 为什么要白名单而不是照搬 _SAFE_RULES 全表：
-#     r58 实测发现 safe_patterns 里的 `sql_injection/prepared_statement_bound`
 #     **剔 9 个 FP 却剔 10 个真漏洞**（真值口径纯度 50.5%，本来就等于随机猜，
-#     r58 只是把它证伪了第二遍）。所以「表里有规则」不等于「规则可用」。
-#     准入标准：在 r58 上「剔掉的 FP 全部是真值 FP、剔掉的 TP 必须为 0」。
-#     未在 r58 上验证过的族（ldap / trust_boundary / secure_cookie / command_execution /
 #     path_traversal / xxe / sensitive_data_exposure / weak_hash）先不启用，
-#     它们在 r58 的 FP 合计只有几百，且缺样本验证；等下一轮有数据再加。
 #
 #     xss 被**移出**白名单：类级窗口下 `encoder_present` 实测剔 62 个 FP 却剔 2 个真漏洞
 #     （它的正则含 encodeForURL / Encode.forJavaScript，比 family_feature_probe 测的
@@ -86,9 +77,8 @@ _ENABLED_SAFE_FAMILIES = ("weak_crypto", "xss")
 _EXTRA_RULES: Dict[str, Tuple[Tuple[str, Tuple[str, ...], Tuple[str, ...]], ...]] = {
     # strong_rng_only：强随机源即安全实现。
     # 为什么不用 safe_patterns 的 secure_random_only：它 need_all 只认 `SecureRandom`，
-    # 而 r58 真值口径实测 FP 用例大量用 ThreadLocalRandom / UUID.randomUUID / Mac
     # （family_feature_probe 的 src_secure_random 特征命中 275 个、纯度 0%），
-    # 原规则只剔到 46/226。deny 保留 Math.random 与裸 new Random()（真实项目里
+    # 原规则只剔到 46/226。deny 保留 Math.random 与裸 new Random（真实项目里
     # 「既有强随机又用 Math.random」仍应报，不能因为看到 SecureRandom 就放过）。
     "weak_random": (
         ("strong_rng_only",
@@ -97,7 +87,6 @@ _EXTRA_RULES: Dict[str, Tuple[Tuple[str, Tuple[str, ...], Tuple[str, ...]], ...]
     ),
 }
 
-# ── 已移除的两条「语料特定」规则（r60 后的代码卫生整改，别加回来）────────
 # 这里原来躺着两条只对某一个基准成立的规则，已被 src/core/untaint.py 的通用机制取代：
 #
 #   safe_getter_source     need_all = (r"\.getTheValue\s*\(",)
@@ -112,7 +101,6 @@ _EXTRA_RULES: Dict[str, Tuple[Tuple[str, Tuple[str, ...], Tuple[str, ...]], ...]
 #       替代机制：untaint.literal_list_index —— 对 List 做 add/remove/get 浅求值，
 #       只有**所有** get 都取到字面量才判常量，且与具体字面量内容无关。
 #
-# 换掉之后的实测（r60 全量 2740 用例，平台口径，离线复算）：
 #     旧规则  检出 2405 / TP命中 1409 / 精确率 58.59% / 召回 99.58% / 掉 TP 0
 #     新机制  检出 2250 / TP命中 1409 / 精确率 62.62% / 召回 99.58% / 掉 TP 0
 # 即：**去掉硬编码之后精确率反而 +4.03pt**，代码里也不再有针对某个语料的东西。
@@ -139,7 +127,6 @@ _POSITIVE_BOOST = 0.20
 
 # ── 抑制前的「能力否决」（族标错的止损）──────────────────────────────────
 # 这里原来是 `_CROSS_FAMILY_VETO`：一张写死的 {族: 危险正则} 表，且只登记了 xss。
-# 它解决的问题（BenchmarkTest00300 / 00321）是真实的：
 #     文件里真正的漏洞是 `cookie.setSecure(false)` 或「外部数据写进 HttpSession」，
 #     而输出处确实编码过 —— 单看 xss 语义，encoder_present 判「安全」完全正确，
 #     错的是**族标签**。规则没错，标签错了。
@@ -149,11 +136,10 @@ _POSITIVE_BOOST = 0.20
 # 加密/输出编码/Cookie 标志/Session 写入…），只要**别的能力**有实锤危险信号，
 # 就说明这条「安全判定」很可能是被错误标签牵着走的，不许抑制。
 #
-# 两条口径纪律（都是实测踩出来的，别放宽）：
+# 两条口径纪律：
 #   1. 危险信号只认**明确写错的安全配置**（setSecure(false) / DES / MD5 /
 #      Math.random / setExpandEntityReferences(true)），**不认**「字符串拼进了 sink」
 #      —— 后者是绝大多数用例的正常形态，拿它当否决条件会让精确率从 62.62%
-#      直接退回 58.76%（r60 实测，纯 FP 回归，零 TP 收益）。
 #   2. 与本条 spec 同族的能力要跳过：那种危险信号抑制规则自己的 deny 已经判过了，
 #      再拿来否决等于同一条判据用两次。
 _CAPABILITY_VETO = os.environ.get("SAST_AI_CAPABILITY_VETO", "1") not in ("0", "", "false", "False")
@@ -229,7 +215,6 @@ def _strip_comment(line: str, in_block: bool) -> tuple:
 def _method_window(path: str, line: Optional[int], limit: int = 400) -> str:
     """取 sink 行**所在方法**的完整方法体文本。
 
-    为什么不用 safe_patterns 的 ±15 行固定窗口（r58 实测踩过）：
         固定窗口把规则收益几乎归零 —— `secure_random_only` 在 226 个 weakrand FP 里
         只命中 2 个，`getTheValue` 白名单该中 50 个只中 34 个。
         原因是 OWASP 用例里 SecureRandom / valuesList 与 sink 行的直线距离经常
@@ -290,20 +275,17 @@ def _method_window(path: str, line: Optional[int], limit: int = 400) -> str:
 def root_from_shard_file(shard_file: str) -> str:
     """从分片文件的 files 列表反推代码根目录。
 
-    ## 为什么需要（r59 前瞻验证查出的 P0）
 
     `register_trigger_spec` 的两个生产调用点**都不传 code_root**：
-        - src/iast/trigger_spec_registry.py:1184（A2 登记路径）
+        - src/iast/trigger_spec_registry.py:1184
         - src/benchmark/servlet_trigger_adapter.py:265（servlet 路径）
     而 scan_tasks.options_json 里也**没有** target / code_root 字段
-    （实测 183 号任务 22 个键里只有 shard_file 可用）。
+    。
 
     spec 的 expected_sink_file 是**相对路径**
-    （`src\\main\\java\\org\\owasp\\benchmark\\testcode\\BenchmarkTest000xx.java`），
     没有根目录就拼不出绝对路径 ⇒ `_resolve_abs` 失败 ⇒ 窗口为空 ⇒
     **规则表和接线都在，却一条都不命中**。
 
-    r58 的 +4.1pt 是 tools/backfill_safe_verdict.py 自己反推出根目录后**回填**出来的，
     属于 post-hoc 归因；生产路径原样跑就是 +0.0pt。这是本项目第三次踩同一个坑
     （safe_patterns 注释里记的「A1 出口抑制数恒为 0」也是同因）：
     **规则是对的，作用域拿不到根目录。**
@@ -368,14 +350,12 @@ def root_from_options_json(options_json: str) -> str:
 def _class_window(path: str) -> str:
     """读整个源文件（类级窗口）。
 
-    ## 为什么最终选类级而不是方法级（r58 实测，两次踩坑才定下来）
 
     第一次踩：safe_patterns 的 ±15 行固定窗口 → `secure_random_only` 在 226 个
         weakrand FP 里只命中 2 个。安全特征离 sink 行太远，规则形同虚设
         （safe_patterns 自己的注释也记着这段历史：「A1 出口抑制数恒为 0」）。
 
     第二次踩：改成方法级窗口（从 sink 行向上找 `{` 再花括号平衡）→ 命中量仍然只有
-        10/226。诊断单个用例（BenchmarkTest00010，weakrand FP）发现
         **expected_sink_line=35 落在 `doGet` 的委托行 `doPost(request, response);` 上**，
         而真正的随机数代码在下一个方法 `doPost` 里。OWASP 用例全是 doGet→doPost
         委托结构 ⇒ 方法级窗口取到的是 3 行的空壳 doGet，规则必然不命中。
@@ -428,7 +408,6 @@ def probe_family(family: str, sink_file: str = "", sink_line: Optional[int] = No
 
     准入门禁的正确判据是项目既有的 **TPR 降 ≤3pp**（见 safe_patterns 模块头），
     不是「绝对零 TP 损失」——后者过苛，会把大量安全可用的规则挡在门外：
-    r58 实测加回 xss 的 encoder_present 是 +1.5pt 精确率换 2 个 TP（0.14pp），
     远在门限内，净收益极高。
     """
     out = judge_spec(family=family, sink_file=sink_file, sink_line=sink_line,
@@ -475,11 +454,11 @@ def judge_spec(family: str, sink_file: str = "", sink_line: Optional[int] = None
 
     # window 必须在 try 外初始化：① 里任何一步抛异常（路径解析、读文件）时
     # ②/②b 仍要能拿到 window 的空值走 fail-open，而不是 UnboundLocalError
-    # 把整条裁决掀翻（pytest 实测过一次）。
+    # 把整条裁决掀翻。
     window = ""
     try:
         # ① 主路径：用**方法级窗口**查 safe_patterns 的同一张规则表。
-        #    不走 safe_implementation_hit()，因为它内部写死了 ±15 行固定窗口，
+        #    不走 safe_implementation_hit，因为它内部写死了 ±15 行固定窗口，
         #    实测会把 secure_random_only 的命中量从 226 砍到 2（规则形同虚设）。
         #    规则表与匹配语义仍然复用（_SAFE_RULES + _match_rules，含 IGNORECASE），
         #    只把「证据范围」从固定行数换成方法体，不产生第二套规则。
@@ -507,7 +486,6 @@ def judge_spec(family: str, sink_file: str = "", sink_line: Optional[int] = None
     # ①b 代码能力证据给出的族（**不改族**，只是把证据留下来）。
     #     族标签来自 A1/A2，会标错；实测检出用例里 17.3% 的族与真实类别完全对不上
     #     （典型：弱随机数被标成 broken_access_control）。但能力族单独用也只有
-    #     75.4% 吻合 —— 两者**并集**才是 100%（r60 实测：平台族错 391 个，
     #     其中 391 个能力族是对的，两者都错 0 个）。
     #     所以正确做法不是二选一改写，而是两个族一起交给用户。
     if window:

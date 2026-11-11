@@ -1,4 +1,4 @@
-"""sink token 数据集（M2 后端侧，2026-10-20）。
+"""sink token 数据集。
 
 把 ``src.core.sink_value_gate.FAMILY_SINK_TOKENS`` 硬编码的「族 → 真 sink token」
 数据化到 ``config/sink_tokens.yaml``，作为可扩展底座：printf 形态规则、M3 族归因、

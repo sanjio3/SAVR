@@ -70,10 +70,8 @@ class MetricsService:
         按工作区分布。与「成本与效果度量」（降噪率/误杀率/覆盖度）是两件事：这里回答的是
         「平台被用掉了多少」，不是「用得好不好」。
 
-        口径如实性（2026-09-21 实测，禁止按假设推算）：
         - model_runs.cost_usd 当前全库为 0（provider 未上报单价）。因此只汇总真实字段，
           billed=False 时前端须显示「未计费」，**不得**用假设单价反推金额。
-        - model_runs.stage 历史上大量空串（早期调用未标注阶段）。2026-09-22 已按 purpose 确定性回填
           （a2-semantic→a2-semantic、gray-review→gray-review，可复现、非臆造），残留空串仍归入
           「未标注阶段」，不静默丢弃、也不冒充某个真实阶段。
         - 配额（quota）在领域模型里没有实体，故本方法不产出配额字段。
@@ -128,7 +126,6 @@ class MetricsService:
             ) or []
         elif task_ids:
             placeholders = ",".join("?" * len(task_ids))
-            # 实测（2026-09-21）：14150 条 model_runs 里有 9335 条 task_id 为 NULL
             # （task_id 列是后加的，早期调用没有归属，其任务也可能已被清理）。
             # 它们是真实发生过的用量，静默丢掉会让总用量少算三分之二；
             # 所以未筛选工作区时一并纳入，但单列为「未关联任务」，不与具体任务/工作区混淆。
@@ -158,7 +155,6 @@ class MetricsService:
         by_stage = _group_runs(runs, lambda r: str(r.get("stage") or "").strip() or "未标注阶段")
         by_purpose = _group_runs(runs, lambda r: str(r.get("purpose") or "未标注"))
 
-        # vhash 去重观测（2026-09-22）：同源重复分析 = 同一 prompt_hash 出现 >1 次（相同输入被
         # 多次发送）。prompt_hash 结果缓存已对这些重复输入做「命中就跳过」（相同输入直接复用输出、
         # 不进模型）；此处只量化冗余体积，给出优化依据，不改扫描行为、不丢弃任何调用。
         ph_counter = Counter(str(r.get("prompt_hash") or "") for r in runs if (r.get("prompt_hash") or ""))
@@ -291,7 +287,7 @@ class MetricsService:
 
     # ------------------------------------------------------------------ IAST #
     def iast_source_stats(self, workspace_id: Optional[int] = None, task_id: Optional[int] = None) -> Dict[str, Any]:
-        """§4.5 接入 IAST 来源统计（覆盖率 / confirmed_runtime 占比 / 按资产分布）。
+        """ 接入 IAST 来源统计（覆盖率 / confirmed_runtime 占比 / 按资产分布）。
 
         复用 IastCorrelationService 的查询层聚合（不改表），作为 ops 大盘的 IAST 来源切片。
         """

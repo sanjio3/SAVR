@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""按族合成**结构正确**的攻击载荷（2026-11-01）。
+"""按族合成**结构正确**的攻击载荷。
 
 ## 为什么需要它
 
@@ -10,7 +10,6 @@
                 （不投假弹）
 
 D1 的做法是对的——投一个「看起来像」的假弹，目标没反应，会被记成「漏洞不存在」，
-那是比漏报更严重的假阴性。所以 2026-10-02 明确移除了按族写死的静态兜底弹。
 
 但结果是：**凡是 A2 造不出弹的族，动态侧永远 0 确认**，而这些族恰恰是最需要动态确认的
 （反序列化、XXE、URL 白名单绕过）。缺的不是「随便一个字符串」，是「结构上真能打通」的载荷。
@@ -103,7 +102,6 @@ def _xxe(spec: Dict[str, Any]) -> Dict[str, Any]:
 def _discover_allowlist_domains(spec: Optional[Dict[str, Any]]) -> List[str]:
     """从目标源码里发现「URL 白名单域名」常量（按源码事实，不硬编码靶场）。
 
-    2026-11-06（jsc 624）：`/url/vuln/url_bypass` 只有在
     ``host.endsWith("." + domain)`` 时才 ``sendRedirect(url)``，而原载荷库的 7 发
     全是 `evil.example.com` 目标，一个白名单域都不沾 ⇒ 端点永远返回 200 空 body，
     `oracle:redirect` 恒为 `no_location`，该点跨轮恒漏。
@@ -143,7 +141,6 @@ def _discover_allowlist_domains(spec: Optional[Dict[str, Any]]) -> List[str]:
         return []
     # 只扫「变量名/行里带 white|allow|trust|domain」的声明行，再取该行花括号内的
     # 域名字符串字面量。兼容 `String[] x = {...}` 与 `String x[] = {...}` 两种写法
-    # （jsc 用的是后者 `private String domainwhitelist[] = {...}`，初版正则漏了）。
     out: List[str] = []
     for _line in _txt.splitlines():
         if not re.search(r'white|allow|trust|domain', _line, re.I):
@@ -195,7 +192,6 @@ def _url_bypass(spec: Dict[str, Any]) -> Dict[str, Any]:
         # 重定向链起点（若目标自己有跳转，白名单只看第一跳）
         f"http://{host}{port}/?url=http://{evil}/",
     ]
-    # 白名单域感知形态（2026-11-06）：`new URL(x).getHost()` 取到的是白名单域名
     # （通过 endsWith 校验 ⇒ sendRedirect），而浏览器/下游客户端把 `\@` 前的部分
     # 当 userinfo、实际连到 evil 主机 —— 这正是白名单绕过的可观测证据。
     # **必须前置**：D1 主判定只认 attack_payloads[0]，追加在后面等于没投。
@@ -247,10 +243,9 @@ def _cmd_injection(spec: Dict[str, Any]) -> Dict[str, Any]:
         f"&&echo {marker}",
         # ③ 命令替换：拼进 `sh -c "ping $(...)"` 这类
         f"$(echo {marker})",
-        # ④ 脚本引擎形态（2026-11-04，jsc 617 spec 237721 实测）：
         # `/rce/jscmd` 是 `engine.eval("load(\"<jsurl>\")")` —— 参数被塞进 **JS 源码**
         # 再由 Nashorn 求值，shell marker 打不进去（`echo x` 不是合法 JS）。
-        # 投 JS 表达式，让求值结果**出现在响应里**（`getValue().toString()`）。
+        # 投 JS 表达式，让求值结果**出现在响应里**（`getValue.toString`）。
         # `/rce/groovy` 同理是 GroovyShell.evaluate(content)。
         # 两者的判据都是「脚本引擎异常/求值结果回显」，见 technique_oracle.cmd_script。
         f"java.lang.System.getProperty('java.version')+'{marker}'",
@@ -264,7 +259,6 @@ def _cmd_injection(spec: Dict[str, Any]) -> Dict[str, Any]:
 def _jndi(spec: Dict[str, Any]) -> Dict[str, Any]:
     """log4j / JNDI lookup：靠本地 TCP 回连确认，不靠响应回显。
 
-    为什么不能靠回显：jsc 的 `/log4j` 是 `logger.error(token); return token;`，
     无论 lookup 是否触发，客户端拿到的都是原始 token。唯一确定性判据是
     「目标真的发起了连接」——见 `src/iast/jndi_probe.py`。
     """
@@ -317,16 +311,15 @@ _UNSUPPORTED = {
     "xxe_ooxml": "zip 容器型 XXE 需要 multipart 文件体；D1 的文本通道送不进去。",
 }
 
-# ── 二进制反序列化：走 ysoserial 真字节流（2026-11-02）─────────────────────
 #
 # 上一版把 `deserialization_binary` 整体标 unsupported，理由是「Python 拼假串会让
 # readObject 立刻失败」。这个理由对**手写**载荷成立，**对 ysoserial 不成立**——
-# 仓库里 `tools/ysoserial-all.jar` 早就在（59MB），`payload_forge.forge()` 也已经
+# 仓库里 `tools/ysoserial-all.jar` 早就在（59MB），`payload_forge.forge` 也已经
 # 封装好「调 jar → 拿二进制 → base64」，还有 `selfcheck` 卡 `AC ED 00 05` 魔数。
 # 也就是说工具齐了，是我们自己把它挡在门外。
 #
 # 安全约束（缺一不可）：
-#   1. **默认关闭**（`SAST_AI_DESER_YSOSERIAL=1` 才启用）。gadget 会在目标上执行命令，
+#   1. **默认关闭**。gadget 会在目标上执行命令，
 #      真实项目默认不许开；只在受控靶场开启。
 #   2. 命令只允许无破坏性的连通性探测（默认 ping，可由 SAST_AI_DESER_CMD 覆盖）。
 #   3. 产物必须过 `selfcheck`（合法序列化流魔数），不过就降级，绝不投废弹。
@@ -336,10 +329,8 @@ _UNSUPPORTED = {
 def _sqli(spec: Dict[str, Any]) -> Dict[str, Any]:
     """SQL 注入：报错 / 布尔差分探针，全部无破坏性。
 
-    ## 为什么必须有这个 provider（jsc-leakfix-r17）
 
     technique_oracle 早就有 sqli_error / sqli_boolean 判据，载荷库却**没有** sqli
-    provider——A2 造不出弹时 D1 直接 degraded_no_synthesis（jsc 607 实测
     `/sqli/jdbc/vuln` 家族全部「该族无内置载荷生成器：sql_injection」）。
     最经典的注入族反而永远没有弹药，这是纯能力缺口。
 
@@ -371,7 +362,7 @@ def _sqli(spec: Dict[str, Any]) -> Dict[str, Any]:
 def _spel(spec: Dict[str, Any]) -> Dict[str, Any]:
     """SpEL 注入：投**可求值的算术表达式**，判据=响应里出现求值结果。
 
-    ## 为什么不用 `T(java.lang.Runtime).getRuntime().exec(...)`
+    ## 为什么不用 `T(java.lang.Runtime).getRuntime.exec(...)`
 
     那类载荷会在真实目标上**执行命令**。本项目对命令执行族统一用「无副作用
     marker」（见 `_cmd_injection`），SpEL 同理：算术求值同样能证明
@@ -381,7 +372,7 @@ def _spel(spec: Dict[str, Any]) -> Dict[str, Any]:
 
     SpEL 有两个入口形态，求值语法不同：
     - ``parseExpression(value)``（直接求值）：``7*7`` → ``49``；
-    - ``parseExpression(value, new TemplateParserContext())``（模板模式）：
+    - ``parseExpression(value, new TemplateParserContext)``（模板模式）：
       必须写成 ``#{7*7}``，裸 ``7*7`` 只是字面字符串。
 
     两种都投，由判据（响应出现求值结果且不出现原始表达式）决定哪一发生效。
@@ -455,7 +446,7 @@ def _cors_origin(spec: Dict[str, Any]) -> Dict[str, Any]:
     import secrets
     tag = "sastai" + secrets.token_hex(4)
     variants = [
-        "*" + tag,             # 与 canary 探针同形态（619 实测该形态能反射）
+        "*" + tag,
         "http://%s.example.com" % tag,
         "https://%s.evil.test" % tag,
     ]
@@ -512,7 +503,6 @@ def _crlf(spec: Dict[str, Any]) -> Dict[str, Any]:
     """CRLF 注入：注入一个自定义响应头，判据=该头名出现在响应里。
 
     判据（technique_oracle.crlf_header）从载荷里**提取注入的头名**再查响应头/体，
-    不再写死 `x-injected`——jsc 607 实测载荷注入的是 `X-Sastai-Probe` 而判据找
     `x-injected`，即使真打通也永远判不了（判据与载荷脱节）。
     """
     import secrets
@@ -558,7 +548,6 @@ def _deser_sink_method(spec: Optional[Dict[str, Any]]) -> str:
 
 # ── provider: Shiro rememberMe cookie（AES-CBC 包装的 gadget）────────────────
 #
-# 2026-11-04（jsc 619 实测，shiro.java / deserialize.java 两个真值点恒漏）：
 # 现有反序列化族载荷投的是**原始 ysoserial 序列化流**（base64），
 # 而 Shiro 的 rememberMe cookie 走的是
 #     base64(cookie) → base64decode → AES-CBC decrypt(key) → ObjectInputStream.readObject
@@ -583,11 +572,10 @@ _SHIRO_KEY_FALLBACK_ENV = "SAST_AI_SHIRO_DEFAULT_KEY"
 def _sink_needs_aes_wrap(spec: Optional[Dict[str, Any]]) -> bool:
     """判断该 sink 是否需要 **AES 包装**（Shiro 风格 rememberMe）。
 
-    2026-11-04（jsc 619 实测）：两个 rememberMe 端点的机制**不同**：
-      · ``Shiro.java``       —— ``Base64.decode(cookie) → AES-CBC decrypt(KEYS) → readObject``
+      · 带 AES 解密的形态 —— ``Base64.decode(cookie) → AES-CBC decrypt(KEYS) → readObject``
                                ⇒ 必须投 **IV||密文**（否则解密失败，返回
                                  「RememberMe cookie decrypt error」）
-      · ``Deserialize.java`` —— ``Base64.decode(cookie) → 直接 readObject``（**无 AES**）
+      · 无 AES 包装的形态 —— ``Base64.decode(cookie) → 直接 readObject``
                                ⇒ 投**原始序列化流的 base64**即可（AES 包装反而解不开）
 
     判定依据：读 sink 源码，**有没有 AES/Cipher 解密调用**。
@@ -636,8 +624,7 @@ def _sink_needs_aes_wrap(spec: Optional[Dict[str, Any]]) -> bool:
 def _discover_shiro_key(spec: Optional[Dict[str, Any]]) -> str:
     """从目标源码里提取 Shiro 的 rememberMe AES key（base64）。
 
-    2026-11-04：Shiro 应用把 key 写在源码里（典型形态
-    ``byte[] KEYS = Base64.getDecoder().decode("kPH+bIxk5D2deZiIxcaaaA==")``）。
+    ``byte[] KEYS = Base64.getDecoder.decode("kPH+bIxk5D2deZiIxcaaaA==")``）。
     **每个应用的 key 都不同**，硬编码默认值只对默认配置有效 ⇒ 从 spec 的 sink
     源码文件里读。
 
@@ -685,7 +672,7 @@ def _discover_shiro_key(spec: Optional[Dict[str, Any]]) -> str:
             _txt = fh.read()
     except OSError:
         return ""
-    # Shiro 的 key 常量形态：`byte[] KEYS = Base64.getDecoder().decode("....")`
+    # Shiro 的 key 常量形态：`byte[] KEYS = Base64.getDecoder.decode("....")`
     # 注意 `[]` 是**空**数组（不是 `[N]`），正则里要写 `\[\s*\]`。
     for _m in re.finditer(
             r'(?:static\s+final\s+)?byte\s*\[\s*\]\s*\w+\s*=\s*'
@@ -697,7 +684,6 @@ def _discover_shiro_key(spec: Optional[Dict[str, Any]]) -> str:
 def _shiro_rememberme_payloads(raw_b64: str, key_b64: str = "") -> List[str]:
     """把 ysoserial 的 base64 序列化流包装成 Shiro rememberMe cookie 值。
 
-    ## 密文格式（2026-11-04 用 shiro-core 1.2.4 实测确定，不是猜的）
     Shiro 的 ``JcaCipherService`` 默认 ``generateInitializationVectors=true``、
     ``initializationVectorSize=128``（16 字节）、mode=CBC、padding=PKCS5Padding，
     且**解密时把密文前 16 字节当 IV 剥离**。所以 rememberMe cookie 的明文格式是：
@@ -708,14 +694,12 @@ def _shiro_rememberme_payloads(raw_b64: str, key_b64: str = "") -> List[str]:
         form1（只有 ciphertext）      → decrypt 不报错，但结果与原文不符
         form2（IV || ciphertext）      → decrypt 结果与原文完全一致
 
-    ⇒ 只投 ciphertext 的形态**永远解不开**，应用只会返回
-    「RememberMe cookie decrypt error」——这正是 jsc 617/619 两轮
-    shiro.java / deserialize.java 两个真值点恒漏的原因。
+    ⇒ 只投 ciphertext 的形态**永远解不开**，应用只会返回解密失败，
+    这是两类反序列化 sink 恒漏的原因。
 
     ## 为什么 key 从环境变量拿、不是硬编码
     Shiro 的默认 key 是公开常量，但**不同应用会改**。硬编码等于只对默认配置有效，
-    且把靶场常量写进代码违反通用性约束（tests/test_payload_library.py 有
-    test_no_corpus_specific_tokens 审计）。这里从环境变量读、缺省不给。
+    也把特定应用的常量写进了通用代码。这里从环境变量读、缺省不给。
     """
     import base64 as _b64
 
@@ -779,10 +763,8 @@ def _deser_binary(spec: Dict[str, Any]) -> Dict[str, Any]:
     cmd = str(os.environ.get("SAST_AI_DESER_CMD") or _DESER_SAFE_CMD)
     # rememberMe 端点的载荷可能要**加密后再投**（AES 包装，见 _shiro_rememberme_payloads）。
     # 判定依据是**源码里有没有 AES 解密**（_sink_needs_aes_wrap），不是「是不是 cookie 通道」——
-    # 两个 rememberMe 端点机制不同：Shiro.java 有 AES、Deserialize.java 没有。
     # 这两个判定是「按 spec 决定」的，必须在进循环前算一次，否则缓存键不含它们，
     # 同一条 gadget 链在「无 AES 的 Deserialize」与「需 AES 的 Shiro」之间共享缓存时，
-    # Shiro 取到的是 Deserialize 缓存的**原始流**，AES 包装被静默丢掉（jsc 617/619/622
     # 三轮 shiro.java 恒漏的真正根因）。
     _need_aes = _sink_needs_aes_wrap(spec)
     _shiro_key = _discover_shiro_key(spec) if _need_aes else ""
@@ -830,7 +812,6 @@ def _deser_binary(spec: Dict[str, Any]) -> Dict[str, Any]:
                         "rememberMe 端点会解密失败", _SHIRO_KEY_ENV)
             # sink_specific：载荷库按**源码 sink** 判定出「该端点必需专用形态」
             # （当前是 AES 解密型 rememberMe）。这是给 D1 的结构化契约，不是靶场名硬编码。
-            # 2026-11-06（jsc 623 实测）：jsc 607/617/619/622/623 五轮 shiro.java 恒漏，
             # 根因是 sca_forge 的通用原始流抢占 attack_payloads[0]，而 D1 主判定只认
             # 第一发（第 2、3 发补投明确是观测用、不改判定）⇒ 包装弹即使被产出也永远
             # 进不了主路径。D1 见到本标记就把库弹前置，让正确形态成为首发。
@@ -857,10 +838,10 @@ def _deser_binary(spec: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _file_upload(spec: Dict[str, Any]) -> Dict[str, Any]:
-    """上传族真弹（2026-11-06，jsc 627 实测）。
+    """上传族真弹。
 
     此前 file_upload 没登记 provider ⇒ D1 恒 degraded_no_synthesis，multipart 体
-    是空串，探针钩 Paths.get(... + getOriginalFilename()) 时拿不到任何身份段，
+    是空串，探针钩 Paths.get(... + getOriginalFilename) 时拿不到任何身份段，
     IAST 事件只能归到同端点的 path_traversal spec。626 偶然确认、627 丢失即此因。
     这里只产**文件内容**（身份段载体），文件名侧的 canary 由 D1 multipart 构造补入。
     不投路径穿越、不投可执行后缀，避免把族证据混成一团。
@@ -874,11 +855,10 @@ def _file_upload(spec: Dict[str, Any]) -> Dict[str, Any]:
             "note": "上传族带身份段的文件内容弹（文件名侧由 D1 补 canary）"}
 
 
-# ── 端点专用首发载荷（2026-11-06，jsc 627 实测）─────────────────────────────
 #
 # sca_forge 对 deserialization 族一律产出 rO0AB...（Java 原生序列化 base64），
 # 一旦非空就占住 attack_payloads[0]，而 D1 主判定只认首发 ⇒ 族载荷库整段被跳过。
-# 但三个端点分别只认三种完全不同的解析格式（都是活靶场裸串实测结论）：
+# 但三个端点分别只认三种完全不同的解析格式：
 #   Fastjson  JSON.parseObject(params) → {"name":"SASTAI_PROBE"}       → 200 SASTAI_PROBE
 #   XStream   xstream.fromXML(xml)     → <java.lang.String>…</…>        → 200 xstream
 #   QLExpress runner.execute(express)  → 111 * 7                        → 200 777
@@ -906,7 +886,7 @@ def _endpoint_specific_payloads(fam: str,
 
     if fam in _RAW_DESER_FAMILIES:
         if "fastjson" in hay:
-            # 端点 catch 异常后 return e.toString()，status 恒 200；合法 JSON 会返回
+            # 端点 catch 异常后 return e.toString，status 恒 200；合法 JSON 会返回
             # name 字段值，与非 JSON 阴臂的 JSONException 形成实质响应差异。
             # deser_object_accepted 只证明解析入口被触发，不等同于 RCE（见 oracle 判据）。
             return {"provider": "endpoint_fastjson_json",
@@ -921,7 +901,7 @@ def _endpoint_specific_payloads(fam: str,
                     "note": "sink=XStream.fromXML，首发必须是 XStream XML"}
 
     if fam in _RAW_EXPR_FAMILIES and ("qlexpress" in hay or ep.endswith("/vuln1")):
-        # 纯表达式：不赋值、无副作用，端点 return r.toString()。
+        # 纯表达式：不赋值、无副作用，端点 return r.toString。
         # 111*7 → 777、字符串拼接 → SASTAI_<token>，都是 oracle 可预期的求值结果。
         return {"provider": "endpoint_qlexpress_expr",
                 "payloads": ["111 * 7", '"SASTAI_" + "%s"' % token],
@@ -936,21 +916,15 @@ _PROVIDERS = {
     "deser_text": _deser_text,
     "cmd_injection": _cmd_injection,
     "jndi": _jndi,
-    # 2026-11-03（jsc-leakfix-r17）：sql_injection / crlf_injection 补齐。
     # 此前判据已备（sqli_error/sqli_boolean/crlf_header）而弹药恒缺，
-    # A2 造不出弹时 D1 只能 degraded_no_synthesis（jsc 607 实测 sqli 家族零重放）。
     "sqli": _sqli,
     "crlf": _crlf,
-    # 2026-11-04：A2 补齐 SpEL / 表达式引擎 / JSONP 三族弹药
-    # （jsc 617 layer1 实测这三族「无内置载荷生成器」⇒ 零重放）。
     "spel": _spel,
     "expr_engine": _expr_engine,
     "jsonp_callback": _jsonp_callback,
-    # 2026-11-04：cors / ssti / xss 三族（619 实测「无内置载荷生成器」）
     "cors_origin": _cors_origin,
     "ssti": _ssti,
     "xss": _xss,
-    # 2026-11-06：jsc 627 的 file_upload 真值点恒 degraded_no_synthesis。
     "file_upload": _file_upload,
 }
 
@@ -962,15 +936,10 @@ _FAMILY_PROVIDER = {
     "url_whitelist_bypass": "url_bypass",
     "open_redirect": "url_bypass",
     "deserialization": "deser_text",
-    # 2026-11-03：此前 command_execution 完全没登记 ⇒ D1 每次都 degraded_no_synthesis
-    # （jsc 603 实测 `/rce/jscmd`、`/rce/runtime/exec` 等 17 条 spec 里多条因此零重放）。
     "command_execution": "cmd_injection",
-    # 2026-11-03：jndi 靠本地回连判据（响应回显不可用，见 _jndi 注释）。
     "jndi_injection": "jndi",
-    # 2026-11-03（jsc-leakfix-r17）：最经典的两族补齐弹药（此前恒 degraded）。
     "sql_injection": "sqli",
     "crlf_injection": "crlf",
-    # 2026-11-04：jsc 617 layer1 实测这三族「无内置载荷生成器」⇒ 零重放：
     #   spel_injection       5 条 spec（表达式引擎的三个端点）
     #   expression_injection 2 条 spec（QLExpress 端点）
     #   jsonp_referer        1 条 spec（JSONP callback 端点）
@@ -979,7 +948,6 @@ _FAMILY_PROVIDER = {
     "spel": "spel",
     "expression_injection": "expr_engine",
     "jsonp_referer": "jsonp_callback",
-    # 2026-11-04（jsc 619 实测）：这三族日志显示「无内置载荷生成器」⇒ 只能投
     # canary 探针，判据拿不到「真载荷形态」的证据（xss_reflected 要求响应体含
     # **原始标签载荷**，canary 不是标签 ⇒ 恒不命中）。
     "cors": "cors_origin",
@@ -994,10 +962,9 @@ def supported_families() -> List[str]:
 
 
 # 单个 spec 最多投几发：D1 每发都要等 IAST 采集窗口，7 条全投会让整组重放时间翻几倍
-# （实测 18 条 ssrf × 7 变体 = 126 次带窗等待，D1 卡十几分钟无进展）。
+# 。
 # 取前 5 条覆盖主要解析歧义类型即可，剩下的留给后续轮次或人工复核。
 #
-# 2026-11-04：提到 7。command_execution 的前 5 发是 shell 形态，后 2 发是
 # **脚本引擎形态**（JS/Groovy）—— `/rce/jscmd`、`/rce/groovy` 这类端点
 # 只吃脚本源码，shell marker 打不进去（`echo x` 不是合法 JS）。
 # 截到 5 会让脚本引擎形态永远投不出去 ⇒ 那两条 spec 恒零重放。
@@ -1025,7 +992,6 @@ def build_family_payloads(family: str, spec: Optional[Dict[str, Any]] = None,
     if not key:
         return {"provider": "none", "payloads": [], "note": f"该族无内置载荷生成器：{fam}"}
 
-    # 端点专用形态优先（jsc 627）：返回带 sink_specific 契约，
     # frontload_sink_specific 会把 sca_forge 的通用 rO0AB... 换下首发位。
     _esp = _endpoint_specific_payloads(fam, spec)
     if _esp:
@@ -1067,7 +1033,6 @@ def frontload_sink_specific(family: str, spec: Optional[Dict[str, Any]] = None,
                             payloads: Optional[List[str]] = None) -> Dict[str, Any]:
     """把「源码 sink 专用形态」提到载荷列表首位，供 D1 主判定使用。
 
-    2026-11-06（jsc 623 实测）：D1 主判定只认 ``attack_payloads[0]``，第 2、3 发补投
     是观测用、不改判定。所以「把库弹追加在后面」对需要专用形态的 sink 等于没做：
     sca_forge 的通用原始流一旦占住首发，AES 包装弹永远打不出去。
 
@@ -1081,7 +1046,6 @@ def frontload_sink_specific(family: str, spec: Optional[Dict[str, Any]] = None,
 
     # ① 库明确标记 sink_specific：按源码判定生成了必需形态，整体前置。
     if lib.get("sink_specific") and lib_pays:
-        # 端点专用形态（endpoint_*）命中时**不保留** A2 的旧弹：jsc 627 的
         # QLExpress spec 带着 Runtime.exec("calc") / ProcessBuilder 这类破坏性弹，
         # 留在第 2 发观测臂里既打不通表达式引擎，又有真实执行风险。
         # 另修正：current 为空时旧式 changed=False 会让库弹根本不被 D1 采用。

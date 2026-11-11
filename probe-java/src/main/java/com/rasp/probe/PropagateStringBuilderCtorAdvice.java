@@ -8,11 +8,11 @@ import net.bytebuddy.asm.Advice;
  * {@code StringBuilder(CharSequence)} / {@code StringBuffer(CharSequence)} /
  * {@code StringJoiner(CharSequence)}: the new builder inherits the taint of its backing
  * CharSequence. This is what keeps {@code new StringBuilder(tainted)} tainted so that a
- * later {@code toString()} (see {@link PropagateStringBuilderToStringAdvice}) propagates
+ * later {@code toString} (see {@link PropagateStringBuilderToStringAdvice}) propagates
  * the taint through a hand-written builder.
  *
  * <p>Deliberately a plain {@code @OnMethodExit} (no {@code onThrowable}/{@code suppress}):
- * ByteBuddy cannot wrap a constructor's super() call in a try/catch, so advice with
+ * ByteBuddy cannot wrap a constructor's super call in a try/catch, so advice with
  * {@code onThrowable} on a constructor throws "Cannot catch exception during constructor
  * call" and fail-opens the whole StringBuilder/StringBuffer/StringJoiner transform.
  */

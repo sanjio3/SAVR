@@ -27,7 +27,6 @@ _SEVERITY_CANON = {
 
 # 同义写法 -> 规范 severity（小写匹配）
 # 末四条来自 SCA 适配器（Trivy/OSV/Grype 的 NEGLIGIBLE/MODERATE/IMPORTANT/SEVERE），
-# 2026-09-14 合并至此，使 pipeline/sca/adapters.py 不再保留重复实现。
 _SEVERITY_ALIASES = {
     "critical": "CRITICAL",
     "crit": "CRITICAL",
@@ -92,7 +91,6 @@ _TYPE_ALIASES: Dict[str, str] = {
     "基础设施层-进程信息泄露": "进程信息泄露",
     "基础设施层-数据库信息泄露": "数据库信息泄露",
     "基础设施层-安全监控状态泄露": "安全监控状态泄露",
-    # 2026-09-26（F4 后精确率整改①）：原自映射收敛到 sensitive_data_exposure（暴露轴规范键）
     "未授权接口泄露": "sensitive_data_exposure",
     "退款滥用": "退款滥用",
     "批量赋值提权": "批量赋值提权",
@@ -131,7 +129,6 @@ _TYPE_ALIASES: Dict[str, str] = {
     "state_machine": "state_machine",
     "状态机跳步": "state_machine",
     "jwt_weak": "jwt_weak",
-    # 2026-09-17（待请示 §1.2）：JNDI / Log4j lookup 注入的规范族。此前 A2 的 LLM 把
     # JNDI lookup 误判为 XXE、且无对应规范 token；这里补上，供 a2_intelligent_agent 的
     # 族名证据修正与报告 by_type 归口。
     "jndi_injection": "jndi_injection",
@@ -149,10 +146,8 @@ _TYPE_ALIASES: Dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
-# 规则归一（2026-09-14）：从「精确别名表」升级为「规则归一 + 别名覆盖」
 # ---------------------------------------------------------------------------
 # 背景：旧实现只做精确字符串查表，未登记写法原样放行，导致同一族在 by_type 里裂成多个标签。
-# task-7 实测噪声：
 #   xxe 18 / xxe (xml external entity) 9
 #   ssrf 44 / 基础设施层-ssrf 2 / infrastructure layer - ssrf 1
 #   url重定向 7 / url redirect 3 / 基础设施层-url重定向 1
@@ -187,7 +182,6 @@ def _canon_key(value: str) -> str:
 def strip_family_prefix(value: Optional[str]) -> str:
     """剥掉「基础设施层- / 业务逻辑类- / infrastructure layer -」等降级标记前缀。
 
-    2026-09-14 收敛：此前 trigger_spec_registry.py 与 a2_intelligent_agent.py 各自内联了
     一份等价正则/循环，三处逻辑漂移。现统一由本函数提供，禁止各处再自写剥前缀。
     """
     return _PREFIX_RE.sub("", str(value or "").strip()).strip()
@@ -197,7 +191,6 @@ def strip_family_prefix(value: Optional[str]) -> str:
 # 放在别名表之后，用于兜住别名表无法穷举的组合型标签。
 _FAMILY_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("idor", ("insecure direct object reference", "idor", "水平越权", "bola", "越权访问对象")),
-    # 2026-09-17（待请示 §1.3）：补 "xml外部实体" / "外部实体注入" 折叠。此前
     # "xml外部实体注入 (xxe)" 经 _canon_key 去括号后为 "xml外部实体注入"，命不中
     # "xml 外部实体"（有空格），于是 by_type 里 "xxe" 与 "xml外部实体注入 (xxe)" 两标签并存。
     # 两侧同属 injection，本折叠不改变 derive_flow_type，属纯展示收敛。
@@ -207,10 +200,7 @@ _FAMILY_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("sql_injection", ("sql injection", "sql_injection", "sql注入", "sqli")),
     # "command injection" 必须显式登记：归一键会把 Command Injection / command_injection
     # 都压成 "command injection"，而它既不等于 "command execution" 也不在别名表里，
-    # 漏掉这一条就会原样返回，导致同一族按写法裂成三个标签（2026-09-14 审计发现）。
-    # 2026-11-01：补 "code injection" / "code-injection" / "code_injection"。
-    # 启发式引擎对 Rce.java 输出的是 "code injection"（带空格），此前不在任何组里 ⇒
-    # 原样落进 trigger_specs.family，D2 无模板（本轮实测 1 条）。
+    # 原样落进 trigger_specs.family，D2 无模板。
     # 语义上 CodeQL 的 java/code-injection 命中的是 ScriptEngine/Groovy/Yaml 执行面，
     # 与 command_execution 同族；`code_injection` 本身不是平台已知族。
     ("command_execution", ("command_execution", "command-execution", "command execution", "command injection",
@@ -218,11 +208,9 @@ _FAMILY_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
                            "命令注入", "命令执行", "os command")),
     ("path_traversal", ("path_traversal", "path-traversal", "path traversal", "路径穿越", "目录穿越")),
     ("deserialization", ("deserialization", "反序列化")),
-    # 2026-09-17（待请示 §1.2）：JNDI / Log4j lookup 组合型标签兜底（如 "Java JNDI 注入"）。
     ("jndi_injection", ("jndi", "log4j")),
     ("xss", ("xss", "跨站脚本")),
     ("csrf", ("csrf", "跨站请求伪造")),
-    # 2026-09-20（族名漂移修复）：以下四类此前在本表**完全没有条目**，A2 写什么就原样返回，
     # 于是同一漏洞在不同轮/不同 agent 下裂成多种写法，基准对账也按族 token 判「未入环」。
     # 实测漂移样本：'CRLF Injection'、'URL whitelist Bypass'、'JWT硬编码或弱密钥'、
     # 'broken access control'（A1 规则命中 CVE-2022-22978 时的族名）。
@@ -250,8 +238,6 @@ _FAMILY_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("log_disclosure", ("日志泄露", "日志记录敏感信息", "日志信息泄露", "log disclosure", "sensitive log")),
     ("rmi", ("rmi", "远程方法调用", "java rmi")),
     ("authentication_session", ("认证与会话", "认证绕过", "auth bypass")),
-    # 2026-09-26（F4 后精确率整改①族名归一）：补齐 OWASP benchmark 靶场实测的族名分裂写法。
-    # run 10 trigger_specs 实测同一族最多裂成 4 种写法（weak-random / 弱随机数 /
     # weak-random-number-generation / 弱随机数生成），计数与真值匹配全部错配。
     ("weak_hash", ("弱哈希算法", "weak hash", "weak-hash", "不安全哈希", "弱散列",
                    "weak message digest", "弱摘要", "md5", "sha-1", "sha1")),
@@ -273,9 +259,7 @@ _FAMILY_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
                                  "sensitive_exposure", "数据泄露", "敏感信息泄露",
                                  "未使用安全的密钥管理", "密钥管理")),
     ("ldap_injection", ("ldap注入", "ldap 注入", "ldap injection", "ldapi")),
-    # 2026-09-26（fix③ 族名归一收口）：xpath 此前在关键字表**完全没有条目**，spec 落库原样存
     # "xpath-injection"，既不在 KNOWN_CANONICAL_FAMILIES（AP 幻觉过滤误判为未知族），也与
-    # OWASP benchmark 真值规范族 "xpathi" 不统一，对账按族 token 错配。规范键取 xpathi 以对齐
     # 真值命名空间（GT 11 族之一）。needle 命中即可，不跨概念合并。
     ("xpathi", ("xpath injection", "xpath-injection", "xpathi", "xpath 注入")),
 )
@@ -298,12 +282,11 @@ _TYPE_ALIAS_CANON: Dict[str, str] = _build_canon_alias()
 
 
 def _build_nospace_alias() -> Dict[str, str]:
-    """「去掉全部空白」后的别名兜底索引（2026-10-31 补）。
+    """「去掉全部空白」后的别名兜底索引。
 
-    事故：别名表里登记的是 ``sql注入``（无空格），而 A1/报告层实际产出的是
     ``SQL 注入``（带空格）。``_canon_key`` 只把连续空白压成一个空格、**不删空格**，
     于是 ``sql 注入`` 查不到 → 原样返回 → ``is_known_family`` 判 False
-    → 被当成幻觉族过滤掉（本轮实测 3 条 SQL 注入受此影响）。
+    → 被当成幻觉族过滤掉。
 
     处理方式：只做**兜底索引**（前三级精确/规范键都未命中时才查），
     构建时剔除「去空格后撞车但目标不一致」的键，避免引入新的错误映射。
@@ -355,7 +338,6 @@ def normalize_type(value: Optional[str]) -> str:
     if key in _TYPE_ALIASES:
         return _TYPE_ALIASES[key]
 
-    # 3.5) 去空白兜底（2026-10-31）：`SQL 注入` 这类「别名表里是 sql注入」的写法差异。
     #      只在前三级都没命中时才走，且索引已剔除撞车键 ⇒ 不会覆盖已有的正确映射。
     key_ns = re.sub(r"\s+", "", key)
     if key_ns in _TYPE_ALIAS_NOSPACE:
@@ -377,7 +359,7 @@ normalize_source = normalize_type
 
 
 def normalize_family(raw: Optional[str]) -> str:
-    """族名归一唯一入口（待请示 item 1，2026-09-15 落地）。
+    """族名归一唯一入口。
 
     分派规则：
     - 业务/差分证明族（bolo/idor/vertical_privesc/...，即 ``canonical_business_logic_family``
@@ -394,12 +376,11 @@ def normalize_family(raw: Optional[str]) -> str:
     return normalize_type(raw)
 
 
-# 规范族词表（2026-09-26 F4 后精确率整改④）：攻击计划/报告侧的「幻觉族过滤」依据。
 # 任何族名经 normalize_family 后不在此集合内的，视为幻觉族/未知族：
 # - attack_plan 生成时直接过滤（不进计划，不再膨胀 FP 分母）；
 # - 分级输出中归入 suspicious 档而非 confirmed 档。
 # 集合内容 = _FAMILY_KEYWORDS 的全部规范键 + _TYPE_ALIASES 的全部规范值 + 业务差分族
-# （运行期从 exploit_spec.DIFFERENTIAL_PROOF_FAMILIES 补齐，避免循环导入）。
+# 。
 def _collect_canonical_families() -> frozenset:
     fams = {canon for canon, _ in _FAMILY_KEYWORDS}
     fams.update(_TYPE_ALIASES.values())
@@ -423,7 +404,6 @@ def is_known_family(raw: str) -> bool:
 
 
 # ============================================================================
-# 证据层族名纠正（2026-09-20）
 #
 # 为什么需要这一层：族名有两个上游来源，**两个都会错**，且归一表救不了错误的概念判定：
 #   ① trigger_spec_registry 取 `payload_family or type`，而 payload_family 是 A2 自由文本产出、
@@ -450,7 +430,6 @@ def is_known_family(raw: str) -> bool:
 # 且其可覆盖集合不含 xss，故 URLRedirect.java:88 的 getWriter 真实 XSS 不会被抢走（有测试锁定）。
 # URLWhiteList.java 内确有他族漏洞且其可覆盖集合含 xss，故**不授予**，仍需 route 佐证。
 #
-# 「可覆盖族集合」**必须显式列举、且必须小** —— 这是本层唯一的安全边界，实测教训（run 22 离线
 # 回放）：早期版本把多数规则设成无条件覆盖，结果把**本来正确**的族名改窄，基准反而丢 5 类
 # （/shiro/deserialize、/fastjson/deserialize、/xstream 的 family=deserialization 被改成 shiro/
 # fastjson/xstream，而 JAVA_SEC_CODE 的族 token 恰恰是粗粒度的 deserial；/log4j 的 jndi_injection
@@ -461,14 +440,10 @@ def is_known_family(raw: str) -> bool:
 #   ② 每条都必须给可覆盖集合，绝不用「无条件覆盖」。
 #   ③ 纠正只会**放宽**到规范族 token 或修正到明确错族；不得把正确族名改窄。
 _EVIDENCE_FAMILY_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[str, ...], Optional[Tuple[str, ...]], ...], ...] = (
-    # 实测漂移三条（run 22 真实数据）
     ("crlf_injection", ("crlf", "crlfinjection"), (),
      ("command_execution", "command-injection", "command-execution", "xss", "generic", ""), True),
-    # URLWhiteList.java 内确有他族真实漏洞（第 138/140 行 `return url;` 的反射 XSS，run 38
     # finding 16926/16927 实测），故**可覆盖集合刻意不含 xss** —— 文件针即便独立生效也抢不走它。
-    # 2026-09-22 修正：此前因「集合含 xss」而不授予 file_dedicated，导致 findings 落库侧
     # （findings 常无 route）的 URLWhiteList.java 全族卡在 path_traversal 纠不回来
-    # （run 38 finding 16739/16802/16894/16895/16896/16897 实测 6 条）
     # —— 族名误归因「本体」在 spec 侧已修、findings 侧未修的正是这一条。
     # 现移除 xss 并授予 file_dedicated，xss 由「不在可覆盖集合内」这一屏障保护，两全。
     ("url_whitelist_bypass", ("url_bypass", "urlwhitelist", "url_whitelist"), (),
@@ -486,7 +461,6 @@ _EVIDENCE_FAMILY_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[str, ...], Optio
     ("spel_injection", ("/spel",), (), ("command_execution", "command-injection", "command-execution", "")),
     # sink API 证据（唯一诊断性 API，才允许单靠它纠正）
     ("url_redirect", (), ("sendredirect",), ("ssrf", "path_traversal", "generic", "")),
-    # （2026-09-20）：CVE-2022-22978。regexMatchers("/black_path.*").denyAll() 无真实 HTTP
     # 端点（/black_path 仅出现在正则与 denyAll 规则里），spec 生成阶段合成 /black_path 路由后，
     # 用路由针 "black_path" 把被 A2 误标为 path_traversal / config-security 的族纠正回 auth_bypass，
     # 使其对账进 CVE 黄金项并可被 D1/D2 用 %0a 换行负载做真实运行时证明（200 vs 403）。
@@ -495,10 +469,8 @@ _EVIDENCE_FAMILY_RULES: Tuple[Tuple[str, Tuple[str, ...], Tuple[str, ...], Optio
       "cve-2022-22978", "broken-access-control", "generic", "")),
 )
 
-# 占位族名：上游没给出任何族名判断时的兜底值（实测 spec 7475 的 family="none"）。
 # 这类值**不携带任何概念信息**，因此一旦有确定性证据（路由/文件/sink）命中，一律允许被纠正——
 # 不受各规则「可覆盖族集合」限制。否则会出现「证据明明命中 /jsonp，族名却停在 none」的死角，
-# 使该漏洞在黄金集对账里因族名不匹配而无法入环（Q3-JSONP，2026-09-21）。
 # 注意：只含真正的「空值」，绝不含 xss/ssrf 等真实族名（真实族名仍需走可覆盖集合把关）。
 _PLACEHOLDER_FAMILIES = frozenset({"none", "unknown", "n/a", "na", "null", "other"})
 
@@ -534,7 +506,6 @@ def correct_family_by_evidence(
     # 文件名只取 basename，避免目录名（如 /sdl/SAVR/src/... 里的词）误命中。
     hay_file = str(file or "").lower().replace("\\", "/").rsplit("/", 1)[-1]
     hay_sink = str(sink or "").lower()
-    # 2026-10-31（T1 的测量杠杆）：名字先验总开关。
     # 本函数的路由针/文件名针全部是「漏洞词出现在路由或文件名里」这一假设，
     # 而真实业务的路由是 /api/v1/order/detail、文件是 OrderServiceImpl.java，
     # 假设直接失效 ⇒ 族判定退回 LLM 自由文本。置 SAST_AI_NAME_PRIOR=0 关掉名字针，

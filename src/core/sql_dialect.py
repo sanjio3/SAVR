@@ -1,4 +1,4 @@
-"""SQL 方言 sleep 弹药（Part2 定稿本轮 M6，2026-10-03 落地）。
+"""SQL 方言 sleep 弹药。
 
 缺口：时间盲注是「威力大、不破坏」的最佳确认弹——探针织不到 DB 驱动内部时，
 它是唯一能独立旁证 sink 触达的通道（D2 时延双阈值门，见 d2_facade._time_blind_confirmed）。
@@ -17,7 +17,7 @@ payload 全是报错型/布尔型（`' OR '1'='1`），`first_sleep_payload` 返
 一律判为不可采信（普通网络抖动即可达标），SLEEP(1) 这种弹药投了也白投。
 
 设计红线：
-  - 语法必须按方言分开写。**PostgreSQL 的 pg_sleep() 返回 void，不能进布尔表达式**
+  - 语法必须按方言分开写。**PostgreSQL 的 pg_sleep 返回 void，不能进布尔表达式**
     （`1 OR pg_sleep(3)` 直接报 "argument of OR must be type boolean"），必须走
     `; SELECT pg_sleep(3)`。写成通用 `OR <fn>` 会让 PG 靶场 100% 打不中。
   - MSSQL 的 WAITFOR DELAY 是**语句**不是表达式，必须先 `;` 收尾上一条。
@@ -65,12 +65,12 @@ def supports_sleep(db_type: Any) -> bool:
 
 
 def _mysql(base: str, s: int) -> str:
-    # SLEEP() 返回 0/1，可直接进布尔表达式
+    # SLEEP 返回 0/1，可直接进布尔表达式
     return f"{base} OR SLEEP({s})-- "
 
 
 def _postgresql(base: str, s: int) -> str:
-    # pg_sleep() 返回 void，进不了布尔表达式 —— 必须作为独立语句执行
+    # pg_sleep 返回 void，进不了布尔表达式 —— 必须作为独立语句执行
     return f"{base}; SELECT pg_sleep({s})-- "
 
 

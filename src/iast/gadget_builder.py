@@ -10,7 +10,7 @@
 transformer.transform(...)。故 gadget 根 = HashMap{"transformer": ChainedTransformer(Runtime.exec 链)}。
 
 这与 ysoserial 的任何标准 gadget 图都无关——是「应用对反序列化对象的某字段调用
-Transformer.transform()」这一模式的直接映射。新自定义链只要命中同一模式，构造器即可复用。
+Transformer.transform」这一模式的直接映射。新自定义链只要命中同一模式，构造器即可复用。
 
 自检（用户硬性要求，第 3 点）：产出的 base64 必须经 payload_forge.selfcheck（解码后以
 AC ED 00 05 开头），否则直接抛 GadgetBuildError，绝不把废弹登记为 attack_payload。
@@ -120,7 +120,6 @@ def _resolve_javac(java: str) -> Optional[str]:
     必须按平台补扩展名：旧实现写死 ``os.path.join(dirname(java), "javac")``，在 Windows 上
     拼出 ``...\\bin\\javac``（无 .exe）永远不存在，于是按需编译**从未成功过**——这正是
     GadgetBuilder.class 长期只能靠外部手工编译、最终留下 class file 68（Java 24）不兼容产物的
-    根源之一（2026-09-13 事故）。
     """
     d = os.path.dirname(java)
     names = ("javac.exe", "javac") if os.name == "nt" else ("javac",)
@@ -150,7 +149,6 @@ def _compile_builder() -> None:
             # -encoding UTF-8 必需：GadgetBuilder.java 含中文注释，JDK8 javac 默认按平台编码
             # （Windows 简体中文为 GBK）读取，会报「编码GBK的不可映射字符」编译失败。
             # 该失败曾被绕过——改用高版本 JDK 编译，结果产出 class file 68（Java 24）的
-            # 不兼容 class，在 JDK8 上运行即 UnsupportedClassVersionError（2026-09-13 事故）。
             [javac, "-encoding", "UTF-8", "-cp", f"{_CC_JAR}{sep}{_BUILDER_DIR}",
              "-d", _BUILDER_DIR, src],
             check=True, capture_output=True, text=True, timeout=120,
@@ -180,7 +178,6 @@ def _run_builder(command: str) -> str:
     proc = _exec_builder(cmd)
 
     # class 文件版本与运行 JDK 不兼容 → 强制重编一次再试。
-    # 事故（2026-09-13）：tools/gadget_builder/GadgetBuilder.class 是历史遗留的 Java 24
     # （class file 68）产物，而运行 JDK 是 8（major 52）。因 _compile_builder 只在 class
     # 缺失时才触发，该不兼容 class 被永久复用，每次 D1 重放都抛 UnsupportedClassVersionError
     # 并被静默降级到 ysoserial/弹药库，导致 gadget 构造长期全灭、大量 spec 无证据。

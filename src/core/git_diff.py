@@ -1,11 +1,11 @@
-"""Git-diff targeted retest (第一版 §2.13 / 第四版 G1).
+"""Git-diff targeted retest (第一版  / 第四版 G1).
 
 Given a vulnerability's ``base_ref`` (the version where it was found) and a
 ``patch_ref`` (a candidate fix), this module extracts *only* the diff of the
 files on that vulnerability's chain and decides whether the fix broke the
 source->sink path -- **without re-running a full scan**.
 
-Judgement is layered, mirroring the acceptance criteria of §2.13:
+Judgement is layered, mirroring the acceptance criteria of :
 
 * **Code layer** – does the diff of the affected files introduce a filter /
   sanitizer / authorization check (or remove the vulnerable sink)?  We match the

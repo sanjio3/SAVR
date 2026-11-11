@@ -98,7 +98,7 @@ public final class TaintStore {
 
     /**
      * 类型边界内容登记 (F2): 被污染 String 经载体类包裹后，按载体身份登记源内容，
-     * 供 sink 处 sample() 兜底回收，使 canary 跨 String->载体 边界被断言。
+     * 供 sink 处 sample 兜底回收，使 canary 跨 String->载体 边界被断言。
      */
     public static void recordCarrierContent(Object carrier, String content) {
         TaintHub.recordCarrierContent(carrier, content);

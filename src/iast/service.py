@@ -33,7 +33,6 @@ _INGEST_FLUSH_LOCK = threading.Lock()
 def _is_value_evidence(rec: Dict[str, Any]) -> bool:
     """该事件是否为「值级证据」——平台 canary 身份段真实出现在 sink 实参文本里。
 
-    用于幂等去重豁免（2026-10-15）。去重键 (event_type, sink_file, sink_line, canary) 在
     canary 为空时退化为常量；对「多 servlet 共用同一 sink 名、sink_line 恒 0」的族（如
     trustbound 的 HttpSession.setAttribute），漏洞 sink 事件会与框架样板写入同键而被挤掉。
     这类事件是攻击者数据确证穿透到 sink 实参的直接证据，价值最高，一律免去重。
@@ -49,11 +48,9 @@ def _is_value_evidence(rec: Dict[str, Any]) -> bool:
         return False
 
 # 代码根目录解析结果观测表：task_id -> code_root。
-# 只写不读（业务上不依赖它），用途是 r59 跑批时一眼确认「生产路径是否真的拿到了根目录」
 # —— 拿不到就意味着抑制恒为 0。用全局而非实例属性，是因为 IastService 可能多实例。
 _CODE_ROOT_STATS: Dict[Any, str] = {}
 
-# 2026-09-18（F2 ①任务归属解析缓存）：TTL 与容量上限。
 # 取值的依据见 IastService._resolve_event_task_id 的 docstring —— 身份段含 run nonce、
 # 同一身份段在一次扫描内不会改属，故正结果 TTL 可较长；负结果可能只是「spec 尚未登记」，
 # 必须短 TTL；workspace 级回退快照含运行时间窗与活跃会话，随时间变化，用最短 TTL。
@@ -63,7 +60,6 @@ _OWNERSHIP_WORKSPACE_TTL = 5.0
 # 容量上限：键为真实 canary 身份段（每 spec 一个），跨多轮任务会累积。
 # 超限整表清空（而非 LRU）——重建代价只是一次 DB 查询，逻辑更简单、无额外簿记开销。
 _OWNERSHIP_CACHE_MAX = 4096
-# 2026-10-11（r79 实证·丙 归属修复）：已结束 task 的运行窗向后延伸 GRACE 秒，兜住「task 结束后
 # 探针批量 flush 的迟到事件」被时间窗错归到后启动 task / 归 NULL 的问题。配合分片真串行（排空等待）
 # 使用：排空期内无下一 task 在跑，312 的迟到事件落进 312 的延长窗 → 正确归 312，不被 313 抢。
 _ATTR_GRACE_SECONDS = 300.0
@@ -85,7 +81,7 @@ def _canary_hash(canary: str) -> str:
 def _parse_dt(value: Optional[str]) -> Optional[float]:
     """把 scan_tasks / iast_events 里的时间戳（ISO，可能带 'T' 或空格分隔、可选小数秒）解析为 POSIX 秒。
 
-    用 time.mktime + 本地时间元组：本项目 ingestion 全部走 _now()（datetime.utcnow().isoformat()，
+    用 time.mktime + 本地时间元组：本项目 ingestion 全部走 _now（datetime.utcnow.isoformat，
     即 UTC 字面量），而 scan_tasks.started_at/finished_at 由后端以本地/UTC 混合写入，
     统一按「无时区本地解析」处理即可满足「落窗比较」的相对一致性需求（只比较先后，不比较绝对时区）。
     解析失败返回 None。
@@ -135,7 +131,7 @@ _SINK_SIGNATURE_TO_FAMILY: List[Tuple[str, str]] = [
 def _sink_signature_to_family(sink_file: str) -> str:
     """由 JDK sink 签名（iast_events.sink_file，形如 java.lang.ProcessBuilder.start）推断规范漏洞家族。
 
-    返回 canonical_family 字符串；无法归类（框架渲染噪声 / 未登记 sink）时返回 ''。
+    返回 canonical_family 字符串；无法归类时返回 ''。
     """
     sf = (sink_file or "").strip()
     if not sf:
@@ -155,7 +151,6 @@ class IastService:
             tmp = Path(tempfile.gettempdir()) / f"savr_iast_{int(time.time() * 1000000)}.db"
             db = Database(str(tmp))
         self.db = db
-        # 2026-09-18（F2 ①任务归属解析缓存）：见 _resolve_event_task_id 的说明。
         # _ident_owner：(workspace_id, canary 身份段) -> (过期时刻, task_id 或 None)
         # _ws_owner：workspace_id -> (过期时刻, {task_ids, windows, active})
         # 实例级缓存即可生效：API 侧 IastService 由容器单例持有（src/api/dependencies.py）。
@@ -169,7 +164,6 @@ class IastService:
 
         为什么必须归一化再比：workspace 里的 target_path 是建档时写进去的（常带正斜杠，
         如 `D:/Users/...`），而探针/Java 侧上报的几乎必然是平台原生分隔符（`D:\\Users\\...`）。
-        2026-10-06 实测：直接字符串比较会让注册抛
         「code_path 与该 workspace_id 已绑定到其他路径」，表现为靶场起不来且错误信息
         指向"重绑"这种完全无关的方向，极难自查。启动脚本侧一直自己做这个归一化，
         service 层漏了 —— 现统一到这里，两边不再各写一套。
@@ -191,7 +185,7 @@ class IastService:
             return {"id": row["id"], "new": False}
         if norm_in:
             # 注意 fetchall=True 是**必填**：项目的 Database.execute 把 fetchone/fetchall
-            # 做成了 keyword-only 参数，不传时返回 None，.fetchall() 会 AttributeError。
+            # 做成了 keyword-only 参数，不传时返回 None，.fetchall 会 AttributeError。
             for r in self.db.execute("SELECT id, target_path FROM workspaces", fetchall=True):
                 if self._norm_path(r["target_path"]) == norm_in:
                     return {"id": r["id"], "new": False}
@@ -212,7 +206,7 @@ class IastService:
         agent_id = payload.get("agent_id", "")
         if not (target_url and app_name and agent_id):
             raise ValueError("target_url / app_name / agent_id 必填")
-        # §4.2 版本钉死：探针在注册（即启动）时上报自身 jar 版本，平台侧钉死 SAST 分析代码版本，
+        #  版本钉死：探针在注册（即启动）时上报自身 jar 版本，平台侧钉死 SAST 分析代码版本，
         # 注册即校验对齐，结果写入 version_status（mismatch 将被 A0 门禁硬阻断发流量）。
         probe_version = (payload.get("probe_version", "") or "").strip()
         contract = validate_version_contract(probe_version)
@@ -283,7 +277,7 @@ class IastService:
         }
 
     def update_heartbeat(self, session_id: int, token: str, agent_phase: Optional[str] = None) -> Dict[str, Any]:
-        """§3.13/§3.14 探针心跳上报：写 last_heartbeat_at，供 A0 心跳新鲜判断直接判在线。
+        """/ 探针心跳上报：写 last_heartbeat_at，供 A0 心跳新鲜判断直接判在线。
 
         方案 3：agent_phase 非空时一并写入（WARMING_UP 预热中 / READY 已就绪）。
         """
@@ -344,7 +338,7 @@ class IastService:
     # ---------- TriggerSpec 登记（A2 产出，供匹配） ----------
 
     # 代码根目录缓存：task_id -> root。生产调用点不传 code_root，只能从任务的
-    # options_json 反推；每个任务只查一次库（一个分片上千条 spec，逐条查会拖慢登记）。
+    # options_json 反推；每个任务只查一次库。
     _CODE_ROOT_CACHE: Dict[Any, str] = {}
 
     def _task_code_root(self, task_id: Any) -> str:
@@ -365,7 +359,7 @@ class IastService:
             from src.core.safe_verdict import root_from_options_json as _root_of
 
             # Database.execute 的 fetch 参数是 **keyword-only**：写成
-            # execute(sql, p).fetchone() 会拿到 None 再 AttributeError。
+            # execute(sql, p).fetchone 会拿到 None 再 AttributeError。
             # 这个坑在 src/core/dast_config_check.py:38 的注释里记过一次，
             # 这里又踩了一次——代价是 root 恒为空、抑制静默归零，而日志只有一句
             # 被 fail-open 吞掉的 warning。
@@ -389,7 +383,6 @@ class IastService:
         # victim_identifiers：已知受害者标识（username/email/user_id 等），用于 D1 双账号差分重放时
         # 判定「攻击者取回了受害者的数据」。登记阶段优先取 A2 prerequisites.victim_identifiers，
         # 缺则取账户发现产物里的 victim 账户已知属性（见 trigger_spec_registry）。存为 JSON 字符串。
-        # R23-4(c) 落库咽喉点归一：该字段直接用于响应体子串匹配，短数字 uid（如 bob=3）会恒命中，
         # 故统一经 src/core/identity_marker 强度判定过滤，杜绝假确认。
         _vi = payload.get("victim_identifiers")
         if isinstance(_vi, (list, tuple)):
@@ -421,7 +414,6 @@ class IastService:
                 _cat = _bl
             payload["category"] = _cat
             payload["business_logic_category"] = _bl
-        # 2026-10-02（生产侧接线）：登记咽喉点统一挖一次净化器约束。
         # 沿路径/候选文件抓守卫（跨文件、按行为判定，不看名字）→ 抽 FilterSpec → 回填 raw，
         # 落库即成 trigger_specs.raw_json.filter_spec，供 D1 净化感知造弹与升变体消费。
         # fail-open：挖掘失败不影响登记。开关 SAST_AI_SANITIZER_MINER=0 可关闭。
@@ -436,18 +428,15 @@ class IastService:
         except Exception as _fs_exc:
             logger.warning("[trigger_spec] 净化器挖掘失败（不影响登记）：%s", _fs_exc)
 
-        # 2026-10-05（r58 精确率整改方案 1+2+3）：安全实现统一裁决，对 A2 也生效。
         #
         # 为什么放在这里：这是 spec 落库的**唯一咽喉点**（A2 自动登记与前端 REST
         # 两条注册路径在此汇合）。原先 safe_patterns 的抑制只接在 A1 出口
         # （src/pipeline/a1/service.py:303），而 A2 独立判定后直接走到这里落库，
         # 完全绕过了抑制 —— 规则表在、接线在，唯独作用域不覆盖 A2。
-        # r58 实测：weak_random/xss/weak_crypto 三族因此白报 331 个 FP，
         # 且上一轮承诺的「getter 白名单 +5.9pt」落空成 +0.0pt。
         #
         # 用例级否决（方案 2）：本条被判安全时，还要看**同一 endpoint 同族**的
         # 其他 spec 是否也都安全；只要有一条不安全，就保留本条（保守，宁可多报不漏报）。
-        # OWASP 口径下 endpoint 里带用例名，BenchmarkTest00052 的两条 spec
         # （一条 source=a2、一条 source=unknown 且 a21 候选分 0）正是这个场景。
         _suppressed = 0
         _suppress_rule = ""
@@ -457,9 +446,7 @@ class IastService:
         try:
             from src.core.safe_verdict import judge_spec as _judge_spec
 
-            # P0（r59 前瞻验证查出）：两个生产调用点都不传 code_root，必须在此自行解析。
             # 不解析的后果是 expected_sink_file（相对路径）拼不出绝对路径 → 类级窗口为空
-            # → 规则全在却零命中 → 生产路径抑制数恒为 0。r58 的 +4.1pt 是回填脚本自带
             # 根目录算出来的，不是生产路径算出来的，两者不能混为一谈。
             _code_root = str(payload.get("code_root") or "").strip()
             if not _code_root and payload.get("task_id") is not None:
@@ -477,7 +464,7 @@ class IastService:
                 _suppressed = 1
                 _suppress_rule = str(_v.get("rule") or "")
                 # 同一个 keyword-only 坑（见上面 _task_code_root 的注释）：
-                # 这里原来是 .fetchall()，抛 AttributeError 后被外层 except 吞掉，
+                # 这里原来是 .fetchall，抛 AttributeError 后被外层 except 吞掉，
                 # 于是 _suppressed 保持 1 —— 用例级否决（方案 2）**从未真正生效过**。
                 # 修好之后否决才真的会起作用，抑制数会下降，这是预期内的。
                 _peer = self.db.execute(
@@ -501,9 +488,8 @@ class IastService:
             logger.info(
                 "[trigger_spec] 安全实现抑制：family=%s endpoint=%s rule=%s",
                 payload.get("family", ""), payload.get("target_endpoint", ""), _suppress_rule)
-        # ── upsert（2026-10-24）：按 (task_id, vulnerability_hash_v2) 就地更新，不再「先删后建」──
         # 为什么改：闭环二次回灌原先 DELETE 整表再 INSERT，spec id 全变 ⇒ replay_attempts.spec_id
-        # 49% 变孤儿（458 实测 652/1339），verification_status 也被清空 ⇒ 必须整轮重放。
+        # 49% 变孤儿，verification_status 也被清空 ⇒ 必须整轮重放。
         # 现在的语义：
         #   * 已存在 → UPDATE 只改「触发相关 + 元数据」字段，**保留 id / verification_status /
         #     iast_state / business_logic_confirmed**（上轮结论不丢、attempt 归因不断）；
@@ -603,7 +589,6 @@ class IastService:
         """D1 运行时 bootstrap 出 victim 账户的已知属性后，把 username/email/user_id 回填进
         victim_identifiers，使差分重放的「泄露判定」可生效，并供报告/回归消费。best-effort。
 
-        R23 第一刀：victim_resource_id 一并回填（B 门禁落地——重放期必须把哨兵解析成真实对象 id，
         而非残留 VICTIM_FROM_POOL 字面量），使 data_leak 腿拿到真实 victim 资源 id。
         """
         try:
@@ -649,7 +634,6 @@ class IastService:
         if session_id is not None:
             clauses.append("session_id = ?")
             params.append(session_id)
-        # 2026-10-05（r58 整改方案 2 消费口同步）：前端列表与攻击计划投影都走这里，
         # 必须排除被 safe_verdict 判为安全实现的 spec，否则用户看到的仍是未过滤的 FP。
         clauses.append("COALESCE(suppressed_by_safe_verdict, 0) = 0")
         where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
@@ -671,7 +655,7 @@ class IastService:
 
     # ---------- 事件摄取（3.15） + item 4 吞吐优化（批处理写库 / 合流 / 去重批量化 / 背压 / 指标） ----------
     def ingest_events(self, app_name: str, agent_id: str, token: str, events: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """§3.15 探针批量事件摄取。
+        """ 探针批量事件摄取。
 
         item 4 吞吐优化：把「解析」与「落库」解耦，同一批事件合流为一次去重查询 + 一次
         executemany 单事务，事务数从「每条 1 个」降到「每批 1 个」（方向 1 / 3 / 4）。
@@ -690,10 +674,8 @@ class IastService:
         INGEST_METRICS.record_received(len(events))
 
         # 计时必须覆盖「解析 + 落库」全过程：解析阶段（任务归属查询）实测占端到端 98.7%，
-        # 只计刷盘会得到虚高的排空速率（曾显示 31070 条/秒，而基准实测仅 260~400 条/秒）。
-        # 2026-09-18（F2）：计时器从 time.time() 换为 time.perf_counter()。
-        # time.time() 在 Windows 上粒度约 15.6ms，小批次（数十条以内）会被整段测成 0.0ms，
-        # 使 last_drain_rate 报 0 → 运维误判「吞吐崩了」——正是 2026-09-15 修过的同类口径缺陷，
+        # 只计刷盘会得到虚高的排空速率。
+        # time.time 在 Windows 上粒度约 15.6ms，小批次（数十条以内）会被整段测成 0.0ms，
         # 只是换了个触发路径（连接复用后小批次的真实耗时首次落到了时钟粒度以下）。
         # perf_counter 是高分辨率单调时钟，不受系统时间回拨影响。
         _t0 = time.perf_counter()
@@ -768,11 +750,10 @@ class IastService:
         # canary 三态匹配
         canary_match = 0
         canary_state = ""
-        # 层2A（2026-08-30 评审）：探针在 sink 现场断言 canary_state（canary 抵达 sink → sink-reached）。
         # 优先信任探针断言：canary 走 X-SASTAI-Trace 头（方案B 双通道），不进 payload，后端
         # CanaryMatcher 子串匹配会因缺 metacharacter 而失准，故以探针断言为准；探针未断言时退回旧逻辑。
         incoming_canary_state = (ev.get("canaryState") or ev.get("canary_state") or "")
-        # §7.1 探针侧「本请求已观测到 canary」轻量事件：消解 no-arrival 歧义
+        #  探针侧「本请求已观测到 canary」轻量事件：消解 no-arrival 歧义
         # （探针确认 canary 抵达了请求边界但未达 sink = "arrived"，区别于 sink_call 的 sink-reached/arrival-sanitized）。
         if event_type == "canary_observed" and canary:
             canary_state = CanaryStates.ARRIVED
@@ -788,13 +769,12 @@ class IastService:
                 if state != CanaryStates.NO_ARRIVAL:
                     canary_match = 1
 
-        # §3.15 事件归属：探针上报只有 workspace/app/agent，没有 task_id；按 canary 身份段
-        # 反查 trigger_specs（A2 登记的 poc 假说）取得 task_id，使 I1/I2 能按 task 聚合。
+        #  事件归属：探针上报只有 workspace/app/agent，没有 task_id；按 canary 身份段
+        # 反查 trigger_specs取得 task_id，使 I1/I2 能按 task 聚合。
         # 若查不到（如人工流量/旧数据），task_id 保持 NULL，仍可按 workspace 级回退查询。
         event_task_id = self._resolve_event_task_id(workspace_id, canary, trace_id, event_time=ingested_at)
-        # §防御（2026-09-05 修复）：解析到的 task_id 必须在 scan_tasks 中存在，否则 FK 约束会让整条
         # INSERT 失败（HTTP 500），导致探针证据被静默丢弃、D1→IAST→D2 闭环断裂、D2 永远确认不出。
-        # task_id 按设计本就可空/best-effort（§3.15：查不到保持 NULL，按 workspace 级回退查询），
+        # task_id 按设计本就可空/best-effort，
         # 因此解析到无效/过期 task_id 时直接降级为 NULL，绝不因归属解析失误而丢证据。
         if event_task_id is not None:
             _trow = self.db.execute(
@@ -863,11 +843,9 @@ class IastService:
         dup_count = 0
         exempt_count = 0
         for rec in prepared:
-            # 2026-10-15 修复（值级证据被幂等去重挤掉，r94 实证）：
             # 去重键 (event_type, sink_file, sink_line, canary) 在 canary 为空时退化为常量。
             # 对「多个 servlet 共用同一 sink 名、sink_line 恒 0」的族（如 trustbound 的
             # HttpSession.setAttribute），漏洞 sink 事件会与框架样板写入同键，同一 10s 桶内
-            # 只放行首条 ⇒ 漏洞证据被样板事件挤掉。r94 实测：trustbound 漏洞 sink 已在探针侧
             # 命中并上报（payload 含 canary），库内该 canary 却零事件；后端 received=26651 而
             # written=4193，84% 被去重丢弃。
             # 故：payload（source_value）里含平台 canary 身份段的事件 = 最高价值的值级证据，
@@ -919,7 +897,7 @@ class IastService:
         return len(written_recs), failed
 
     def _apply_side_effects(self, session_id: int, workspace_id: int, recs: List[Dict[str, Any]]) -> None:
-        """§3.2/§3.3 实例合并 + §3.12 回填触发（均为 best-effort，不阻断摄取）。
+        """/ 实例合并 +  回填触发（均为 best-effort，不阻断摄取）。
 
         与原实现语义一致，仅把「逐事件的实例表查询 / 写」改为批量：一次 SELECT 拉回已存在的
         vhash，再批量 UPDATE / INSERT；回填触发改为一次 SELECT 取回本批各 canary 的最新事件 id。
@@ -977,7 +955,7 @@ class IastService:
                            VALUES (?, ?, ?, ?, ?, 'confirmed_runtime', 'iast', ?, ?)""",
                         ins_params,
                     )
-        # §3.12 回填触发点：落库后反查 provisional 事务，命中则触发重裁（best-effort，绝不阻断摄取）。
+        #  回填触发点：落库后反查 provisional 事务，命中则触发重裁（best-effort，绝不阻断摄取）。
         try:
             from src.iast.orchestrator import notify_backfill
 
@@ -1039,8 +1017,6 @@ class IastService:
            （iast_events.task_id=NULL 占比过高，I1/I2 按 task 聚合永远看不到数据）的问题。
            时间窗外的事件（早于任何 task 启动 / 落在窗间空隙）→ 不臆测，保持 NULL。
 
-        2026-09-18（F2 ①缓存）：本函数是 ingest 热路径上每事件都要走的解析步骤，且其查询随
-        trigger_specs / scan_tasks 表增长而变慢（2026-09-15 实测真实 GB 级库上端到端仅 78.7 条/秒，
         解析阶段占 98.7%）。缓存口径与退出条件：
           - 身份段 → task_id 缓存 60s：身份段含 run nonce、全局唯一，同一身份段在一次扫描内
             不会改属（闭环二次回灌即便 DELETE+INSERT，task_id 也不变）。命中即为权威归属。
@@ -1083,16 +1059,15 @@ class IastService:
         if not task_ids:
             # ③ 选项A：活跃扫描会话归属。多 task 共存且无 canary 身份段时，归属当前活跃扫描 task，
             # 避免窗口内无身份段事件（普通 SINK_HIT 实时流量常为空）被静默归 NULL（结构性丢数据）。
-            # 由 verify() 在 run_transaction 窗口起止处标记/清除 iast_sessions.current_task_id。
+            # 由 verify 在 run_transaction 窗口起止处标记/清除 iast_sessions.current_task_id。
             return snap["active"]
         if len(task_ids) == 1:
             # 单 task 回退：未携带 canary 的运行期 sink 事件归属该 task，
             # 使 I1 监听 / I2 裁决能按 task 聚合。
             return task_ids[0]
-        # 多 task 回退。r79 实证（丙 归属）：分片并行重放时，空 canary 的 collateral sink 事件
         # （XSS 的元字符 canary 被应用 HTML 编码后，探针记录的身份段恒为空）会被时间窗错归到
         # 后启动的 task（重叠窗取最晚启动），导致先启动的 task 事件归零。修复：空 canary 事件
-        # 优先归当前活跃重放 task（current_task_id，即 verify() 在重放窗标记的活动会话），它是
+        # 优先归当前活跃重放 task（current_task_id，即 verify 在重放窗标记的活动会话），它是
         # 此刻谁在重放最精确的信号；仅当无活跃会话时才退到时间窗。
         # 注意 find_identity 对无身份段输入返回 ""（空串）而非 None，故用 not ident 兼顾二者。
         if not ident and snap["active"] is not None:
@@ -1104,7 +1079,6 @@ class IastService:
                 candidates = []
                 for start, finish, tid in snap["windows"]:
                     # finished_at 为 NULL 表示仍在运行 → 窗延伸到当下；已结束 task 的窗向后延伸
-                    # _ATTR_GRACE_SECONDS，兜住 task 结束后探针批量 flush 的迟到事件（r79 实证：
                     # 312 的 late flush 曾归 NULL / 错归 313）。配合分片真串行排空，312 的迟到事件
                     # 落进 312 的延长窗 → 正确归 312，不被后启动的 task 抢。
                     end = (_now_ts if finish is None else finish + _ATTR_GRACE_SECONDS)
@@ -1202,7 +1176,7 @@ class IastService:
             "sessions": sess,
         }
 
-    # ---------- A0 环境识别（§3.14，职责②落地，确保 D1 可发 DAST） ----------
+    # ---------- A0 环境识别 ----------
     def check_environment_readiness(
         self,
         target_url: str,
@@ -1212,20 +1186,19 @@ class IastService:
         config: Any = None,
         http_probe: Any = None,
     ) -> Dict[str, Any]:
-        """按 §3.14 四步法确认目标可达 + 探针在线 + 绑定一致。
+        """按  四步法确认目标可达 + 探针在线 + 绑定一致。
 
         结论回写 iast_sessions.status（ready / unready），供预处理阶段与 D1 复探复用。
-        返回 EnvironmentReadiness.to_dict()。
+        返回 EnvironmentReadiness.to_dict。
         """
         from src.iast.env_readiness import check_environment_readiness, wake_probe
 
         readiness = check_environment_readiness(
             self.db, target_url, app_name, agent_id, config=config, http_probe=http_probe
         )
-        # 2026-10-30（本轮/555 实证）：后端繁忙时探针心跳/事件上报会排队超时，
         # 探针静默但进程活着 ⇒ 判活失败。此处主动探活一次再判，避免：
         #   - A0 门禁把整轮扫描挡死；
-        #   - D2 每事务复探判 not ready ⇒ 该批 spec 全落 invalidated（实测 63 条）。
+        #   - D2 每事务复探判 not ready ⇒ 该批 spec 全落 invalidated。
         # 判据本身不放松：敲完门仍不 ready 就照原样返回 not ready。
         if not readiness.is_ready():
             try:
@@ -1261,9 +1234,9 @@ class IastService:
         agent_id: Optional[str] = None,
         trace_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """供编排器按 canary 精确轮询 IAST 事件窗口（§3.12）。返回 id + canary_state。
+        """供编排器按 canary 精确轮询 IAST 事件窗口。返回 id + canary_state。
 
-        §4.2 事件隔离：可选 app_name / agent_id / trace_id 形参，提供时 AND 进 WHERE，
+         事件隔离：可选 app_name / agent_id / trace_id 形参，提供时 AND 进 WHERE，
         强制 agentId / appName / traceId 关联，避免共用同一运行实例的多次扫描事件混流与状态污染
         （一次扫描的数据污染另一次）。不提供则退化为纯 canary 匹配（向后兼容）。
         """
@@ -1416,7 +1389,6 @@ class IastService:
             return {"error": "task_id required"}
         import json as _json
         # 放宽查询：不再硬过滤 canary IS NOT NULL。
-        # 注入型 SINK_HIT 事件在探针 MONITOR 自主污点追踪下绝大多数 canary 恒空（run 15 实测 148 条里 143 条
         # canary 为空），但 sink_file（JDK 类方法签名，如 java.lang.ProcessBuilder.start）稳定存在，是可靠的
         # 家族级归因信号。多取 sink_file/sink_method/sink_line/vuln_type 供 Phase B 使用。
         rows = self.db.execute(

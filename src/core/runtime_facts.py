@@ -1,4 +1,4 @@
-"""运行时事实接入（2026-10-02 发难清单 Q1 落地）。
+"""运行时事实接入。
 
 把目标 JDK 版本作为一等的约束事实拿到手，使「CC 链挂 JDK 版本」「JNDI
 trustURLCodebase 默认关」从猜版本区间变成拿实际运行时比。事实来源（按优先级）：
@@ -101,7 +101,6 @@ def jdk_in_range(version: str, rng: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 环境事实扩展（2026-10-03 Part2 M2）：jdk 之外再采五项 —— db_type / db_version /
 # mw_type / mw_version / egress。
 #
 # 取值路径决策：**选甲，不动探针**。中间件/数据库/出网都不是探针能上报的东西
@@ -178,9 +177,6 @@ def _env_fact(name: str) -> str:
 def _iter_files(root: Path, names, suffixes, max_files: int = 400):
     """在项目根下找指定文件名/后缀的文件（跳过 target/build/node_modules 等产物目录）。
 
-    2026-11-04：`.codeql-db` 的排除改为**前缀匹配**（`.codeql-db*`）——
-    jsc 源码根下曾残留 5 个半成品库（`.codeql-db.partial2..5`），精确匹配排不掉，
-    它们会被当源码扫进来（jsc 619 实测：CodeQL 复制时路径爆 MAX_PATH(260)）。
     """
     skip = {"target", "build", "node_modules", ".git", "dist", "out", "bin"}
     found = []
@@ -367,7 +363,6 @@ def detect_database(target_path) -> Tuple[str, str, str]:
 # 读出外部实体，**不看目标里有没有 XXE.java，看的是解析器怎么配的**。同一份
 # 源码在这台机器读到 /etc/passwd、在另一台机器被 `disallow-doctype-decl` 直接
 # 掐死，差别全在 setFeature 那几行 —— 而这恰恰是全项目之前**一处都没采**的事实
-# （2026-10-03 全项目 grep setFeature / external-general-entities 零命中）。
 #
 # 取法：**只读源码里的解析器配置调用**，不做任何行为猜测：
 #   1. setFeature(<name>, <true|false>)  —— 主信号，覆盖 disallow-doctype-decl /
@@ -411,8 +406,6 @@ _XML_FACT_VALUE_PAIR = {
 
 # 事实的「安全取值」：一个 XML 解析站点显式设成它，该站点对这条事实就收口了。
 #
-# 判据粒度是**站点级**，不是全库取一个值 —— 真实靶场逼出来的（2026-10-03）：
-# java-sec-code 的 XXE.java 里，有的端点老老实实
 # setFeature(disallow-doctype-decl,true) + external-general-entities,false，
 # 有的端点只 setXIncludeAware(true) 什么都没关。全库取一个值（哪怕「冲突取不安全」）
 # 也只会因为「所有显式配置都关着」得出 disabled，把后面那些端点洗出 L_exploit ——
@@ -524,7 +517,7 @@ def _split_call_args(body: str) -> List[str]:
 def _find_calls(text: str, name: str):
     """遍历文本里所有 ``name(...)`` 调用，逐个 yield 其括号**内部**文本。"""
     for m in re.finditer(re.escape(name) + r"\s*\(", str(text or "")):
-        # 正则已经吃掉了开括号，故这里从 depth=1 起算；m.end() 指向体内第一字符，
+        # 正则已经吃掉了开括号，故这里从 depth=1 起算；m.end 指向体内第一字符，
         # 截出来的体不能多吃一个字符。
         depth = 1
         in_str = False

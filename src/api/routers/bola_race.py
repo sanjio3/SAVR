@@ -1,4 +1,4 @@
-"""BOLA / RACE 路由（§2.2 / §7.9：SAST 策略分析 + D1 多身份/并发重放验证）。
+"""BOLA / RACE 路由。
 
 端点：
 - POST /api/bola-race/status        能力状态（取代占位）

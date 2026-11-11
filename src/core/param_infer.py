@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""请求参数名推断（2026-11-01，阶段 2）。
+"""请求参数名推断。
 
 ## 为什么需要
 
@@ -86,7 +86,6 @@ def rel_path(p: Any, code_root: Optional[str] = None) -> str:
 
     为什么必须统一：`trigger_specs.expected_sink_file` 实测有**三种写法**同时存在
     ：
-      - 绝对 Windows 路径 `D:\\...\\java-sec-code\\src\\main\\...\\Cors.java`
       - 相对正斜杠 `src/main/java/org/joychou/util/HttpUtils.java`
       - 相对反斜杠 `src\\main\\java\\org\\joychou\\controller\\CSRF.java`
     而 `code_index.json` 里的 key 又是另一种大小写（`SSRF.java` vs DB 的 `Ssrf.java`）。
@@ -164,7 +163,7 @@ def _enclosing_signature(code: str, line: int) -> Tuple[str, str]:
         sig = next_sig
     if not sig:
         return "", ""
-    # 括号配平：形参里可能嵌注解的 ()，不能见 ')' 就收工
+    # 括号配平：形参里可能嵌注解的 ，不能见 ')' 就收工
     depth = 0
     end = -1
     for i, ch in enumerate(sig):
@@ -344,7 +343,6 @@ def infer_for_spec(code_root: Optional[str], code_index: Dict[str, Any],
 
     norm = rel_path(sink_file, code_root)
     # 找 **包含** sink 行的方法（行号 ≤ sink_line 里最大的那个），不是「行号相等」。
-    # 2026-11-02 实杀：这里原本写的是 `int(meta["line"]) == int(sink_line)`，
     # 而 sink 是方法体里的语句，行号几乎永远不等于方法声明行 ⇒ 这条通道恒不命中，
     # 全部掉进 backtrace；backtrace 对一个「自己就是入口」的方法只能返回
     # `no_http_entry_caller`（它没有 caller）。实测 35 条 param 空里 30 条卡在这。
@@ -370,7 +368,6 @@ def infer_for_spec(code_root: Optional[str], code_index: Dict[str, Any],
     return backtrace_param(code_root, code_index, sink_file, sink_line)
 
 
-# ── 类型驱动的请求形态（2026-11-02）──────────────────────────────────────────
 #
 # 为什么要它：`content_type` 现在由 A2 按 **payload_family（族字符串）** 推断
 # （a2_contract_planner.py:931）。族一错，编码方式就跟着错 —— 实测 `/file/upload`

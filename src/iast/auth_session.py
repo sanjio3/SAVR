@@ -1,11 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""鉴权态会话：登录 → 缓存 → 注入重放（2026-10-31，若依 P3）。
+"""鉴权态会话：登录 → 缓存 → 注入重放。
 
 ## 为什么需要
 
-D1 重放此前**不带任何凭据**。对 OWASP / java-sec-code 这类无鉴权靶场无所谓，
-但 RuoYi 是全站 Shiro 拦截：不带凭据的请求全部 302 到 /login，
 「动态确认」会接近 0 —— 这不是判据不好，是**请求根本没到达业务代码**。
 
 ## 设计约束
@@ -14,7 +12,6 @@ D1 重放此前**不带任何凭据**。对 OWASP / java-sec-code 这类无鉴�
 2. **不猜成功**：登录是否成功只看两件事——响应体里的成功标记，或「受保护端点从 302 变 200」。
    后者更可靠（不同框架的成功标记五花八门）。
 3. **cookie 值必须编码**：含空格/引号/分号的 cookie 值会被 Tomcat **整条丢弃**
-   （java-sec-code 踩过，见 ``response_oracle.encode_cookie_value``）。
 4. **失败不阻断**：拿不到会话就返回空 cookie，由调用方退回无凭据重放，绝不抛异常中断扫描。
 
 ## 与探针无关
@@ -77,8 +74,7 @@ def _http(opener, url: str, data: Optional[bytes] = None,
         with opener.open(req, timeout=timeout) as r:
             body = r.read().decode("utf-8", "replace")
             hdrs = {k.lower(): v for k, v in r.headers.items()}
-            # 关键：urllib 的 items() 会把多条 Set-Cookie **合并成一条**，
-            # 且保留的是最后一条——RuoYi 登录会同时下发 JSESSIONID 和 rememberMe=deleteMe，
+            # 关键：urllib 的 items 会把多条 Set-Cookie **合并成一条**，
             # 合并后只剩 deleteMe，会话直接丢。必须用 get_all 逐条取。
             try:
                 hdrs["__set_cookie__"] = list(r.headers.get_all("Set-Cookie") or [])
@@ -176,12 +172,11 @@ class AuthSession:
         self.password = password
         self.login_path = login_path or "/login"
         # 路径归一：Git Bash 会把 `--probe /index` 这类参数按 MSYS 规则改写成
-        # ` <盘符>:/.../PortableGit/index`（实测过），所以既补前导 "/"，也识别被改写的形态。
+        # ` <盘符>:/.../PortableGit/index`，所以既补前导 "/"，也识别被改写的形态。
         self.probe_path = _norm_probe_path(probe_path)
         self.extra_params = dict(extra_params or {})
         # 成功标记必须容错：同一框架不同版本返回 `{"code":0}` / `{"code":"0"}` /
         # `{"code": "0", "message":"Login success"}` 三种都见过。原先只认 `"code":0`
-        # ⇒ java-sec-code 明明登录成功（Set-Cookie 里 JSESSIONID 已下发）却被判失败，
         # 表现为 `has_cookie=false`，D1 全程无凭据重放。
         self.success_markers = list(success_markers or [
             '"code":0', '"code":"0"', '"success":true', '"success": true',
@@ -250,7 +245,6 @@ class AuthSession:
                     ok_by_body = True
                     break
         # 有 probe_path 时以「受保护端点是否 200」为准——比成功标记可靠，
-        # 因为不同框架的成功响应格式完全不一样（RuoYi 是 {"code":0}，别的可能是 302 跳首页）。
         ok_by_probe = None
         if self.probe_path and cookie:
             ok_by_probe = self._probe(cookie)
@@ -361,7 +355,6 @@ def get_manager(settings: Optional[Dict]) -> "AuthSessionManager":
     """按配置内容取**进程级单例** manager。
 
     为什么必须缓存：``_fallback_auth_cookies`` 在 D1 的 per-spec 路径里被调用，
-    每次 new 一个 manager 就等于「每条 spec 登录一次」——RuoYi 这类有在线会话管理的
     目标会被反复踢下线，而且登录请求本身会把扫描拖慢一个量级。
     用配置内容做 key，配置变了自然换新实例。
     """
@@ -382,12 +375,10 @@ def settings_from_workspace(ws_settings: Optional[Dict]) -> Dict:
 
     支持三种写法（历史原因，三套并存）：
 
-    1. ``{"auth": {username, password, login_path, ...}}`` —— 新写法（若依用这个）；
     2. 字段直接平铺在 settings 顶层；
     3. ``{"login": {"url":..., "credentials":[{role,username,password}], "csrf":{...}}}``
-       —— 早期注册器产出的富结构（java-sec-code 用这个）。
 
-    **第 3 种以前完全没被解析**：`enabled()` 只看顶层的 `username`/`password`，
+    **第 3 种以前完全没被解析**：`enabled` 只看顶层的 `username`/`password`，
     富结构里没有这两个键 ⇒ 返回空 ⇒ D1 全程**不带凭据**重放。实测 592 里
     43/496 条响应是登录页，就是被这一条挡在业务代码外面的。
     """

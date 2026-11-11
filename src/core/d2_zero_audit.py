@@ -105,7 +105,6 @@ def audit_d2_zero_finding(vuln: Dict[str, Any]) -> Dict[str, Any]:
             ],
         }
 
-    # §③ 显式未验证原因优先（2026-09-22，闭环 D2_NOT_SCHEDULED）：report_manager 现会为
     # 未获 D2 验证的 finding 写入明确的 verification_decision（not_scheduled / no_verification_record
     # + scheduling_reason + final_state），不再留空。审计直接采信该显式原因，不再靠
     # 「无 decision 且无 evidence」反推「疑似未入队」。
@@ -126,12 +125,10 @@ def audit_d2_zero_finding(vuln: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     # 「D2 有没有跑过」与「跑了但证据没落库」是两种完全不同的故障，处置动作也不同，
-    # 不该共用同一个兜底分类（2026-09-22 拆分）。
     # 判据：A2.1 已把契约编好（proof_tier=chain_proven 且 contract ready、无 contract_gaps）、
     # 运行时也不是 generic_fallback、更没有 step_errors —— 却**连一条执行痕迹都没有**
     # （decision 为空、evidence 里没有 requests_made / side_effects_observed / matched_outcomes）。
     # 这说明该链路**根本没被排进 D2 执行队列**，而不是「执行了但结构化证据缺失」。
-    # run 31 实测该类 14 条（顶层的 76.6% 是 A2_PROOF_FAILURE）即此形态。
     if not decision and not evidence:
         return {
             "category": "D2_NOT_SCHEDULED",

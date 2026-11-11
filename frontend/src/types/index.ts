@@ -79,7 +79,6 @@ export interface PipelineStage {
   metrics: Record<string, unknown>;
   started_at?: string;
   finished_at?: string;
-  // 2026-09-17（待请示批准）：阶段 -> 具体任务清单，替代空壳阶段卡片。
   // items 是后端裁剪后的代表性任务（每阶段至多 8 条，pipeline 每秒随进度事件推送，
   // 全量回传会把事件体积重新撑大），total 是该阶段真实任务总数。
   tasks?: {
@@ -171,7 +170,6 @@ export interface Finding {
   title: string;
   raw: FindingRaw;
   created_at: string;
-  // item 3（2026-09-15）：SCA 命名空间从 finding_type 剥离后新增的两列。
   // 迁移前的历史行这两列为空串，故设为可选，前端展示时回退 raw.sca.*。
   sca_component?: string;
   sca_advisory_id?: string;

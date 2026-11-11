@@ -18,16 +18,12 @@ from .prompt_render import render_prompt
 logger = logging.getLogger(__name__)
 
 # LLM 读超时（秒）。
-# 2026-09-14 曾下调为 60s，前提是「已切到更快的 agnes-3.0-flash」。该前提经实测不成立：
 # src/config/base.yaml 的 api.provider 实际是 qwen、model ark-code-latest，运行期
 # FallbackLLMClient 走的是 anthropic-compatible（open.bigmodel.cn，GLM-4-Flash，约 14 token/s），
-# task-8 实测 65 次调用全部 Read timed out（read timeout=60），每次 3 次重试后回退规则式，
 # 把 A2 拖到 30+ 分钟、D1 卡在契约生成。故恢复 180s：GLM 单份契约需 60-120s。
 # 前提变化（真正切到 agnes 或同速 provider）后再下调；可用环境变量 SAST_AI_LLM_TIMEOUT 覆盖。
 LLM_READ_TIMEOUT = int(os.environ.get("SAST_AI_LLM_TIMEOUT", "300") or "300")
 
-# ---- C2 流式（SSE）调用层（2026-09-19 落地）----------------------------------------
-# 背景（run 19 实测故障链）：agnes 429 -> 冷却回落 GLM -> GLM 慢生成超过整体读超时 ->
 # requests 抛 ReadTimeout -> FallbackLLMClient 判定失败 -> fail-open 回退单次 completion。
 # 流式把「读超时」语义从「整个响应体在 N 秒内到齐」改成「相邻 chunk 之间 idle 上限」：
 # 只要 provider 持续吐 chunk（GLM 约 14 token/s，间隔远小于 90s），就永不触发整体超时。
@@ -36,7 +32,6 @@ LLM_READ_TIMEOUT = int(os.environ.get("SAST_AI_LLM_TIMEOUT", "300") or "300")
 # 切异步要把全部 provider 客户端换成 httpx/aiohttp 并改写三层签名，收益不抵风险
 # （详见 C2 文档第四节）。
 #
-# 2026-09-19 更正：上一版注释称「并发已由 ModelGateway.complete_batch 的线程池满足」，
 # 这是错的——complete_batch（core/model_gateway.py:241）全项目零调用点，真正的并发
 # 来源是各 stage 各自的线程池/信号量。由此暴露一个架构缺口：不存在跨 stage 的全局
 # LLM 并发闸门，各 stage 各限各的，瞬时并发会是各 stage 之和。接本地 Ollama
@@ -272,7 +267,7 @@ def _prepare_stream_payload(flavor: str, payload: Dict[str, Any]) -> Dict[str, A
 
 
 def _trim_messages_to_budget(payload: Dict[str, Any], budget: int) -> Dict[str, Any]:
-    """上下文裁剪（opt-in，2026-09-22）：估算 messages 总 token，超出 budget 时优先截断
+    """上下文裁剪：估算 messages 总 token，超出 budget 时优先截断
     最长、非 system 的消息体（保住 system 与首条消息骨架），直到回到预算内或无可裁。
 
     - 估算用字符数 // 4（粗略、不引入 tiktoken 重依赖）；偏差只在观测侧，不影响「是否裁剪」正确性。
@@ -388,7 +383,6 @@ def _read_sse_stream(response, flavor: str) -> tuple:
         "chunk_count": chunk_count,
         "streamed": True,
         "elapsed_ms": int((time.perf_counter() - started) * 1000),
-        # 2026-09-19（P0-2）：停止原因透传。"length" 表示被 max_tokens 腰斩，
         # 上层据此走「修复 / 抢救」而不是当成空结论。
         "finish_reason": finish_reason,
         # 备用文本流（推理模型思维链）；调用方取用后应 pop，避免大文本进埋点/元数据。
@@ -417,7 +411,6 @@ def request_chat_completion(
 
     所有 provider 客户端共用此入口，保证超时语义与埋点口径一致。
 
-    2026-09-19 起这一层额外承担三件事（都在调用方无感的前提下）：
 
     - 全局并发闸门（P0-1）：无论哪个 stage 发起，都在这里取票，瞬时并发不再叠加；
     - prompt→response 缓存（P0-3）：指纹命中直接返回，反复调试不再重复烧算力；
@@ -459,7 +452,6 @@ def request_chat_completion(
     if force_stream is not None:
         use_stream = bool(force_stream)
 
-    # ---- 上下文裁剪（opt-in，2026-09-22）：SAST_AI_MAX_INPUT_TOKENS>0 时，超出预算则截断
     # 最长非系统消息，保住 system + 首条消息（通常是任务上下文骨架）。默认 0 = 关闭，
     # 不裁剪、不改写任何提示词，扫描行为完全不变。命中后只在 telemetry 打 trimmed 标记，便于观测。 ----
     max_input_tokens = int(os.environ.get("SAST_AI_MAX_INPUT_TOKENS", "0") or 0)
@@ -550,7 +542,6 @@ def request_chat_completion(
             telemetry["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
             telemetry["finish_reason"] = _extract_finish_reason(result, flavor)
             telemetry["prompt_hash"] = cache_key
-            # 2026-09-19：非流式路径此前从不写缓存，导致被强制关流式的 provider（Ollama 原生）
             # 永远享受不到 P0-3 缓存。这里补写；text 仍按原契约返回空串，调用方零改动。
             _store_cache(cache_key, _extract_text(result, flavor), provider, model_name, telemetry)
             return result, "", telemetry
@@ -813,16 +804,14 @@ def _record_model_run(
     stage: str = "",
     prompt_hash: str = "",
 ) -> None:
-    """P2-1（2026-09-13）：A2 直接持有的 LLM 客户端调用出口埋点，写 model_runs 台账。
+    """P2-1：A2 直接持有的 LLM 客户端调用出口埋点，写 model_runs 台账。
 
-    事故背景：A2SemanticAgent 直接持 FallbackLLMClient 不经 ModelGateway，而 model_runs
     只由 ModelGateway 调用方写入，A2 全部 LLM 调用（含 glm-4-flash 4 条 120s 读超时被
     logger.error 吞掉）对 DB 完全不可见。此处复用 ModelRunRepository.record 补埋点，
     成功与失败都记，provider/base_url 放 metadata。fail-open：写失败仅 debug，不影响主流程。
     """
-    # 2026-09-20：显式关闭开关。根因——单元测试用假客户端（_FakeClient）构造真实
     # FallbackLLMClient 并调 create_message 时，会往生产库 data/app.db 的 model_runs
-    # 写入 provider=deepseek/glm 的假行（实测 5 条，task_id=NULL）。这些行虽无网络调用、
+    # 写入 provider=deepseek/glm 的假行。这些行虽无网络调用、
     # 无费用，但会破坏「id 水位线判是否有云端混入」的口径。测试置 1 即完全静音。
     if os.environ.get("SAST_AI_DISABLE_MODEL_RUN_LOG", "").strip() not in ("", "0", "false", "False"):
         return
@@ -867,7 +856,6 @@ class FallbackLLMClient:
         self.clients = list(clients)
         self.provider_names = list(provider_names or ["unknown"] * len(self.clients))
         self._cooldown = float(cooldown)
-        # P1-8（2026-09-19）：重试上限按模型画像收窄（弱模型 max_attempts=1），
         # 消除「每 provider 重试 3 次 × N provider」的 6 倍物理请求放大。None 时回落 3。
         self._max_attempts = max_attempts
         self._unhealthy_until = {}
@@ -901,8 +889,6 @@ class FallbackLLMClient:
             until = self._unhealthy_until.get(name, 0.0)
             if until and now < until:
                 continue  # 已知额度/鉴权不可用，冷却期跳过，避免浪费请求
-            # P2-1（2026-09-13）：读超时属瞬时网络故障，同 provider 重试再降级——
-            # R38 验收轮实测：成功调用延迟 15-50s，60s 上限盖不住尾部（63/406 超时，attempt1/2 均有）。
             # 修复：timeout 60→90s（5 处 client），重试 2→3 次，重试间退避避开瞬时拥堵。
             _input_chars = len(str(system or ""))
             if isinstance(messages, list):
@@ -958,9 +944,7 @@ class FallbackLLMClient:
                             "chunk_count": _telemetry.get("chunk_count", 0),
                             "streamed": bool(_telemetry.get("streamed", False)),
                             "prompt_version": self.prompt_version or getattr(client, "prompt_version", "") or "",
-                            # 2026-09-28：缓存命中此前只活在进程内 telemetry 里，model_runs
                             # 落库时丢掉，于是「LLM 变慢了」只能靠延迟分位数反推
-                            # （run 24 平均 6.81s vs run 231.54s，实为命中率 62% vs 92%，
                             # 而非 GPU/推理退化）。显式落库后命中率可直接查，不必再猜。
                             "cached": bool(_telemetry.get("cached", False)),
                         },
@@ -1257,9 +1241,8 @@ class DeepseekClient:
     _PROVIDER_NAME = "deepseek"
     """Deepseek (OpenAI 兼容) 客户端。
 
-    用于 maorongheai.site 等 OpenAI 兼容网关。实测：该网关 Cloudflare WAF 会拦截
-    Python-urllib 默认 UA（HTTP 403 error code 1010），但对 requests 默认 UA 及浏览器
-    UA 放行，故此处强制带浏览器 UA 提升鲁棒性。模型为推理型（响应含 reasoning_content），
+    用于 OpenAI 兼容网关。部分网关的 WAF 会拦截 Python-urllib 默认 UA（HTTP 403），
+    但对 requests 默认 UA 及浏览器 UA 放行，故此处强制带浏览器 UA 提升鲁棒性。模型为推理型（响应含 reasoning_content），
     若最终 content 为空则兜底取 reasoning_content，避免 A2 解析到空串导致 0 产出。
     """
 
@@ -1362,7 +1345,6 @@ def _ollama_usage(result: Any) -> Dict[str, int]:
 class OllamaNativeClient:
     """Ollama 原生 ``/api/chat`` 客户端 —— 唯一能让 qwen3 家族稳定吐出正文的调用方式。
 
-    为什么不用 ``/v1/chat/completions``（2026-09-19 本机实测，Ollama 0.34.1 + qwen3:8b，num_ctx 8192）：
     Qwen3 是思考型模型，Ollama 的 OpenAI 兼容层**不认** think:false——请求体里的 think 被忽略、
     Modelfile 的 ``PARAMETER think false`` 直接报 unknown parameter、``chat_template_kwargs.thinking``
     同样无效。于是思维链与正文争抢同一个输出预算，实测同一提示词：
@@ -1383,7 +1365,6 @@ class OllamaNativeClient:
     - ``stream: false``：原生流式是 NDJSON（每行一个 JSON、无 ``data:`` 前缀），与项目的
       ``_read_sse_stream`` 不兼容；文档实测单条约 3.5s，也没有流式的必要。
 
-    think 取值的实测依据（2026-09-19，4 个真实漏洞样本 × 同一 audit_file 提示词，
     每个样本都刻意混了「漏洞方法 + 白名单校验的安全方法」，所以误报可测）：
 
         think=false np=1024 : 命中 4/4，漏报 0，总耗时 31.7s， 总输出 790 token
@@ -1392,7 +1373,7 @@ class OllamaNativeClient:
 
     think=true 组的 1024/3072 两组其实被画像钳制成同一档（输出上限 1024），所以 0/4 与 3/4 的
     差异来自逐次波动的思考长度：思考在 818~1024 token 之间浮动，一旦超过预算就出现
-    content 长度为 0（SSRF 那次就是全空），答案直接丢失。放开预算后（单文件实测）：
+    content 长度为 0（SSRF 那次就是全空），答案直接丢失。放开预算后：
     SQL 文件 28.9s / eval=730、XSS 文件 52.0s / eval=1278，约 25 tok/s —— 比 think=false
     慢 4.5~5.3 倍。按全量 1232 次调用、并发 2 估算：think=false 约 1.9h，think=true 约 6.8h。
 
@@ -1415,7 +1396,6 @@ class OllamaNativeClient:
             base = base[:-3].rstrip("/")
         self.base_url = base
         self.num_ctx = int(num_ctx) if num_ctx else None
-        # 2026-10-26：**不能留空**。本机 Ollama 服务端默认 keep_alive=Forever，
         # 空串会让客户端不发该字段 ⇒ 服务端按 Forever 处理 ⇒ qwen3:8b（7.6GB）永久驻留，
         # 下一次 CodeQL 直接 OOM。实测 /api/ps 的 expires_at 会显示到 2319 年。
         # 默认给 2m（与 config.yaml llm.keep_alive 一致），可用环境变量覆盖。
@@ -1486,7 +1466,6 @@ class OllamaNativeClient:
             if not content:
                 # think 被开启（或被服务端强制）时，正文可能被预算耗尽而落空，此时取思维链兜底。
                 # 注意字段名：原生端点用 `thinking`，OpenAI 兼容层用 `reasoning`——两者都要认，
-                # 只读 `reasoning` 在原生端点上恒为空（2026-09-19 实测踩到）。
                 content = str(message.get("thinking") or message.get("reasoning") or "").strip()
             return content
         return reasoning.strip()
@@ -1516,7 +1495,6 @@ class A2AIAgent:
     def _init_client(self):
         primary = config.get('api.provider', self.provider or 'deepseek')
         # 顺序降级链：主用 provider 先用；耗尽/失败自动切兜底（默认智谱 GLM，anthropic-compatible）。
-        # 2026-09-19：兜底改为可配置。接本地 Ollama 时把 api.fallback_provider 置空串，
         # 否则本地模型一失败就会静默把源码发到云端——这在「本地跑」的语义下是不可接受的。
         fallback = config.get('api.fallback_provider', 'anthropic-compatible')
         fallback = (fallback or '').strip()
@@ -1548,10 +1526,9 @@ class A2AIAgent:
         logger.info("[A2AIAgent] LLM 顺序降级链（主用先用，失败自动切兜底）：%s（重试上限=%s）", " -> ".join(names), _max_attempts)
 
     def _load_prompts(self):
-        """加载提示词文件（§4.1，2026-09-19：优先走 PromptRegistry 统一清单）"""
+        """加载提示词文件"""
         try:
             from src.core.prompt_registry import load_prompts_dict
-            # §4.1 修复（2026-09-20）：prompt_version 真正驱动模板选择（未命中按 default 分级回退）。
             # 此前不传版本 → 只写 metadata、从不影响选中的模板正文。
             merged = load_prompts_dict(version=(getattr(self, "prompt_version", "") or None)) or {}
             if merged.get("audit_file"):
@@ -1595,7 +1572,6 @@ class A2AIAgent:
     def _parse_response(self, response: str, finish_reason: str = "") -> List[Vulnerability]:
         """把 LLM 输出解析成漏洞列表——绝不静默返回空。
 
-        2026-09-19（P0-2）重写：原实现用「括号配平 + 末尾截断」的写法，
         ① 不感知字符串内的括号（模型塞进 JSON 的代码片段里若有 `{` 会配平失败），
         ② 输出被 max_tokens 截断时一律 json.loads 抛错 -> 一行 logger.error 后 return []，
            结果是「模型扫出了漏洞，平台拿到 0 条」且没有可观测信号。
@@ -1681,7 +1657,7 @@ class A2AIAgent:
 
         try:
             # 构建提示词
-            # §R4回归修复：同 a2_intelligent_agent，禁止裸用 str.format()。
+            # §R4回归修复：同 a2_intelligent_agent，禁止裸用 str.format。
             template = self.prompts.get('audit_file', '')
             skill_hints = ""
             try:
@@ -1691,7 +1667,6 @@ class A2AIAgent:
                 skill_hints = ""
 
             # 截断过长的代码——跟随模型能力画像，不再写死 500 行。
-            # 2026-09-19（P1-6 修正）：原实现把画像的 token 预算乘 4 当字符预算，暗含
             # 「4 字符/token」的假设。对 qwen3:8b 实测本项目的真实提示词（中文指令 + 代码）
             # 只有 2.34~2.38 字符/token、纯中文低到 1.67，于是 8192 上下文的输入预算
             # 被高估约 1.7 倍：27.6k 字符实为约 11.6k token，超出 8192 后 Ollama 会

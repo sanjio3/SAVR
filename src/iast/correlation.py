@@ -1,14 +1,14 @@
-"""关联聚合服务（重构文档 §3.3 核心粘合层 + §4.5 报告，方向A：查询层 join，不改表）。
+"""关联聚合服务。
 
 跨源关联主键 = vulnerability_hash_v2（复用 core/vuln_hash.py）：SAST finding 与 IAST
 观测通过同一条 TriggerSpec 关联——trigger_specs.vulnerability_hash_v2 即 SAST finding
 的哈希，其 taint_marker 即 canary，iast_events.canary 命中该 canary 即该 finding 的运行时观测。
 
-§7.11 重定义：SAST 是唯一漏洞发现者（finding / vuln 实例之根），I1/D1/D2 只提供观测与校验证据。
+ 重定义：SAST 是唯一漏洞发现者（finding / vuln 实例之根），I1/D1/D2 只提供观测与校验证据。
 故本服务以 findings 为根、在查询层 join IAST 证据，产出统一 Finding（sources 多源视图 + confirmed_runtime），
 不写 vulnerability_instances、不建新表。
 
-产出三块统计（§4.5）：覆盖率（iast_observed / total_hypotheses）、confirmed_runtime 占比、
+产出三块统计：覆盖率（iast_observed / total_hypotheses）、confirmed_runtime 占比、
 按资产（appName）分布。
 """
 import os
@@ -72,7 +72,6 @@ class IastCorrelationService:
 
         ev_by_canary: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for e in events:
-            # §2026-09-21：探针自写日志噪声（source_value 含 sec-agent.log）不参与关联——
             # 它共享请求上下文的 canary，却与应用真实漏洞无关，会错误背书 confirmed_runtime。
             if _is_probe_self_noise(e):
                 continue
@@ -144,7 +143,7 @@ class IastCorrelationService:
                 sink_line = int(display.get("sink_line") or 0)
                 last_seen = display.get("ingested_at") or ""
                 trace_id = display.get("trace_id") or ""
-                # §7.1 事件流：标记 canary_observed 轻量事件（消解 no-arrival 歧义，前端事件流可见）
+                #  事件流：标记 canary_observed 轻量事件（消解 no-arrival 歧义，前端事件流可见）
                 event_types = sorted({str(e.get("event_type") or "sink_call") for e in evs})
                 canary_observed = "canary_observed" in event_types
 

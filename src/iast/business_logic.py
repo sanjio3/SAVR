@@ -1,4 +1,4 @@
-"""业务逻辑漏洞 全类目编排（重构文档 §2.2 / §7.9 / §8.1）。
+"""业务逻辑漏洞 全类目编排。
 
 此前 bola_race 仅落地 BOLA/RACE 两类；现已扩充为九大类全覆盖（依据 many_md/业务逻辑漏洞.MD）：
 - bola            水平越权（IDOR）—— 已由 a1_bola_analyzer 覆盖
@@ -25,7 +25,6 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-# R26：restore_after 的进程内串行锁。D2 阶段是线程池并发（benchmark_cli 的 _D2_MAX_WORKERS），
 # 若两条 spec 同时验证同一个用户，后取的快照可能已是「被前一条改过」的脏基线，
 # 回滚就会把脏状态写回并固化 —— 比不验证更糟。故可回滚验证整段串行执行。
 _RESTORE_LOCK = threading.Lock()
@@ -134,10 +133,9 @@ def verify(category: str, trigger_spec: Dict[str, Any], target: Dict[str, Any],
 
     db（Database）可选但**必须传**：不传时 D1Service 会退化为临时库（D1Service.__init__
     的 tempfile 兜底），导致 replay_* 内的回填（victim_identifiers / accounts_json）写进
-    临时库、永不落 data/app.db —— 生产端表现为 victim_identifiers 两轮全空（§6.13 根因二）。
+    临时库、永不落 data/app.db —— 生产端表现为 victim_identifiers 两轮全空。
     调用方（d2_facade._verify_business_logic / D1Service._replay_business_logic）均应传真实 db。
     """
-    # R24-D 破坏性操作闸门（单一真相源 src/iast/attack_context.py）：所有业务族在这里统一归一，
     # 避免每个 replay_* 各自漏判。absent_id = 资源 id 换哨兵后照常投放（零持久化变更）；
     # skip = 凭据/金额/批量赋值类无法中和 → 整条不执行，如实标 skipped，绝不伪造证据。
     from src.iast.attack_context import neutralize_destructive_spec
@@ -152,7 +150,6 @@ def verify(category: str, trigger_spec: Dict[str, Any], target: Dict[str, Any],
 
     svc = D1Service(db=db, gateway=gateway)
     cat = (category or "").lower()
-    # R23 A6：回调签名伪造端点无论归类（auth_session/state_machine）都走专用差分
     _ep = str((trigger_spec or {}).get("target_endpoint") or "").lower()
     def _finish(res: Any) -> Any:
         """把破坏性闸门记录挂在结果上（absent_id 生效时），供呈现层与报告如实说明。"""
@@ -184,7 +181,6 @@ def verify(category: str, trigger_spec: Dict[str, Any], target: Dict[str, Any],
             return svc.replay_signature_bypass(trigger_spec, target, accounts=accounts)
         raise ValueError(f"unknown business-logic category: {category}")
 
-    # R26：restore_after（凭据变更 / 批量赋值）—— 闸门放行，但必须由本包装强制回滚。
     # 契约：无基线不投放；投放后无条件回滚并复读；回滚失败一律改判 failure，绝不留持久变更换确认。
     if _guard.get("action") == "restore_after":
         with _RESTORE_LOCK:

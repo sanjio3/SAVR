@@ -2,8 +2,8 @@
 Unified D2 verification facade.
 
 一条总路径，不分 IAST 模式 / legacy 纯 EXP 双入口：
-verify() 运行时即设计层效果，驱动 D1 重放 → I1 逐节点链路符合 → D2 站 sink 立场核实
-结果点 → I2 综合裁决五态。iast_service(探针/I1) 与 dast_operator(D1) 由 verify() 内部
+verify 运行时即设计层效果，驱动 D1 重放 → I1 逐节点链路符合 → D2 站 sink 立场核实
+结果点 → I2 综合裁决五态。iast_service(探针/I1) 与 dast_operator(D1) 由 verify 内部
 按 DB 构造，调用方无需感知「模式」。不存在 legacy 回落分支。
 """
 import json
@@ -31,7 +31,6 @@ from src.core import evidence_channels as _ec
 from src.core import result_point as _rp
 
 # 业务逻辑漏洞全类目（与 src/iast/business_logic.py::ALL_CATEGORIES 对齐）：真源见
-# src/core/exploit_spec.py 的 DIFFERENTIAL_PROOF_FAMILIES（2026-09-03 合并 P1–P5 五套判据）。
 _BUSINESS_LOGIC_CATEGORIES = tuple(DIFFERENTIAL_PROOF_FAMILIES)
 # D1 重放路由特例：business_logic.verify（src/iast/business_logic.py::ALL_CATEGORIES 仅 8 类，无 idor）
 # 在 D1 层与 BOLA 同路由（都是多身份取受害者资源），故 idor→bola。其余 category 经
@@ -40,8 +39,6 @@ _BL_ROUTE_OVERRIDES = {"idor": "bola"}
 
 logger = logging.getLogger(__name__)
 
-# ── D2 探针事件轮询埋点（2026-10-26，P2.1）────────────────────────────────
-# 背景：run 471 实测 phase_times['d2'] = 4442.8s，而 replay_attempts 的 HTTP 耗时
 # 合计只有 227s —— 95% 的时间不在请求上。最大嫌疑是下面的「有界轮询」
 # （默认 10 次 × 1.5s = 每条核验最多空等 13.5s；315 条 ≈ 4250s，与 4443s 吻合）。
 # 但这只是「总时长 - HTTP 时长」倒推，不能确认。故先埋点拿真数：
@@ -143,7 +140,6 @@ def _build_hitl_gated_result(act: Dict[str, Any]) -> "VerificationResult":
 def _recover_value_hit(db, iast_evidence, specs):
     """值级证据补捞：聚合层没产出 value_hit 时，用**已落库事件**按 spec 标记重算一次。
 
-    为什么需要：r75 实测出现「落库事件里明明比得出 hit_live（38 条，真值 100% TP），
     但送进确认闸的 iast_evidence.value_hit 为空」的断层，闸门因此把全部到达态判成
     arrival_without_semantics，动态召回归零。补捞把这条事实重新接回闸门。
 
@@ -188,7 +184,6 @@ def _recover_value_hit(db, iast_evidence, specs):
             ev = dict(r) if not isinstance(r, dict) else dict(r)
         except Exception:
             continue
-        # 2026-10-11：此处**刻意不**把 evidence_json 映射成 evidence 去开第二比对源。
         # 实证：开了之后 285+286 的补捞命中从「纯 source_value 的 100% 精确」掉到
         # 84 TP / 10 FP（89.4%）—— evidence 里记录的常是探针侧的整包上下文，含
         # 我方可比对的标记但与该族数据流无关，会造成假命中。只信 sink 实参原文。
@@ -209,13 +204,10 @@ _RECOVER_CONFIRMED = ("confirmed_exploitable", "confirmed_code_property", "confi
 
 def recover_late_arrival(db, task_id, dry_run=False, only_unconfirmed=False):
     """Post-scan 迟到回收（修复 orchestrator 采集窗口硬上限 900s 把探针批量迟到事件丢掉的事故，
-    见 memory 2026-10-11 第六节）。
 
     对尚未确认的 spec，用**全量** iast_events（不受采集窗口约束）重算 arrival + value_hit，
     按值级闸门(gate B: 到达真实 sink 且值级命中 hit_live)升级为 confirmed_exploitable。
 
-    另含「迟到 arrival 回填」子过程（2026-10-11 增）：D2 采集窗内探针批量 flush 迟到会让运行期
-    把 spec 判成 no-arrival（r77 实测 306/307 有 112+137 个 spec 存在真 sink 的 sink-reached
     事件却未被登记）。本过程对这类 spec 单调回填 iast_state + verification_status='sink_reached'
     ——**只补到达到达层，绝不升 confirmed**（确认仍由值级闸门独享），故对 ②/④ 零影响。
 
@@ -224,7 +216,6 @@ def recover_late_arrival(db, task_id, dry_run=False, only_unconfirmed=False):
         绝不降级、绝不碰已确认 spec；
       - 只信 sink 实参原文（compute_value_hit 比对 source_value），不臆断；
       - ldap/xpath 两族额外认 evidence_json.payload（探针把 canary 落在过滤器串/表达式里，
-        不在 source_value）；该扩展**仅限这两族**，不开全局（r75 SQL 开 evidence 曾混进 10 FP）。
       - 真到达但值级无命中的 spec（如 xss 反射 writer 未把写入串记成可读值、trustbound 无语义
         sink 观测、xpathi 求值 sink 未 hook）保持原态，留给 sink 覆盖率补强，不放行弱信号（不灌 FP）。
     幂等：已升级过的 spec（verification_status 已是确认态）直接跳过；重跑不产生新副作用。
@@ -269,7 +260,6 @@ def recover_late_arrival(db, task_id, dry_run=False, only_unconfirmed=False):
         # 同态事件里若排第一的是噪声 sink（Cookie/Random/setHeader），原逻辑会误 skip 掉本可
         # 确认的 genuine 事件。故改为遍历 matched，取 (rank, event) 最强的 genuine+value_hit。
         # 仅 ldap/xpath 两族在值级无命中时**再试 evidence_json.payload**：探针把 canary 落在
-        # 过滤器串/表达式里（不在 source_value）。r75 时 SQL 开 evidence 混进 10 FP，故**严格限
         # 这两族**，绝不开全局（避免把探针整包上下文当数据流证据）。
         _evidence_fams = ("ldap" in fam or "xpath" in fam)
         genuine_hit = None  # (rank, event)
@@ -280,14 +270,11 @@ def recover_late_arrival(db, task_id, dry_run=False, only_unconfirmed=False):
             sf = e.get("sink_file") or ""
             # Cookie 构造/标志设置是请求 cookie 原值建对象（canary 就在名字/值旁边），属输入处理噪声，
             # 非输出反射——对任何注入族都不能算值级 definitive 阳性（memory：与任何注入族都无关）。
-            # 否则会把「请求把自己的 cookie 原值建对象」误判成 XSS 反射（r77 实测 1 例 FP）。
             if "cookie" in (sf or "").lower():
                 continue
             if not is_family_relevant_sink(sf, fam):
-                # 2026-11-03（jsc-leakfix-r17）：从此处只查 is_genuine_sink_identity 改为
                 # 叠加族画像相关性。identity 只挡框架噪声黑名单，对 xss 族因「响应写入
                 # 放行」几乎恒真——log4j 端点的 JNDI lookup / writeInternal 事件由此把
-                # xss spec 确认成 exploitable（jsc 607 实测 FP）。族相关性要求「sink 属于
                 # 本族画像」，无画像族仍 fail-open（spel/ssti/url_redirect 等），不伤真值。
                 continue
             # 迟到 arrival 回填的候选：真 sink 的 sink-reached 态，只记最强（与值级判定无关，
@@ -339,11 +326,11 @@ def recover_late_arrival(db, task_id, dry_run=False, only_unconfirmed=False):
 class D2Agent:
     """统一验证入口（设计层即运行时，无 legacy / IAST 双模式）。
 
-    verify() 一条总路径：
+    verify 一条总路径：
         D1 重放(攻击) → I1 监听+逐节点链路符合 → D2 站 sink 立场核实结果点是否有害
         → I2 综合裁决五态 + 控制回路(重发/修正)。
 
-    iast_service(探针/I1) 与 dast_operator(D1) 由 verify() 内部按 DB 构造，调用方无需注入，
+    iast_service(探针/I1) 与 dast_operator(D1) 由 verify 内部按 DB 构造，调用方无需注入，
     因此也不存在「缺失则回落 legacy」的可能——统一链路是唯一的路径。
     """
 
@@ -359,7 +346,7 @@ class D2Agent:
         iast_service: Optional[Any] = None,
         dast_operator: Optional[Any] = None,
     ) -> VerificationResult:
-        # §3.5 删除 is_ready 门禁；ExternalTarget 归一化后透传。
+        #  删除 is_ready 门禁；ExternalTarget 归一化后透传。
         context = dict(project_context or {})
         target = normalize_external_target(external_target or context.get("external_target"))
         context["external_target"] = target.to_dict()
@@ -377,7 +364,6 @@ class D2Agent:
             if iast_service is None:
                 iast_service = IastService(db)
             if dast_operator is None:
-                # 2026-09-19：按 agents.d1.enable_llm_overlay（默认关）决定是否注入 LLM 网关。
                 # 关时传 None，与接入前行为完全一致（D1 的 AI 复核与 LLM 造弹两条腿都不走）。
                 dast_operator = D1Service(
                     db=db, gateway=D1Service.build_gateway_from_config(self.config)
@@ -386,7 +372,7 @@ class D2Agent:
         # trigger_spec 是 SAST finding → IAST 重放的唯一桥梁。
         # 调用方显式传入（推荐，由 run_d2_verify 按漏洞 hash 关联），缺失则无法跑 D1。
         # 业务逻辑漏洞走「双账号差分重放」而非 canary 污点重放：其 trigger_spec 带
-        # business_logic_category，统一 verify() 透明路由到 business_logic.verify（见 #2/#5）。
+        # business_logic_category，统一 verify 透明路由到 business_logic.verify（见 #2/#5）。
         bl_category = self._resolve_business_logic_category(trigger_spec, vulnerability)
         if bl_category:
             if not trigger_spec:
@@ -422,7 +408,7 @@ class D2Agent:
 
         logger.info("[D2] verify (unified): external_target=%s", external_target.get("service_url") if external_target else None)
 
-        # §3.14 A0 环境识别（预处理门禁）：发流量前确认目标可达 + 探针在线 + 绑定一致，
+        #  A0 环境识别（预处理门禁）：发流量前确认目标可达 + 探针在线 + 绑定一致，
         # 否则阻断本次发流量（非静默、不自动降级、不进触发事务）。仅当 iast_service 真实具备
         # check_environment_readiness 且 target 带 app_name/agent_id 时激活；FakeIast 类桩
         # 无此方法，守卫跳过以保既有测试绿。
@@ -464,7 +450,6 @@ class D2Agent:
 
         specs = trigger_spec if isinstance(trigger_spec, list) else [trigger_spec]
 
-        # ── ⑤ HITL 闸门（2026-09-23 接入活跃链路）：真正发破坏性重放前，判不可逆动作是否需人放行 ──
         # 在 orchestrator.run_transaction（实际发破坏性重放）之前短接：gate 时只回只读计划，
         # 不实际执行；不可逆但无需拦（off / strict 已放行 / 动作级白名单）→ 全量审计记 allowed。
         _gate_act = _hitl_gate_for_spec(context, specs[0] if specs else None)
@@ -483,13 +468,13 @@ class D2Agent:
                             dast_operator, db):
         """跑一次 IAST 触发事务（D1 重放 + 证据窗口），返回 TransactionResult。
 
-        从 verify() 中抽出，使 verify_group() 能让多个漏洞共用同一次事务：窗口等待是
+        从 verify 中抽出，使 verify_group 能让多个漏洞共用同一次事务：窗口等待是
         耗时主体且与批内假说数无关，逐漏洞各起一个事务时 304 个漏洞/18 并发 ≈ 17 轮 × 57s。
         """
         from src.iast.orchestrator import TriggerTransactionOrchestrator, _replay_overrides_of
 
-        # §4.2 事件隔离：把本次事务的 app_name / agent_id（及 trigger_spec 携带的 trace_id，
-        # 见 §3.11 trace 头透传，探针侧可选）烤进 event_source 闭包，使 poll 仅命中本目标事件，
+        #  事件隔离：把本次事务的 app_name / agent_id（及 trigger_spec 携带的 trace_id，
+        # 见  trace 头透传，探针侧可选）烤进 event_source 闭包，使 poll 仅命中本目标事件，
         # 避免共用同一运行实例的多次扫描事件混流污染。空值视为「不限定」以兼容旧链路。
         tgt_app = external_target.get("app_name") or target.to_dict().get("app_name") or ""
         tgt_agent = external_target.get("agent_id") or target.to_dict().get("agent_id") or ""
@@ -521,7 +506,7 @@ class D2Agent:
                 "taint_path": _parse_taint_path(r.get("taint_path_json", "")),
             } for r in rows]
 
-        # §3.14 编排器层廉价复探：把 A0 环境识别复用为 readiness_probe，使 run_transaction
+        #  编排器层廉价复探：把 A0 环境识别复用为 readiness_probe，使 run_transaction
         # 真正发流量前再确认一次（预处理阶段已跑过一次，这里防结论中途过期）。仅当 iast_service
         # 真实具备 check_environment_readiness 且 target 带 app_name/agent_id 时注入；否则 None 不复探。
         readiness_probe = None
@@ -537,7 +522,7 @@ class D2Agent:
                     target_dict.get("agent_id", "") or tgt_agent,
                 )
 
-        # §3.12 事件隔离：提供「当前 iast_events 最大 id」水位线，使编排器只轮询本事务启动后
+        #  事件隔离：提供「当前 iast_events 最大 id」水位线，使编排器只轮询本事务启动后
         # 产生的事件，剔除上一轮残留的空路径/陈旧事件（I1 逐节点符合性的直接前置条件）。
         def watermark_provider() -> int:
             if db is None:
@@ -556,7 +541,7 @@ class D2Agent:
             readiness_probe=readiness_probe,
             event_watermark_provider=watermark_provider,
         )
-        # §8.4 ③ 选项A：活跃扫描会话归属。replay 窗口内探针回采的事件若无 canary 身份段
+        #  ③ 选项A：活跃扫描会话归属。replay 窗口内探针回采的事件若无 canary 身份段
         # （普通 SINK_HIT 实时流量常为空），在多 task workspace 下会被 _resolve_event_task_id
         # 归为 NULL 而静默丢失。这里把本任务标记为该 workspace 的「活跃扫描 task」，使窗口内
         # 无身份段事件仍能正确归属本 task；窗口结束后清除。fail-open：标记失败不影响重放。
@@ -577,7 +562,6 @@ class D2Agent:
                     )
                 except Exception as _e:
                     logger.warning("[D2] 标记活跃扫描 task 失败（不影响重放）：%s", _e)
-            # （2026-09-29 落地）：把 spec 的重放侧覆盖动作（inject_all_params / extend_wait_window /
             # switch_param_location，存于 raw_json.replay_adjust.actions）显式挂到 spec 上，供编排器消费。
             # extend_wait_window → 编排器放宽本事务 I1 采集窗口；inject_all_params 已由 D1 默认全参注入
             # （representative_request_params 全参数带标），此处仅确保覆盖标记可见、可追溯。
@@ -606,12 +590,11 @@ class D2Agent:
         from src.iast.adjudicator import D2Judge, I1Judge, I2Adjudicator
         from src.infrastructure.db import Database
 
-        # 2026-10-31（本轮/560 实证）：**裁决前从 DB 重读 oracle 观测**。
         # 时间线问题：oracle 探测发生在 D1（`d1_service._run_family_oracle` → 写
         # trigger_specs.oracle_state/oracle_signal），而 `specs` 是 D2 入口时的内存快照，
         # 那时 oracle_state 还没写 ⇒ 裁决读到的永远是空串。
         #
-        # 坑（本轮第 2 次踩）：specs 可能是 `sqlite3.Row` —— **没有 .get() 方法、且只读**。
+        # 坑（本轮第 2 次踩）：specs 可能是 `sqlite3.Row` —— **没有 .get 方法、且只读**。
         # 第一版直接写 `sp.get("id")` 抛 AttributeError，被下面的 except 静默吞掉，
         # 于是 本轮仍只转化 3/11。故：①先统一转成 dict（可写）；
         # ②except 用 warning 而非 debug，杜绝「改了没生效还看不出来」。
@@ -648,7 +631,6 @@ class D2Agent:
             logger.warning("[D2] oracle 观测重读失败（按原快照继续）：%s", _oe)
 
         iast_evidence = aggregate_iast_evidence(result.per_hypothesis)
-        # 2026-10-31（本轮实证）：把本事务内**行为 oracle 正向**信号汇入 iast_evidence。
         # 聚合层 aggregate_iast_evidence 只看探针观测，不带 oracle；而下游
         # 「到达 ≠ 可利用」降级（_build_verification_result 的 _arrival_only_hit）需要知道
         # 「本条除探针断言外还有没有独立证据」。oracle 的布尔差分 / 时延 / 文件签名 /
@@ -664,8 +646,6 @@ class D2Agent:
                 iast_evidence["oracle_signal"] = str(_orc_hits[0].get("oracle_signal") or "")
         except Exception:  # noqa: BLE001  fail-open：汇总失败不影响原判据
             pass
-        # ── 值级证据幂等补捞（2026-10-11，r75 实证）──────────────────────────────────
-        # 现象：r75 用 spec 的 taint_marker 对落库事件离线重算，得到 38 条 hit_live 且
         # **真值 100% TP**，线上闸门却把它们判成 arrival_without_semantics（57 条）→
         # sqli-1 ② 仍为 0。反推可知聚合层送进闸门的 iast_evidence.value_hit 为空：
         # d2_evidence 的 primary_channel=none / evidence_strength=0 即为此证。
@@ -687,7 +667,6 @@ class D2Agent:
         dast_impact_evidence.setdefault("sink_invoked", is_sink_reached(_iast_state))
         _dvh = iast_evidence.get("value_hit") or {}
         dast_impact_evidence.setdefault("value_level_hit", bool(_dvh.get("hit")))
-        # 2026-10-11：确认闸 _differential_override 需要区分 hit_live（definitive 正向，
         # 必须否决差分降级）与 hit_sanitized（definitive 阴性，应当允许降级）—— 只有 value_hit
         # 的 form 携带这个区分，此前只透传了布尔 hit，闸门无法分辨，只能一律当命中。
         dast_impact_evidence.setdefault("value_hit_form", str(_dvh.get("form") or ""))
@@ -745,12 +724,12 @@ class D2Agent:
         # Point5 语义分级：D2 最终裁决确认「可观测危害」→ 置 exploit_confirmed=1，
         # 与 status='confirmed_runtime'（污点抵达 sink 的传播证明）并存，供 correlation/前端分两档展示。
         #
-        # 修正（回灌断裂修复）：原条件只看 vr.d2_verdict.harmful，而该字段来自
+        # 修正：原条件只看 vr.d2_verdict.harmful，而该字段来自
         # _verify_sink_result（LINE 280 的兼容性聚合），其判有害的前提是
         # is_sink_reached(iast_state)——即只覆盖 canary/污点通道。业务族（bola/idor 等）
         # 走的是 _verify_business_logic 差分重放通道，iast_state 为 business-logic-confirmed
         # 而非 sink-reached，故 d2_verdict.harmful 恒为 False，导致 13 条 confirmed_exploitable
-        # 一条都没回写到 vulnerability_instances.exploit_confirmed（实测恒 0）。
+        # 一条都没回写到 vulnerability_instances.exploit_confirmed。
         # 正确口径应取最终裁决：vr.exploitable（I2 strongest.confirmed）
         # 或 vr.verification_decision.verification_status == confirmed_exploitable。
         _vr_d2 = getattr(vr, "d2_verdict", None) or {}
@@ -789,13 +768,12 @@ class D2Agent:
 
         动机：run_transaction 的耗时主体是「重放之后的证据窗口等待」（t_max 60s + settle），
         与批内假说数基本无关。逐漏洞各起一个事务时，304 个漏洞 / 18 并发 ≈ 17 轮 × 57s ≈ 963s
-        （round-18 实测）。把 N 个漏洞的 spec 合进一个事务后，事务数降到 ceil(304/N)，
+        。把 N 个漏洞的 spec 合进一个事务后，事务数降到 ceil(304/N)，
         18 并发足以一轮打完 → D2 降到约 1~2 分钟。
 
         安全边界（缺一即整体回退逐条 verify，绝不以降质换速度）：
           - canary 每 spec 唯一 → per_hypothesis 按 vulnerability_hash_v2 切片归因，互不串味；
           - raw_dast_impact 是**事务级聚合**（reached = 批内所有重放取 OR），绝不能共享，
-            改用编排器 2026-09-27 新增的 dast_impact_by_hypothesis 按假说切片；
           - 业务逻辑漏洞走差分重放（完全不同的通道），不入批；
           - 批内所有 spec 的 trace_id 必须一致，否则 event_source 的 trace 过滤会漏事件；
           - 早停要求批内全部假说到达才 break，故调用方须按「族 + 端点」同质分批，
@@ -940,7 +918,7 @@ class D2Agent:
             results[i] = self._adjudicate_result(sub_result, vuln, specs, db=db, dast_impact=sub_dast)
         return results
 
-    # ---------------- 业务逻辑漏洞：统一 verify() 透明路由到差分重放 ----------------
+    # ---------------- 业务逻辑漏洞：统一 verify 透明路由到差分重放 ----------------
     @staticmethod
     def _resolve_business_logic_category(trigger_spec: Optional[Dict], vulnerability: Optional[Dict]) -> Optional[str]:
         """从 trigger_spec 或 vulnerability 解析业务逻辑类目；非业务逻辑返回 None。
@@ -979,7 +957,6 @@ class D2Agent:
         """
         from src.iast import business_logic as bl_mod
 
-        # ── ⑤ HITL 闸门（2026-09-23 接入业务链路）：差分重放会改 victim 状态，属不可逆动作，
         # 在真正执行 bl_mod.verify 前（含账户 bootstrap）判是否需人放行；gate 时只回只读计划。
         _bl_act = _hitl_gate_for_spec(project_context or {}, trigger_spec)
         if _bl_act.get("hitl_configured") and _bl_act.get("irreversible"):
@@ -998,9 +975,8 @@ class D2Agent:
         # Point3 auth bootstrap：双账户类目（bola/垂直/跨模块）缺账户时，按 target.login
         # 真登录取 token，避免落到 canary 攻击路径或空跑。单账户/裸请求类目不强制。
         from src.iast.attack_context import needs_dual_accounts
-        # R23-2：bootstrap 与 verify 必须共用真实 db（iast_service.db）。否则 D1Service 退化为
         # 临时库，bootstrap 的双账户 accounts_json 回写、以及 replay_* 的 victim_identifiers
-        # 回填全部落在临时库 → 真实 DB 恒空（§6.13：victim_identifiers 0/144、0/167）。
+        # 回填全部落在临时库 → 真实 DB 恒空。
         _real_db = getattr(iast_service, "db", None)
         if not accounts and needs_dual_accounts(category) and (target.get("login") or trigger_spec.get("login")):
             try:
@@ -1019,9 +995,7 @@ class D2Agent:
 
         # §消费端（用户指令第3/4点）：独立消费 IAST 可达性，而非补 taint transform 匹配。
         # 业务型无污点 source，故不靠 sink 污点证明；改消费「带 canary 的攻击请求是否命中
-        # A2 预测操作/controller」这一可达性证据。探针侧（产出端）须对 target-mall 的
         # AccessDecisionManager 授权决策点织入 BOLA_SUSPECT/authz_hook 事件（携带 canary）——
-        # 当前 task-9 实测 BOLA_SUSPECT=0，poll 回来是空，故 iast_reached 默认 False（fail-open，
         # 不污染差分结论）。一旦产出端补上，这里无需改动即可消费。
         iast_reached = False
         iast_authz_confirmed = False
@@ -1037,7 +1011,6 @@ class D2Agent:
                 # §回归修复（ 并发引入）：探针事件经后端异步摄取端点落 iast_events，
                 # 存在固有写入延迟。原实现只在 D2 verify 内做一次瞬时 poll，在高并发（12 worker 并
                 # 行 + I1 后台采集）压垮摄取端点时，事件尚未 flush 即被判 no-iast-evidence，导致
-                # BOLA/IDOR 等运行时确认从 task-2 基线 13 倒退到 task-3 的 1。复扫证明事件最终
                 # 都落库且 canary 完全可匹配——纯属轮询竞态。此处改为有界轮询（命中即停，单测用
                 # 非空的桩不产生 sleep），覆盖摄取延迟，恢复运行时确认闭环。
                 _poll_attempts = int(trigger_spec.get("iast_poll_attempts") or 10)
@@ -1100,7 +1073,6 @@ class D2Agent:
         # confirmed = 差分确认 OR 可观测副作用确认（业务状态被真实改动）。
         # v2 证据分层 B4：移除 iast_reached —— 业务族「仅到达应用」不构成有害判定，
         # 必须差分式确认（越权差异）或副作用确认，避免「到达即越权」误报（trustbound 族尤其）。
-        # F 批回归锁修正（2026-10-10）：iast_authz_confirmed（探针在授权决策点证明「访问域对象
         # 但无对象级归属校验」）是机制级语义证据，不是「仅到达」—— 与 B3 迟到补捞路径
         # （authz 盲点 → 直接确认）及 adjudicate_final_state 的 authz_hook_confirmed 分支同口径。
         confirmed = diff_confirmed or side_effect_confirmed or iast_authz_confirmed
@@ -1114,7 +1086,6 @@ class D2Agent:
         confidence = str(bl_result.get("confidence") or ("high" if confirmed else "low"))
         cat = str(bl_result.get("category") or category)
 
-        # ── C 批（2026-10-10，证据分层诚实声明）：双账号差分矩阵三态 + correct_reject 阴性 +
         # 诚实降级 + 时序竞态声明。均**不改变确认逻辑**（confirmed 仍由 B4 的 diff/side-effect 决定，
         # 见上方），只在 iast_evidence / verification_decision 上补「诚实声明」元数据，使报告能区分
         # 「真阴性（正确拒绝）」与「证据缺失（ambiguous）」，杜绝把「没验出来」当成「没漏洞」。
@@ -1130,7 +1101,7 @@ class D2Agent:
         # 一律按证据缺失 / 真阴性诚实降级，绝不强行确认或强行判无漏洞（B6 闸门已约束 canary 路径）。
         _is_trustbound = (cat in ("trust_boundary_violation", "trustbound", "trust_boundary"))
         trustbound_honest_downgrade = (_is_trustbound and differential_state != "confirmed")
-        # 时序竞态声明：IAST 可达性消费走了有界轮询（见上方轮询修复），若最终仍未取到任何事件、
+        # 时序竞态声明：IAST 可达性消费走了有界轮询，若最终仍未取到任何事件、
         # 且结论非 confirmed，声明本结论可能受「探针摄取竞态」影响（诚实标注，不臆断无害）。
         timing_race_declared = (
             (not iast_reached and not iast_authz_confirmed)
@@ -1278,7 +1249,6 @@ def _iast_stream_head(iast_service: Any, app_name: Optional[str], agent_id: Opti
         return None
 
 
-# 2026-10-29：迟到证据补捞的**适用状态集**。
 # 只收「未观测态」——即裁决当时认定「canary 没到 / 没有证据」的结论；已到达（arrived /
 # sink-reached / sink-reached-probe）与已确认的裁决一律不进补捞，保证方向单调（只会把
 # 漏判补成到达/确认，绝不会把已有确认改坏）。
@@ -1293,7 +1263,6 @@ _LATE_RECONCILE_STATES = frozenset({
     "no_evidence",
 })
 
-# 2026-10-29：属性族 / 业务族**不参与运行时迟到补捞**。
 # 这些族的「有害」不靠 canary 到 sink 证明：
 #   - weak_hash / crypto / weak_random：安全用例（SHA-256 / SecureRandom）同样把 canary 送进
 #     MessageDigest.getInstance / Cipher.getInstance，「到达 + hit_live」会把安全用例全判成漏洞；
@@ -1378,7 +1347,6 @@ def reconcile_late_iast_evidence(phase1_items, iast_service: Any, app_name: Opti
         if result is None or not ts:
             continue
         ev = getattr(result, "iast_evidence", None) or {}
-        # 2026-10-29（本轮实证）：补捞范围从「BL 路径专属 no-iast-evidence」扩到**全部未观测态**。
         # 根因：D2 裁决与探针摄取并发，而 ingest 落库要与 D2 抢 SQLite 单写者锁（db.py 全局 RLock），
         # 探针 POST 被阻塞 → 事件按 ~4 分钟一批落库，普遍晚于裁决。实测 13 个 trustbound 用例在
         # iast_events 里都有 canary_state=sink-reached-probe + 真 sink（StandardSessionFacade.setAttribute）
@@ -1402,7 +1370,6 @@ def reconcile_late_iast_evidence(phase1_items, iast_service: Any, app_name: Opti
         except Exception as _pe:
             logger.warning("[D2][late-evidence] canary=%s 重查异常（跳过）：%s", canary[:24], _pe)
             continue
-        # D5（2026-10-10）：no-iast-evidence 归因二分——从已轮询事件提取 hook_inventory，
         # 判断「本轮没拿到任何探针记录」是探针组件缺陷（关键 hook 未织入）还是 A2/D1 攻击计划缺陷
         # （hook 就位但 canary 没投到正确入口）。证据缺失（无 hook_inventory）一律 unknown，不臆断。
         try:
@@ -1429,7 +1396,6 @@ def reconcile_late_iast_evidence(phase1_items, iast_service: Any, app_name: Opti
         new_ev["iast_event_types"] = sorted({str(r.get("event_type") or "") for r in rows})
         new_ev["late_reconciled"] = True
         if _late_state == "no-iast-evidence":
-            # B3（2026-10-10）：BL 迟到补捞必须过确认闸 + 消毒校验，否则只升 unconfirmed。
             #   - authz 盲点命中（blind）是本族真实的业务越权旁证 → 直接确认；
             #   - 仅「到达」的普通 IAST 事件（iast-reached）不构成 BL 语义证据，必须按 B6 收紧，
             #     只升 unconfirmed，交后续 HITL / 人工复核，绝不臆断有害。
@@ -1461,7 +1427,6 @@ def reconcile_late_iast_evidence(phase1_items, iast_service: Any, app_name: Opti
                 except Exception:
                     _confirmed = False
         else:
-            # 2026-10-29：非 BL 路径的迟到补捞——只认「探针在**本族真实 sink** 上
             # 断言到的到达态」。判据与 correlation.confirmed_runtime / adjudicator 完全一致：
             #   state ∈ {sink-reached, sink-reached-probe} 且 is_genuine_sink_identity(sink, family)。
             # 这样补捞出来的确认与原路径能得出的最强结论同源，不会放宽口径：
@@ -1484,7 +1449,6 @@ def reconcile_late_iast_evidence(phase1_items, iast_service: Any, app_name: Opti
                     continue
                 if not is_genuine_sink_identity(_sf, _fam_late):
                     continue
-                # 2026-10-30：**不再在这里查 is_family_relevant_sink**。
                 # 原意是挡住跨族冒充（本轮实测 31 条 sql_injection spec 落在 session
                 # putValue 上），但它在补捞侧比主路径更严，导致同一份事件因「到得早晚」得出
                 # 两种结论（本轮 6 个 path_traversal TP 被挡在补捞之外，主路径却认）。
@@ -1522,7 +1486,6 @@ def reconcile_late_iast_evidence(phase1_items, iast_service: Any, app_name: Opti
         if not isinstance(vd, dict):
             vd = {}
         vd["late_reconciled"] = True
-        # D5（2026-10-10）：把归因二分落到 verification_decision，供判责统计（重放智能化是否有用）。
         vd["no_evidence_attribution"] = _attr
         if _confirmed:
             vd["verification_status"] = "confirmed_exploitable"
@@ -1600,7 +1563,6 @@ def _build_verification_result(i2_decisions, iast_evidence, dast_impact_evidence
     strongest = max(i2_decisions, key=lambda d: _FINAL_STATE_RANK.get(d.final_state, 0))
     confirmed = bool(strongest.confirmed)
     # ── 到达 ≠ 可利用：仅靠探针断言（证明力 2）时不落 confirmed_exploitable ──
-    # 2026-10-07（r64c 实测，方法A 收尾）。判据全部取自**落库的真实字段**，不猜：
     #   r64c 的 105 条 confirmed 里，primary_channel **100% 是 probe_sink_assert**
     #   （evidence_strength=2），即「探针在危险函数实参里断言到投放的数据」。
     #   该通道只证明**污点抵达**，不证明**利用成功**，而 OWASP 真值口径下它 FP 率 35%
@@ -1620,13 +1582,11 @@ def _build_verification_result(i2_decisions, iast_evidence, dast_impact_evidence
     _ARRIVAL_ONLY = os.environ.get("SAST_AI_D2_ARRIVAL_ONLY", "1") not in (
         "0", "", "false", "False", "no")
     _ARRIVAL_ONLY_CHANNELS = ("probe_sink_assert",)
-    # 2026-10-13 补：r88 实测 6 个误报（run 331 的 sqli 安全用例）primary_channel='none'
     # —— 即**没有任何证据通道命中**（无值级、无 OOB、无差分有害、无异常类），却仍被 I2
     # 落 confirmed_exploitable。原白名单只拦 probe_sink_assert，'none' 反而绕过了降级。
     # 铁律：无证据通道 = 证据缺失，判据只许做正向，不得落 confirmed。
     _NO_EVIDENCE_CHANNELS = ("none", "", "unknown")
     _primary = str((d2_verdict or {}).get("primary_channel") or "").strip()
-    # 2026-10-07 修正（回归锁 tests/test_iast_orchestrator.py 抓到）：
     # 原判据只看 primary_channel，会把**有 DAST 真实影响证据**的 spec 一并降级 ——
     # 那是误伤。impact_observed / data_leak_confirmed / business_logic_confirmed 都意味着
     # 「攻击真的产生了后果」，本身就是可利用性证据，优先于「canary 到了 sink」。
@@ -1643,7 +1603,6 @@ def _build_verification_result(i2_decisions, iast_evidence, dast_impact_evidence
         or ((iast_evidence or {}).get("value_hit") or {}).get("hit"))
     _primary_norm = (_primary or "none").strip().lower()
     _no_evidence_channel = _primary_norm in _NO_EVIDENCE_CHANNELS
-    # 2026-10-31（本轮实证）：**只豁免行为 oracle 正向**这一种，不放宽到所有
     # 「可归因确认」。原因：final_state=confirmed_attributable 也可能来自「探针断言 +
     # 结果点有害」，那属于「到达 ≠ 可利用」，必须照旧降级（r64c 实测该通道 FP 率 35%，
     # 回归锁 tests/test_iast_orchestrator.py::test_facade_verify_via_iast_trigger_end_to_end
@@ -1765,7 +1724,6 @@ def _parse_taint_path(raw: Any) -> List[Dict[str, Any]]:
     return []
 
 
-# ── 时间盲注时延双阈值确认门（2026-09-07 承接断链①修复）──
 #
 # 定位：作为 IAST sink-reached 的「旁证兜底」，只在所有 sink-reached 分支均未命中后调用，
 # 绝不替代 IAST 主信号。前提是 D1 已投放 sleep 型主载荷（sleep_seconds_hint>0）并对主请求计时。
@@ -1952,7 +1910,7 @@ def _ch_result_point_diff(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _value_gate_probe_enabled() -> bool:
-    """FP-6 值级佐证闸开关（2026-10-17）。默认关——需探针先补齐族 sink 事件捕获
+    """FP-6 值级佐证闸开关。默认关——需探针先补齐族 sink 事件捕获
     （8 个 trace-only TP 如 01000 当前无族 sink 事件，开闸会误伤）。探针重建后置
     SAST_AI_VALUE_GATE_PROBE=1 启用。"""
     return os.environ.get("SAST_AI_VALUE_GATE_PROBE", "0") == "1"
@@ -1991,9 +1949,7 @@ def _ch_probe_sink_assert(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     biz = dast.get("business_logic") or {}
     biz_confirmed = bool(biz.get("confirmed")) if isinstance(biz, dict) else False
     probe_asserted = (iast_state == STATE_SINK_REACHED_PROBE)
-    # 2026-11-03（r17b 验证实测）：降级攻击 = A2 未产出真实 payload、D1 只投 canary 探针。
     # 原实现 `and not probe_asserted` 让「探针断言到 sink」豁免降级，于是无载荷 spec 直接落
-    # confirmed_exploitable。jsc 609 实测：FileUpload 的 7 条路径穿越、log4j 的 xss 全是这条
     # 路径进来的误报（裁决原文自己写着「部分 spec 为降级攻击，证据强度较弱」却仍确认）。
     # 无真实攻击载荷 ⇒ 没有可利用性证据，与探针是否断言到 sink 无关：canary 到达只证可达。
     degraded_no_attack = attack_degraded and not biz_confirmed
@@ -2007,10 +1963,8 @@ def _ch_probe_sink_assert(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                     "canary 到达仅证可达性，不构成有害性证据。"),
             evidence=body[:500], definitive=True, attack_degraded=True)
     if genuine_sink_reached and reached:
-        # FP-6 值级佐证闸（2026-10-17，env: SAST_AI_VALUE_GATE_PROBE，默认关）：
         # probe_sink_assert 原只靠 trace 级 reached_sink_files 确认（非 trustbound 族 fail-open），
         # FP 的真 sink 实参是硬编码安全值（无 canary）、taint_path sink 节点是噪声 sink，却因
-        # trace 级 canary_match=1 被误确认（run 361 实测 00110 等 5 个 dataflow FP）。开闸时
         # probe_asserted（纯探针 trace 断言）必须有「族相关值级命中」才判有害，否则降级为证据缺失。
         # 前提：探针须先补齐族 sink 事件捕获（8 个 trace-only TP 如 01000 当前无族 sink 事件，
         # 开闸会误伤），故默认关，探针重建后置 SAST_AI_VALUE_GATE_PROBE=1 启用。
@@ -2035,7 +1989,6 @@ def _ch_probe_sink_assert(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             "probe_sink_assert", harmful=False, sink_reached=True, confidence="low",
             reason="sink 到达但 D1 未证 reached（可能传输中断/超时）—— 证据缺失，不判有害",
             definitive=False, probe_asserted=probe_asserted)
-    # 反序列化族专用确证（2026-09-28 落地，第三层）：canary 是字符串、序列化 payload 是二进制，
     # canary 结构性进不了 readObject 实参；readObject 是 final，探针只把 resolveClass 当 transform
     # 跳点不产 sink 事件 → 该族永远走不到上面的 genuine_sink_reached 分支。
     # 替代判据：同一请求内「反序列化节点 + 命令执行 sink」同时被观测到即确证
@@ -2074,20 +2027,17 @@ def _ch_probe_sink_assert(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _ch_value_level_sink_arg(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """值级 sink 实参通道（证明力 4，2026-10-10 新增，正向专用）。
+    """值级 sink 实参通道。
 
     判据：探针记录的**危险函数实参值**里，是否真的看得见我方投放的数据（canary 原文），
     且这个 sink 属于本族的 sink 画像。这是"比对"而非"断言"——探针那条 canary_match 是
-    trace 级断言（run 251 实测 4943/4943 全为 1，而记录值里真能看到 canary 的只有 129 条），
     污点传播对 map 回读 / 常量三元分支是值不敏感的，所以断言不能单独当结论，值级比对可以。
 
-    ## 为什么只做正向（红线，重复对照 r250 的教训）
     离线实测（tools/_diag_valuelevel.py 251）：本判据在 30 条真 FP 上穿透 **0 条**，
     但在 73 条真 TP 上只覆盖 16~17 条。即它是「精确率高、覆盖率低」的判据 ——
     命中 ⇒ 确凿是我方投放的数据进了危险函数；未命中 ⇒ **什么都说明不了**
     （可能值被 URL 解码/拼接改写了，也可能 sink 名字换了导致证据没采到）。
     因此未命中必须返回 definitive=False 的证据缺失态，绝不能当阴性裁决 ——
-    一旦当阴性裁决，立刻把 57 条沉默成功的真阳性一起干掉，与 r250 的召回崩塌同型。
 
     ## 族相关性约束
     只看"有没有命中"会被非本族 sink 污染：实测 129 条值级命中里有 28 条落在
@@ -2101,7 +2051,7 @@ def _ch_value_level_sink_arg(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         single = iast.get("value_hit")
         if isinstance(single, dict) and single.get("hit"):
             hits = [single]
-    # 族相关性：任一条命中落在本族 sink 画像上即可（未登记族一律 fail-open 放行）
+    # 族相关性：任一条命中落在本族 sink 画像上即可
     relevant = [
         h for h in hits
         if is_family_relevant_sink(str(h.get("sink_file") or ""), family)
@@ -2145,7 +2095,6 @@ def _ch_value_level_sink_arg(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         value_level_form=_form)
 
 
-# ── C 批差分三态（2026-10-10，证据分层诚实声明，纯函数供回归锁）──
 # 差分没跑成（缺双账户 / 被破坏性闸门 skip / 回滚失败）的 verdict 集合——
 # 这些 verdict 下的「无差异」不是真阴性而是证据缺失，绝不能当 correct_reject。
 _C_DIFF_AMBIGUOUS_VERDICTS = frozenset({
@@ -2168,8 +2117,6 @@ def differential_three_state(confirmed: bool, replay_ran: bool, verdict: str) ->
     return "ambiguous"
 
 
-# ── B2 sink 异常签名通道（2026-10-10 新增，证明力 3）──
-# 异常类名 → 族签名映射。键用 OWASP Benchmark 规范族 token；匹配时同时接受别名包含（见
 # _exception_matches_family）。含义：这些异常是对应族「危险操作真的执行并抛错」的特征签名——
 # 在 safe 用例里几乎不会因「被净化的输入」抛出（净化后操作正常完成或抛无关异常），
 # 故可作为独立的 definitive 阳性候选。空签名族（securecookie / weakrand 等纯属性族）不登记，
@@ -2191,7 +2138,6 @@ _SINK_EXCEPTION_FAMILY_SIGNATURE: Dict[str, tuple] = {
 def _exception_matches_family(exc: str, family: str) -> bool:
     """异常类名是否属本族危险操作的签名（宽松别名匹配）。
 
-    F7（2026-10-10）：族名先做 ``_``/``-`` 剥除归一再做双向包含匹配 ——
     ``path_traversal`` / ``path-traversal`` 等别名写法剥除后仍包含 ``pathtraver``，
     否则这些别名族的 sink 异常签名会被静默漏匹配（归因回证据缺失，丢 TP 佐证）。
     归一后 ``xpathi`` 与 ``pathtraver`` 仍互不包含（xpathi 无 pathtraver 子串、反之亦然），
@@ -2215,10 +2161,8 @@ def _ch_sink_exception(ctx: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     java.sql.SQLException、命令注入触发 java.io.IOException），且该 sink 已通过家族身份校验
     （genuine_sink_reached）——即异常确实发生在「本族真实危险函数」上，而非框架噪声 sink。
 
-    为什么只做正向（与值级通道同一条红线，重复对照 r250 教训）：
     异常类名是「操作执行并抛错」的一手事实，命中 ⇒ 确凿是危险操作被我方数据触发；
     未命中（无异常 / 异常不属本族签名 / sink 未过身份校验）一律返回 None（证据缺失），
-    交兜底通道收口，**绝不臆断无害**——否则会重演 r250 召回崩塌。
 
     与探针断言（strength 2）的关系：本通道要求 genuine_sink_reached，故在探针断言已判
     有害的场景里是「加一重独立佐证」；更关键的价值是**填补 B5 的证据缺失缺口**——
@@ -2458,7 +2402,6 @@ def _verify_sink_result(iast_evidence: Dict[str, Any], dast_impact_evidence: Dic
     于是「证明力」被链的书写顺序绑架（低阶判据排在前面就能盖掉高阶证据），
     且带外回调这类正交证据只能躲在反序列化那一支里才被看一眼。
 
-    现在改为（评审 2026-10-02 决策丙）：
       - 按族适用通道**全跑不短路**，每条通道独立出结论；
       - 仲裁取**证明力最高者**为主判据（带外 4 > 结果点比对 3 = 语义差分 3 >
         时间盲注 2 = 探针断言 2 > 代码属性 1 > 兜底 0）；

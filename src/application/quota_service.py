@@ -1,4 +1,4 @@
-"""配额服务（2026-09-22 落地，简单框架）。
+"""配额服务。
 
 配额 = 按「主体」（workspace / global）设定的用量上限与超限处置规则。
 维度：count（扫描次数）/ code_lines（代码量）/ tokens（LLM token）/ concurrency（并发）/

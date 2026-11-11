@@ -9,16 +9,13 @@ A2 与 D1 之间就能看到「准备打什么、打在哪个端点、注入哪�
 - canary 只暴露「身份段」(s4st41 + 16hex)，绝不把完整 canary 透出前端（避免被当作可利用 token）。
 - 计划条目与 trigger_specs 一一对应（spec_id 关联），D1 打完之后可由 I1/D1 面板按 spec 反查命中。
 
-2026-09-26（F4 后精确率整改④）：计划生成加两道过滤闸门——
 - 孤儿/跨靶场 spec：spec 的 vhash 在本 task findings 无对应行（历史实测 mall 端点混入 OWASP
   计划，即「任务漂移」在 AP 层的表现），或 expected_sink_file 绝对路径落在靶场工程根之外
   → 不进计划，杜绝把无关目标写进攻击计划膨胀 FP 分母。
 - 幻觉族：族名经 normalize_family 归一后不在 KNOWN_CANONICAL_FAMILIES 的（LLM 自由发挥的
   ssrf/vertical_privesc/批量赋值提权 等）→ 不进计划。过滤明细落 result["filtered"] 供审计。
 
-2026-10-07（r62 复盘·状态澄清，非移除）：
 - 本阶段自始至终是**展示/留痕层**，D2 动态裁决**不消费** attack_plan，它只读 trigger_specs
-  与 exploit_spec。r62 观测到 8/8 分片 plan_count=0，一度被怀疑是「AP 阶段挂了」，
   实测确认是投影侧闸门（族归一 + 靶场锚）把 OWASP 的条目全滤掉了，**对检出与精确率零影响**。
 - 因此这里只做状态标注：**不要**因为 plan_count=0 就去排查流水线健康度；若将来要下掉 AP，
   需连同 task_service._STAGE_ORDER、scan_task_runner 各 STAGE 元组、repositories 的
@@ -35,7 +32,6 @@ from src.core.normalize import normalize_family, is_known_family
 
 logger = logging.getLogger(__name__)
 
-# A 第二步（2026-09-28 批准）：AP 阶段接入 RAG+LLM 攻击计划生成（原只挂在 D2 验证期，
 # AP 面板与 D1 重放吃不到）。默认开启；SAST_AI_AP_RAG_ENABLED=false 即回退纯投影。
 _AP_RAG_ENABLED = os.environ.get("SAST_AI_AP_RAG_ENABLED", "true").strip().lower() in (
     "1", "true", "yes", "on")
@@ -138,7 +134,6 @@ class AttackPlanService:
                 entry["iast_state"] = _istate
                 entry["d2_harmful"] = _f_harmful
                 entry["iast_authz_confirmed"] = _f_authz
-        # A 第二步（2026-09-28 批准）：RAG+LLM 攻击计划接入——低完备度 spec 由 LLM 补齐
         # suggested_route/parameter（经白名单校验），通过校验的值写回 trigger_specs.raw_json
         # 的 exploit_spec.entry 空位，使紧随其后的 D1 重放与 D2 验证吃到。AP 面板同时展示
         # plan source 计数与采纳明细。

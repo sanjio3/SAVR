@@ -13,7 +13,7 @@ def _norm_text(value: Any) -> str:
 # 短 ASCII token 必须按「词」匹配（两侧不得紧邻 [a-z0-9]），否则会被常见英文单词 / 路径的
 # 子串误命中：resources→rce、mysql→sql、classpath→path、executor(MyBatis)→exec、
 # escalation→sca。
-# 2026-09-10 实测事故：模板层 XSS 的 sink 为 src/main/resources/templates/*.html，
+#  实测事故：模板层 XSS 的 sink 为 src/main/resources/templates/*.html，
 # 其中 "resources" 含子串 "rce"，而 command-execution 规则排在 xss 之前 → 每轮 3 条
 # 模板 XSS + 1 条模板注入被错归 command-execution（spec 仍登记且仍 confirmed，但按
 # 命令注入判据验证、族计数错位）。
@@ -44,16 +44,12 @@ def _norm_family(item: Dict[str, Any]) -> str:
         (("ssrf",), "ssrf"),
         (("command", "rce", "exec", "命令"), "command-execution"),
         (("sql", "sqli"), "sql-injection"),
-        # 2026-09-27 修复：A2 LLM 偶将 LDAP 查询（DirContext.search 注入）误判为 XPath 注入，
         # 导致 /ldapi-00/ 端点落库为 xpathi 而与 GT(ldapi) 错配。这里以 LDAP 信号（描述/类型含
         # "ldap"）确定性收敛到 ldap_injection（normalize 层 alias→ldapi），与 A2/D2 LDAP 主链路一致。
         # 不入 "目录"（目录遍历描述也含"目录"），避免 path-traversal 被误并。
         (("ldap", "ldapi"), "ldap_injection"),
-        # xpath 针必须排在 path-traversal **之前**（2026-10-04 落地）：
         # XPath 全称是 XML Path Language，它的 type/description 里天然含「路径」
-        # （实测 A2 描述写作「XPath 表达式由外部输入拼接，XML 路径可被篡改」），
-        # 而下方 path-traversal 的中文针是纯子串匹配、没有词边界 ⇒ xpath 用例会先被
-        # "路径" 命中并抢成 path-traversal。OWASP sample-205 实证：run 46 的 xpathi
+        #         # 而下方 path-traversal 的中文针是纯子串匹配、没有词边界 ⇒ xpath 用例会先被
         # 用例 rule_name 是对的（XPath注入）但 type/finding_family 全被写成 路径穿越/
         # path_traversal，导致 path_traversal 成为全量第一大族（107 条）跨族无差别搭售。
         # 注意 xpath 针不能进 _WORD_ONLY_NEEDLES：要能命中 "javax.xml.xpath" 里的 xpath
@@ -65,13 +61,11 @@ def _norm_family(item: Dict[str, Any]) -> str:
         (("xss",), "xss"),
         (("upload", "上传"), "file-upload"),
         (("deserial", "反序列化"), "deserialization"),
-        # 2026-09-21：从 sca 针里移除 "cve"/"osv" —— 见下方 cve 特判。
         (("sca",), "sca"),
     )
     for needles, family in mapping:
         if any(_needle_hit(needle, text) for needle in needles):
             return family
-    # 代码级 CVE 特判（2026-09-21，修复"cve 一律归 sca"）：
     # "cve"/"osv" 不代表依赖漏洞 —— 很多代码级配置/逻辑漏洞的标识本身就是 CVE 编号
     # （如 CVE-2022-22978 = Spring regexMatchers 授权绕过，属 broken_access_control）。
     # 旧实现把任何含 "cve" 的文本一律归 sca，导致：
@@ -122,10 +116,8 @@ def hash_components(item: Dict[str, Any]) -> Dict[str, str]:
             "vulnerability_id": _norm_text(sca.get("vulnerability_id") or item.get("vulnerability_id") or item.get("id")),
             "ecosystem": _norm_text(sca.get("ecosystem") or item.get("ecosystem")),
         }
-        # 2026-09-21 修复「哈希塌缩」（勿回退）：仅当确有 SCA 内容（依赖组件信息）时才走
         # SCA 分支。若 component/version/vulnerability_id/ecosystem 全空，返回该字典会塌缩为
         # 常量 {"family":"sca","component":"","version":"","vulnerability_id":"","ecosystem":""}，
-        # 于是所有此类 finding 共享同一个 vulnerability_hash_v2。实测 run 25 中
         # f74c4bf23d66d43c9700833f 被信息泄露(Index.java)、XXE(XXE.java)、CVE 授权绕过
         # (WebSecurityConfig.java)、CORS(/cors) 四种互不相关的漏洞共用 —— 黑板按 hash 合并，
         # CVE finding 因此「继承」了 /cors 的 confirmed_exploitable/sink-reached-probe，
@@ -156,7 +148,6 @@ def vulnerability_hash_v2(item: Dict[str, Any]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# source 组件的「代码定位」形态守卫（2026-09-21）
 # 背景：hash 的 source 组件语义是「代码定位（文件:行）」，canonicalize 的取值链为
 #   entry_point -> source -> trigger_route
 # 而 A1 静态通道把「检测器身份」写进了 source（a1_injection_heuristic.py 的
@@ -164,11 +155,9 @@ def vulnerability_hash_v2(item: Dict[str, Any]) -> str:
 #   spec 侧（raw A2 dict，带 source）  -> source 组件 = 'a1-injection-heuristic'
 #   finding 侧（report_manager dict，无 source 字段） -> source 组件 = ''
 # 两侧 vhash 分叉，spec 与 finding 永远关联不上（假孤儿），对账层读不到该漏洞的 spec。
-# 实测 run 26 CVE-2022-22978 的 finding（62dd61b088fea4bacbfda64d）与它自己的
 # spec（2dc234cb30e2a13491a464e5）逐组件比对，唯一差异就是这个 source 字段。
 # 修法：source 只在「确为定位形态」（含路径分隔符 / 行号冒号 / 源码扩展名结尾）时才采信；
 # 检测器身份串不计入。entry_point / trigger_route 两档不受影响。
-# 爆炸半径实测（run 26 真实落库 564 findings + 165 specs 逐条重算）：
 #   finding 侧 hash 变化 0 条；spec 侧变化 57 条；两侧同 hash 交集群 43 -> 93。
 # ---------------------------------------------------------------------------
 _CODE_LOCATION_RE = re.compile(r"[:/\\]|\.[A-Za-z][A-Za-z0-9]{0,7}$")
@@ -183,11 +172,10 @@ def _looks_like_code_location(value: Any) -> bool:
 
 
 def canonicalize_vuln_for_hash(vuln: Any) -> Dict[str, Any]:
-    """把 A2 ``vuln.to_dict()`` 与 report_manager finding dict 的字段变体统一归一为
+    """把 A2 ``vuln.to_dict`` 与 report_manager finding dict 的字段变体统一归一为
     ``hash_components`` 期望的规范键集，确保同一漏洞（无论来自哪个阶段、字段名如何变体）
     的 ``vulnerability_hash_v2`` 完全一致 —— 这是「假孤儿误删」的根因修复。
 
-    严格遵循 NAMING_STANDARDS（2026-09-04 收敛）：
     - 族名 / category 经 ``canonical_business_logic_family`` 归一（DIFFERENTIAL_PROOF_FAMILIES 单一真相源，簇一）；
     - 端点字段统一填充 ``entry_route``/``trigger_route``/``endpoint``/``target_endpoint``/``route`` 全部视图，
       使 hash_components 的别名读取得到同一解析结果（簇三）；
@@ -247,17 +235,15 @@ def canonicalize_vuln_for_hash(vuln: Any) -> Dict[str, Any]:
     _src_v = _pick("source")
     _tg_v = _pick("trigger_route")
     entry_v = _ep_v or (_src_v if _looks_like_code_location(_src_v) else "") or _tg_v
-    # HTTP 路径（重放/路由用）永不进入身份 hash（用户指令 2026-09-21，任务③）。
     # 历史教训（两次）：route 一旦进 hash，会因「通道 A(target_endpoint) 与 通道 B(exploit_spec.entry.route)
     # 漂移」「entry.route 被 plan_pocs 改写致 runtime_vhash ≠ stored_vhash、D2 回写落空」反复制造
     # 「假孤儿误删 81 条真 POC」与「trigger_spec verification_status 永空」（见本文件 stable_vuln_key
-    # 注释与 高危复发坑.md）。run 26 真实复盘：findings/specs 的 hash_components.route 全部为 ''，
     # 即本就未进 hash；此前 _pick("target_endpoint","endpoint","route","http_path", _es_route) 把
     # _es_route 当位置参数误传（等价于 _src.get("/cors") 恒 None），使 exploit_spec.entry.route 永不
     # 生效——这是 latent 陷阱：一旦有人「修正」该 bug 把 _es_route 当 default 传入，route 即进 hash、
     # 全线回归。此处显式归零并删除死代码，使「route 永不进入 hash」成为确定行为。
     # 真实路由只走 trigger_specs.target_endpoint（通道 A，D1 重放权威）/ exploit_spec.entry.route（通道 B），
-    # 二者由 auto_register_from_a2 写回收口为一致（见 trigger_spec_registry.py 任务②修复），不参与身份 hash。
+    # 二者由 auto_register_from_a2 写回收口为一致，不参与身份 hash。
     route_v = ""
     # sink：严禁把 d2_status 当作 sink 吃进 hash。d2_status 是 D2 验证态（plan_ready/unverified/
     # sink_reached 等），仅存在于 finding 侧（report/D2 注入），raw A2 spec 侧无此字段——把它放进
@@ -329,7 +315,6 @@ def stable_vuln_key(vuln: Any, line_agnostic: bool = False) -> str:
 
     ``line_agnostic=True`` 时算「行号无关弱键」（把 ``l`` 固定为 0 再哈希）。
 
-    为什么需要弱键（2026-09-22，②-4 第一步）：强键把行号算进哈希，整条关联链因此对
     「行号来源的任何变化」敏感——只要将来有一侧改成从别处取行号（例如从 IAST 事件回填真实
     sink 行、或从 A0 静态路由表回填），两端立刻算出不同的键，D2 关联会**成批**失配，
     而症状只是「验证数突然下降」，极难反查（记忆里已有一条同类问题：报点行漂移）。
@@ -338,7 +323,6 @@ def stable_vuln_key(vuln: Any, line_agnostic: bool = False) -> str:
     弱键只应在**强键未命中时**作为兜底使用：它把同文件同类型但不同行的漏洞也可能并到一起，
     单独使用会放大误归因面。
 
-    ``vulnerability_hash_v2`` 经 2026-09-21 修复后**不再**把 route 纳入 hash 组件（route 永不进入 hash，
     见 canonicalize_vuln_for_hash 任务③修复）——但历史上 route 进 hash 曾因 entry.route 被
     ``_pre_resolve_a2_endpoints`` / plan_pocs 改写而漂移，导致 runtime_vhash ≠ stored_vhash、Phase2 写回落空。
     本函数仍坚持 route 完全不参与，作为 D2 关联键的纵深免疫：即便未来路由口径再变动，D2 关联不受影响。
@@ -406,7 +390,6 @@ def stable_vuln_keys(vuln: Any) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# 稳定聚合键（2026-10-03 Part2 M1，去重键决策丙「双键」的一半）
 # ---------------------------------------------------------------------------
 # 为什么需要第二把键：vulnerability_hash_v2 是**精确身份键**，组件里含 source/sink/
 # code_block/category，任何一个字段的形态漂移（行号变动、代码片段截断、A2 改写描述）
@@ -423,7 +406,6 @@ def stable_vuln_keys(vuln: Any) -> List[str]:
 #     aggregate_stable_key  → 对账分母 / 跨轮对比 / 黄金集匹配（稳定性优先）
 #     vulnerability_hash_v2 → spec↔finding 追踪 / 去重落库 / D2 关联（精确性优先）
 #
-# 注意 route：canonicalize_vuln_for_hash 出于历史事故把 route 显式归零（route 永不
 # 进入身份 hash）。聚合键**必须**吃真实路由，故此处从原始 item 直读，绝不过
 # canonicalize——否则 route 恒空，聚合键退化成 family+file_tail 两要素。
 def aggregate_components(item: Any) -> Dict[str, str]:
@@ -473,7 +455,7 @@ def aggregate_stable_key(item: Any) -> str:
 
 def enrich_finding_hash(item: Dict[str, Any]) -> Dict[str, Any]:
     enriched = dict(item)
-    # 归一 hash 输入，消除 A2 vuln.to_dict() 与 report_manager finding dict 字段形态差异
+    # 归一 hash 输入，消除 A2 vuln.to_dict 与 report_manager finding dict 字段形态差异
     # （杠杆一：同一漏洞在 spec 注册端与 finding 落库端产出一致 vhash，根治假孤儿误删）。
     canonical = canonicalize_vuln_for_hash(enriched)
     components = hash_components(canonical)
@@ -481,7 +463,6 @@ def enrich_finding_hash(item: Dict[str, Any]) -> Dict[str, Any]:
     enriched["vulnerability_hash_v2"] = vulnerability_hash_v2(canonical)
     enriched["hash_components"] = components
     enriched["hash_confidence"] = "high" if components.get("code_block") or components.get("vulnerability_id") else "medium"
-    # 双键（2026-10-03 决策丙）：精确键 v2 用于 spec↔finding 追踪，聚合键用于对账分母。
     # 聚合键从**原始** item 算（需吃真实路由），不走 canonicalize（它会把 route 归零）。
     _agg = aggregate_stable_key(enriched)
     if _agg:
@@ -495,7 +476,7 @@ def enrich_findings(items: list[Dict[str, Any]]) -> list[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# 业务逻辑漏洞 跨 stage 聚类去重（架构决议：去重落地）
+# 业务逻辑漏洞 跨 stage 聚类去重
 # ---------------------------------------------------------------------------
 def business_logic_group_key(item: Dict[str, Any], app: str = "") -> str:
     """跨 stage 聚类 key：同一 ``(app, file, route, method, vulnerable_param, category)`` 归并。

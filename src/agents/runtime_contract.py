@@ -35,9 +35,7 @@ def normalize_external_target(target: Optional[Dict[str, Any]]) -> ExternalTarge
     if isinstance(target, ExternalTarget):
         return target
     payload = dict(target or {})
-    # 2026-11-02：`auth` 与 `login` 是同一件事的两种写法（workspace settings 新写法用
     # `auth`，早期注册器用 `login`）。这里只认 `login`，导致 `auth` 写法在归一化时被丢掉
-    # ⇒ D1 判定「没配登录」⇒ 重放全程未认证。实测 本轮（若依）：523 条重放里 476 条 302，
     # 105 条 vertical_privesc 全部 no-iast-evidence。故 `login` 为空时用 `auth` 顶上。
     _login = dict(payload.get("login", {}) or {})
     if not _login and isinstance(payload.get("auth"), dict):

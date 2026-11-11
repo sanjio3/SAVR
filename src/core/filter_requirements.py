@@ -1,4 +1,4 @@
-"""过滤器前置 header 抽取（2026-11-02）。
+"""过滤器前置 header 抽取。
 
 ## 为什么需要
 
@@ -8,7 +8,6 @@
     if (!allowedOrigins.contains(request.getHeader("Origin"))) { return; }
 
 这类端点即使参数、编码、方法全对，也会因为「没带 Referer / Origin」而**进不到业务代码**。
-实测 jsc 的 `RefererFilter` 就属于这一类（jsonp 族曾因此整族 no-arrival）。
 
 ## 做法（全确定性，不需要 LLM）
 
@@ -43,11 +42,9 @@ _CHECK_CTX = (".equals(", ".contains(", ".matches(", ".startsWith(", ".indexOf("
 # 校验时常见的「负向」写法：!x.contains / x == null 后 return —— 我们只取值域，不判方向
 _NEGATIVE_HINT = ("!=", "!", "== null", "isEmpty()")
 
-# ── 配置感知（2026-11-02）─────────────────────────────────────────────────
 #
-# 只从过滤器源码抽是不够的：jsc 的 ReferFilter 只写
 #     String refer = request.getHeader("referer");
-#     for (String uri : WebConfig.getReferUris()) { ... }
+#     for (String uri : WebConfig.getReferUris) { ... }
 # 真正的「校验哪些路由 / 允许哪些 host」全在配置里：
 #     joychou.security.referer.host = joychou.org, joychou.com
 #     joychou.security.referer.uri  = /jsonp/**
@@ -130,7 +127,6 @@ def _config_requirements(cfg: Dict[str, str], header: str, pattern: str,
             scopes.extend(_split_values(val))
     # 同一个 header 可能有多个开关（全局 `referer.enabled=false` + 专用
     # `jsonp.referer.check.enabled=true`）。任一为 true 即视为开启 ——
-    # jsc 正是这种：全局关、jsonp 专用开。
     if _flags and not any(_flags):
         return []
     if not values and not scopes:
@@ -278,9 +274,8 @@ def headers_for_route(reqs: Iterable[FilterRequirement], route: str,
 
     ## 为什么 `read` 型也要带
 
-    「读」和「校验」的边界常常跨类：jsc 的 `ReferFilter` 只是
     `String refer = request.getHeader("referer")`，真正的判定在
-    `WebConfig.getReferUris()` / `getReferSecEnabled()` 里 —— 静态抽不出「哪些路由要校验」。
+    `WebConfig.getReferUris` / `getReferSecEnabled` 里 —— 静态抽不出「哪些路由要校验」。
 
     这类情况下，「应用读过这个头」就是足够强的信号：带一个**同源的合法值**
     （`Referer: <target>/`、`Origin: <target>`）不会破坏任何东西，

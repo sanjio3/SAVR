@@ -1,8 +1,6 @@
 """路径键归一化。
 
-背景（2026-09-06）：
     流水线里同一份文件会以**两种形态**出现——A1 规则引擎产出绝对路径
-    （``D:\\...\\target-mall\\src\\main\\java\\...\\Foo.java``），A2 语义分析产出
     相对路径（``src\\main\\java\\...\\Foo.java``）。
 
     A1 调用链证据索引（``benchmark_cli._build_a1_evidence_index``）以 A1 的

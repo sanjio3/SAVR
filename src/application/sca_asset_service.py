@@ -103,7 +103,6 @@ class SCAAssetService:
         for _k in ("union_count", "intersection_count", "single_tool_count", "cross_validated_count", "not_affected_count"):
             if tool_result.get(_k) is not None:
                 summary[_k] = tool_result[_k]
-        # 2026-09-24：SCA 全部工具失败时，不得把 0 漏洞伪装成「扫描通过」（run 47 即此坑）。
         # 显式标注健康度，供报告与基线核对识别；不改 status 语义（避免连带把整轮任务判失败）。
         _health = _derive_sca_health(tool_result)
         for _hk in ("sca_health", "tools_failed", "tools_succeeded", "warnings"):

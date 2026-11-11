@@ -1,4 +1,4 @@
-"""净化感知造弹（2026-10-02 落地，造弹路线重写第二步）。
+"""净化感知造弹。
 
 与旧路线的本质区别：
 - 旧：按族写死一张静态表（command_execution 只有 ";id"），再配一个固定顺序的变体梯子
@@ -168,7 +168,6 @@ def synthesize(spec: Optional[FilterSpec], family: str, sink: str = "",
     fam = _norm_family(family)
     pool: List[str] = []
     pool.extend(FAMILY_CANDIDATES.get(fam, []))
-    # Q3：规格驱动生成器优先注入（按 FilterSpec 构造/变异候选）
     pool.extend(_spec_driven_candidates(spec, family))
     for b in (extra_bases or []):
         if b and b not in pool:

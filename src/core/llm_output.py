@@ -144,7 +144,6 @@ def _escape_inner_quotes(text: str) -> Tuple[str, int]:
     为什么需要：LLM（尤其小参数本地模型）把源码片段塞进 JSON 字符串时经常不转义内部引号，
     典型如 ``"signature": "String sql = "SELECT ..."``。这类文本严格解析必然失败，且会连带
     把 `_balanced_end` 的字符串感知带偏 —— 实测它会**只框住内层那个恰好合法的子对象**
-    （2026-09-19：A2 POC 规划里 1227 字符的返回被框成 117 字符的内层 verdict），
     于是上层拿到「键看着对、内容全空」的对象，LLM 产出被静默丢弃。
 
     判定规则：一个引号是不是字符串的收尾引号，看它后面（跳过空白）是否紧跟结构符
@@ -367,7 +366,6 @@ def parse_llm_json(
     else:
         base = raw
 
-    # 2.5) 未转义内部引号修复（2026-09-19）
     #      必须在「定位 JSON 片段」之前做：裸引号会把 _balanced_end 的字符串感知带偏，
     #      使 find_json_span 只框住内层恰好合法的子对象 → 上层拿到空壳却判成功（静默丢数据）。
     esc_base, n_escaped = _escape_inner_quotes(base)

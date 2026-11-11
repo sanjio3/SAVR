@@ -1,6 +1,5 @@
-"""静态路由解析（Q2）：Spring 注解 → controller → route 索引。
+"""静态路由解析：Spring 注解 → controller → route 索引。
 
-背景（2026-09-10，round-22 Q2）：
     findings 必须绑到**真实 HTTP 路由**才转得成 trigger_spec。历史上这一步靠
     A2 LLM 在语义分析时"顺便"猜一个 route/entry_method/params，结果是：
 
@@ -16,7 +15,6 @@
 
 设计要点：
     - 解析基于"去注释 + 逐行括号深度"的轻量扫描，不引入 Java 语法解析器。
-      目标是把 target-mall 这类常规 SpringBoot 工程的 controller 全部解析正确，
       解析不了的情况一律返回空（宁缺毋滥），由调用方回落 LLM 并标记
       ``route_status='static-failed'``。
     - 文件路径跨阶段比较一律走 :mod:`src.core.path_norm`（路径双轨制：
@@ -90,12 +88,10 @@ _INFRA_TYPES = frozenset({
     "HttpHeaders", "MultipartFile", "ServletContext", "SessionStatus",
 })
 
-# 权限守卫注解（Q1 业务族结构特征要用：无守卫 + 资源 id 入参 → 候选 IDOR）
+# 权限守卫注解
 _GUARD_ANNOTATIONS = ("PreAuthorize", "PostAuthorize", "PreFilter", "PostFilter",
                       "Secured", "RolesAllowed", "DenyAll", "PermitAll",
-                      # 2026-11-02 实杀：只认 Spring Security 的注解，**漏了 Shiro**。
-                      # 若依（RuoYi）全站用 Shiro，`@RequiresPermissions("system:role:list")`
-                      # 是最主要的鉴权方式（实测 112 处），却不被识别 ⇒ 105 条管理端点
+                      # 是最主要的鉴权方式，却不被识别 ⇒ 105 条管理端点
                       # 全被判成「未标注任何权限注解」的垂直越权（0 条确认）。
                       # 实测反例：SysRoleController#list 第 53 行就有 @RequiresPermissions，
                       # 方法在第 56 行。Shiro 的三种注解必须与 Spring 的同等对待。
@@ -164,11 +160,10 @@ class RouteEntry:
     guards: List[str] = field(default_factory=list)   # 方法/类级权限注解原文
     class_routes: List[str] = field(default_factory=list)  # 类级 @RequestMapping 前缀
     source: str = "static"         # 固定标记，区别于 LLM 推断
-    # URL 级全局守卫（2026-11-02）：框架的过滤链配置对整个应用做了「要求认证」的兜底，
     # 例如 Shiro 的 `filterChainDefinitionMap.put("/**", "user,...")`、
-    # Spring Security 的 `anyRequest().authenticated()`。
+    # Spring Security 的 `anyRequest.authenticated`。
     # 为什么要落到每个 entry 上：`has_guard` 只看方法/类注解，而**「没注解」不等于「没鉴权」**
-    # ——若依全站由 `/**` 兜底认证，58 个管理端点因此被判成垂直越权（0 条确认）。
+    # ——应用可能由全局过滤器兜底认证，此时管理端点缺注解不等于缺鉴权。
     app_requires_auth: bool = False
     app_auth_evidence: str = ""
 
@@ -252,7 +247,6 @@ class RouteIndex:
             return None
 
         # 方法体区间命中（最可靠）。
-        # R24：区间左端用 annotation_line（映射注解行）而非方法声明行——SAST findings 报的行号
         # 是**注解行**（如 ``@PostMapping("/order/{id}/refund")`` 在 107 行、方法声明在 108 行），
         # 旧实现只认 [方法声明行, end_line]，107 落在 ship 的 end_line(104) 之后、refund 的
         # 声明行(108) 之前 → 两侧都不命中，兜底取「不晚于 line 的最后一个 handler」→ 错绑 ship。
@@ -383,7 +377,7 @@ def _strip_comments_and_track_depth(src: str):
 
 
 def _split_top_level(text: str, sep: str = ",") -> List[str]:
-    """按顶层分隔符切分（忽略 <> 与 () 内部的 sep）。"""
+    """按顶层分隔符切分（忽略 <> 与  内部的 sep）。"""
     out: List[str] = []
     buf: List[str] = []
     depth = 0
@@ -504,7 +498,6 @@ def _parse_params(sig: str) -> List[RouteParam]:
         if not body:
             continue
         # 形参名取**最后一个**标识符：泛型 ``Map<String, String> params`` 内部有空格和逗号，
-        # 按「首 token=类型 / 次 token=名字」切会把 "String>" 当成参数名（实测事故）。
         tokens = body.split(" ")
         if len(tokens) < 2:
             continue
@@ -749,7 +742,7 @@ def parse_java_routes(file: str, content: str) -> List[RouteEntry]:
                 open_method = None
             elif not open_method.view_name and not open_method.json_response:
                 # 只有非 JSON 响应（@Controller 且无 @ResponseBody）的 return 才是视图名。
-                # 否则会把 `return "ERROR: " + e.getMessage()` 这类字符串字面量误当视图。
+                # 否则会把 `return "ERROR: " + e.getMessage` 这类字符串字面量误当视图。
                 mv = _VIEW_RETURN_RE.search(raw)
                 if mv:
                     val = mv.group(1)
@@ -780,7 +773,6 @@ def _collect_signature(lines: List[str], start_idx: int):
             # 内层括号（@RequestParam(...) / 泛型）必须原样保留，否则
             # ``@RequestParam(required = false, defaultValue = "") String keyword``
             # 的注解括号丢失后，其内部的逗号会被当成形参分隔符，把 "false"
-            # 解析成参数名（实测事故）。
             if ch == "(":
                 depth += 1
             elif ch == ")":
@@ -857,11 +849,10 @@ def build_route_index(
     return index
 
 
-# 全局兜底认证规则的识别（2026-11-02）。
 # 覆盖三种主流写法，都是「一条配置管全站」：
 #   Shiro:      filterChainDefinitionMap.put("/**", "user" | "authc" | "kickout,...")
-#   Spring Sec: .anyRequest().authenticated() / .hasRole(...) / .access(...)
-#   Spring Sec: http.authorizeRequests().antMatchers("/**").authenticated()
+#   Spring Sec: .anyRequest.authenticated / .hasRole(...) / .access(...)
+#   Spring Sec: http.authorizeRequests.antMatchers("/**").authenticated
 _AUTH_FILTER_TOKENS = ("user", "authc", "kickout", "onlineSession", "syncOnlineSession",
                        "jwt", "token", "oauth2", "bearer")
 _ANON_TOKENS = ("anon",)
@@ -870,7 +861,7 @@ _ANON_TOKENS = ("anon",)
 def _detect_global_auth_guard(files: Sequence[Dict[str, Any]]) -> tuple:
     """判定应用是否有「全站要求认证」的 URL 级守卫，返回 (bool, 证据原文)。
 
-    只看「catch-all 模式」（`/**` 或 `anyRequest()`），不看具体路径规则——
+    只看「catch-all 模式」（`/**` 或 `anyRequest`），不看具体路径规则——
     具体路径规则不影响「这个端点是否在认证之后」这个判断。
     """
     for f in files or []:

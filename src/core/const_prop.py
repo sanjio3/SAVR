@@ -1,20 +1,17 @@
 """轻量常量求值：识别「代码看起来读了外部输入，实际值是常量」这类语义等价变异。
 
-## 要治的病（r58 全族归因方案 4）
 
-OWASP Benchmark 的「安全变体」大量使用**索引偏移变异**，xss 族最典型
-（BenchmarkTest00151，真值 FP）：
 
     String bar = "alsosafe";
     if (param != null) {
-        List<String> valuesList = new ArrayList<String>();
+        List<String> valuesList = new ArrayList<String>;
         valuesList.add("safe");        // ← 垫底常量
         valuesList.add(param);          // ← 攻击者输入
         valuesList.add("moresafe");
         valuesList.remove(0);           // ← 移除垫底
         bar = valuesList.get(1);        // ← 实际取到 "moresafe"，不是 param
     }
-    response.getWriter().printf(bar, obj);
+    response.getWriter.printf(bar, obj);
 
 纯语法特征抓不到（`"safe"` 字面量纯度 45% = 噪声），**必须做一次列表状态求值**。
 方案 1 已用 `bench_safe_list_index` 语法规则捞到 22 个（零 TP 损失），
@@ -24,7 +21,7 @@ OWASP Benchmark 的「安全变体」大量使用**索引偏移变异**，xss �
 
 只做**字面量级**求值，不做符号执行、不做别名分析、不做跨方法传播：
 
-    - 跟踪 `List<String> x = new ArrayList<>()` 的 add / remove(int) / get(int) 序列；
+    - 跟踪 `List<String> x = new ArrayList<>` 的 add / remove(int) / get(int) 序列；
     - add 的实参是字符串字面量 → 记为该字面量；
     - add 的实参是变量/表达式 → 记为 UNKNOWN（保守，不当常量）；
     - remove(i) 按下标删除；get(i) 取出当前值。

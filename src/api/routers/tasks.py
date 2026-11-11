@@ -68,10 +68,9 @@ def list_tasks(workspace_id: int | None = None):
 
 
 def _attach_pipeline_tasks(task) -> None:
-    """读取时补挂「阶段 → 具体任务清单」（2026-09-17）。
+    """读取时补挂「阶段 → 具体任务清单」。
 
     attach_stage_tasks 原本只在扫描进程内 _build_pipeline 时执行，因此改造之前跑完的
-    历史任务（实测 run 17）快照里根本没有 tasks 键，前端打开就是一排空阶段卡——
     用户看不到任何具体任务，等于该功能对历史任务不存在。
 
     改为读取时按 summary.stage_results 现算挂载、不写库（快照保持原样，可回滚），
@@ -120,7 +119,7 @@ def list_task_events(task_id: int):
     return container.task_service.list_task_events(task_id)
 
 
-# 单 task 运行时运维快照（2026-09-17 落地）。区别于全局 /api/metrics/*（跨任务运营度量，
+# 单 task 运行时运维快照。区别于全局 /api/metrics/*（跨任务运营度量，
 # 对应前端 /ops 页）：本接口只回答「这一个 task 现在跑得怎么样」——进程锁、进度心跳时间戳
 # 与卡死判定、目标端口可达性、最近事件流、AI 调用埋点，供 TaskDetailPage「运维」tab 消费。
 # 卡死判定沿用项目铁律：scan_progress.json 连续 > 45 分钟无更新即判卡死（不是靠阶段文案猜）。
@@ -149,7 +148,7 @@ def get_task_runtime(task_id: int, event_limit: int = 40):
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # status 在领域模型里是枚举，直接 str() 会输出 "TaskStatus.COMPLETED"，前端不好消费。
+    # status 在领域模型里是枚举，直接 str 会输出 "TaskStatus.COMPLETED"，前端不好消费。
     _status_raw = _task_field(task, "status")
     status = str(getattr(_status_raw, "value", _status_raw) or "")
     out_dir = str(_task_field(task, "output_dir") or "")
@@ -180,7 +179,6 @@ def get_task_runtime(task_id: int, event_limit: int = 40):
     lock_path = os.path.join(task_root, f"scan_task.{task_id}.lock") if task_root else ""
     subprocess_lock = bool(lock_path and os.path.exists(lock_path))
 
-    # 3) 端口可达性：靶场（8080 java-sec-code / 8092 target-mall）+ 平台（8000 后端 / 5200 前端）
     ports = {p: _probe_port(p) for p in (8000, 5200, 8080, 8092)}
 
     # 4) 最近事件流 + AI 调用埋点（两张表都 fail-open，缺表不影响运维视图）
@@ -194,7 +192,6 @@ def get_task_runtime(task_id: int, event_limit: int = 40):
                 " WHERE task_id=? ORDER BY id DESC LIMIT ?",
                 (int(task_id), int(event_limit)), fetchall=True) or []
             events = [{"id": r["id"], "event_type": r["event_type"], "created_at": r["created_at"]} for r in rows]
-            # model_runs 无 task_id 列（2026-09-17 核实），无法按 task 精确归属。
             # 退而按本 task 运行时间窗统计（created_at 与 started_at 同为 ISO 文本，可直接比较），
             # 口径如实写在 note 里，绝不把「时间窗近似」说成「本任务精确」。
             _start = str(_task_field(task, "started_at") or "")
@@ -316,7 +313,6 @@ def resume_task(task_id: int):
 def cancel_task(task_id: int):
     """停掉一个 pending/running 的任务，但保留任务记录与已产出的数据。
 
-    2026-10-04 补齐：此前平台只有 DELETE（连带删记录），没有「只停不删」；而 DELETE
     在过去也只删库行、不停线程池里的任务，导致被删任务照样空跑抢资源。
     """
     try:
@@ -346,7 +342,7 @@ def clear_workspace_tasks(workspace_id: int):
 
 @router.delete("/api/scan-tasks")
 def purge_all_tasks(confirm: str = ""):
-    """删除全部任务及全部子表残留（2026-10-02 发难清单 Q5 落地）。
+    """删除全部任务及全部子表残留。
 
     破坏性操作：必须带 ?confirm=purge-all 才执行，否则 400 拒绝。
     级联范围：trigger_specs / model_runs / hypotheses / vuln_blackboard /

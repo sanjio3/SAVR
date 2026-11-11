@@ -1,4 +1,4 @@
-"""三期：对内 MCP Client（§4.2，2026-09-20）。
+"""三期：对内 MCP Client。
 
 让本平台 agentic 能调用**外部** MCP 工具（CodeQL、Semgrep、依赖库查询等）：
 

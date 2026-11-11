@@ -80,7 +80,6 @@ def _translate_probe_event(ev: Dict[str, Any]) -> Dict[str, Any]:
     event_type = str(ev.get("eventType") or ev.get("event_type") or "sink_call")
     severity = str(ev.get("severity") or "INFO")
     trace_id = str(ev.get("traceId") or ev.get("trace_id") or "")
-    # 2026-09-15 item 5：探针 SINK_HIT 现场上报 sinkMethod / stackTrace。
     # sink 既可能是字符串（仅文件名）也可能是对象（含 file/method），统一归一。
     sink_raw = ev.get("sink") or ""
     if isinstance(sink_raw, dict):
@@ -89,7 +88,6 @@ def _translate_probe_event(ev: Dict[str, Any]) -> Dict[str, Any]:
     else:
         sink_file = str(sink_raw)
         sink_method = ""
-    # 顶层 sinkMethod 优先（探针 2026-09-15 新增字段），兜底对象内 method。
     sink_method = str(ev.get("sinkMethod") or sink_method or "")
     payload = ev.get("payload")
     if payload is None:
@@ -100,7 +98,6 @@ def _translate_probe_event(ev: Dict[str, Any]) -> Dict[str, Any]:
         context = {}
     vuln_type = str(context.get("vulnType") or context.get("vuln_type") or event_type)
     principal = str(context.get("principal") or "")
-    # 顶层 stackTrace 优先（探针 2026-09-15 新增字段），兜底 context.stackTrace / stack_trace。
     stack_trace = str(ev.get("stackTrace") or context.get("stackTrace") or context.get("stack_trace") or "")
 
     # v2 证据分层（L3 语义层）：探针在 context 中回带的消毒器 / 异常 / 插桩台账，提升到顶层，
@@ -111,22 +108,18 @@ def _translate_probe_event(ev: Dict[str, Any]) -> Dict[str, Any]:
         if _v not in (None, ""):
             l3_fields[_k] = _v
 
-    # 层1A（2026-08-30 决议）：优先采用探针在 sink 现场经 TaintStore 解析出的 canary 身份段。
     # header 通道 A 的 X-SASTAI-Trace 仅落在探针字段、payload 里没有，此路修复 header 路径 0 行问题；
     # 否则退回在 payload/context/traceId 文本里扫描平台注入的 s4st41<16hex>。
     probe_canary = str(ev.get("canary") or "")
     probe_identity = _extract_canary_identity(probe_canary, {}, "")
     identity = probe_identity or _extract_canary_identity(payload, context, trace_id)
 
-    # 层2A（2026-08-30 决议）：canary 抵达 sink 时探针断言 SINK_REACHED。
     # 优先信任探针断言（ev["canaryState"]）；探针未断言时，对 sink 型事件按「命中 canary 即抵达 sink」
     # 兜底断言 sink-reached（与探针 resolveCanaryForSink 语义一致），使 D1 重放链路标记 confirmed_runtime。
     # 设计一①：探针在 sink 现场（canary 确证位于 sink 实参）显式断言的 SINK_REACHED，归一到独立的
     # sink-reached-probe 态——与被动兜底 sink-reached 区分，使 D2 即便 attack_degraded 也判有害。
     probe_canary_state = str(ev.get("canaryState") or ev.get("canary_state") or "")
-    # 2026-10-07（r63-verify 实测根因修复，方法A 第三处）：把 TAINT_FLOW 从「参与到达裁决」里摘掉。
     #
-    # 实测依据（run 239 pathtraver-1）：
     #   162 个被判「到达」的 spec 里，0 个带真实 sink 级断言；到达信号全部来自 TAINT_FLOW，
     #   而它的 canary_match 是 **trace 级**（请求里带过 canary 即为 1）、
     #   且 821 条 TAINT_FLOW 的 sink_method **全为空串**（后端连是哪个 sink 都不知道）。
@@ -209,7 +202,6 @@ async def agent_heartbeat(request: Request, x_agent_token: str = Header(default=
     app_name = str(body.get("appName") or body.get("app_name") or "")
     agent_id = str(body.get("agentId") or body.get("agent_id") or "")
     agent_phase = str(body.get("agentPhase") or body.get("agent_phase") or "")
-    # 2026-10-28（本轮/486/488 根因）：本端点原先把 authenticate/update_heartbeat 这类
     # 同步 DB 调用直接跑在事件循环线程上；扫描期 runner 高频心跳 + 事件批量写会把循环堵死，
     # 所有 HTTP（含 /ping）一起超时。DB 调用一律 run_in_threadpool 挪出事件循环。
     session = await run_in_threadpool(
@@ -270,7 +262,6 @@ def _safe_json(raw: bytes) -> Dict[str, Any]:
         data = json.loads(text)
         return data if isinstance(data, dict) else {}
     except Exception:
-        # 2026-10-15 修复（P-A 根因兜底）：探针 JsonCodec.quote 曾漏转义控制字符（\r/\t 等），
         # 使整批事件体 JSON 非法 → 本函数原返回 {} → events=[] → accepted:0（HTTP 200），整批
         # 被**静默丢弃**（探针侧无告警）。探针 JSON 为紧凑格式（无结构空白），故所有控制字符都在
         # 字符串内——补转义为 \uXXXX 后重试即可救回。仅对首次解析失败者生效，合法 JSON 不受影响。

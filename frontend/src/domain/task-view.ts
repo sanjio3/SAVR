@@ -23,7 +23,6 @@ export type TaskStageKey = (typeof TASK_STAGE_ORDER)[number];
 /**
  * 严重度 → sev-* 色调类名（唯一实现）。
  *
- * 2026-09-22：此前 TaskDetailPage / ChatOpsPage / SCAAssetPage 各自复制了一份字面相同的
  * 实现（只是局部变量名不同）。这类「复制粘贴的判定函数」最怕只改一处：三个页面的徽章
  * 颜色会不一致，而且不会有任何报错。收敛到这里，由 SeverityBadge.vue 独占调用。
  *
@@ -67,7 +66,6 @@ const STAGE_LABELS: Record<TaskStageKey, string> = {
 };
 
 /**
- * 阶段**裸名**（不含阶段码）—— 2026-09-22 新增。
  *
  * 起因：流程条与阶段卡都同时渲染「阶段码徽标」和「带码的标签」，于是读出来是
  * 「A1 A1 规则扫描」（10 个阶段全中，仅 preprocess 因标签里原本没写码而幸免）。
@@ -129,7 +127,6 @@ export function stageStatusLabel(status: string) {
     case "skipped":
       return "跳过";
     case "blocked":
-      // 2026-09-22 真实浏览器走查修正：blocked 是后端**依赖门禁**（task_service.py 对
       // 「status=running/completed 但上游未完成」的阶段置 blocked，message="等待 d1 完成"），
       // 原先与 pending 一起映射成「未开始」→ 视觉上把「已进入链路、在等上游」伪装成「还没排到」。
       // 注意 statusLabel 是 StepFlow 里唯一可见的状态文字（message 不渲染），所以这里必须说清楚。
@@ -187,7 +184,6 @@ export function eventLogs(events: TaskEvent[]) {
         event.event_type === "task_log" ||
         event.event_type === "task_failed" ||
         event.event_type === "task_completed" ||
-        // 2026-09-17（待请示批准）：把 A2/I2 闭环心跳（i2_rerun）与 D2 验证迭代
         // （d2_verify_progress）也放进事件流实时滚动。此前这两类心跳被过滤掉，
         // 闭环过程除了一句「第 N/M 轮」进度条外完全黑盒。
         (event.event_type === "task_progress" && hasClosedLoopHeartbeat(event.payload)),
@@ -228,7 +224,6 @@ export function eventLogs(events: TaskEvent[]) {
   return normalized.filter((item) => item.text);
 }
 
-// 闭环心跳判定与文案（2026-09-17 落地）。真实 payload 形态（run 16 实测）：
 //   {"i2_rerun": {"iteration":1,"max_iterations":3,"status":"running","a2_feedback":4,"replay_adjustments":0}}
 //   {"d2_verify_progress": {"status":"done","iteration":0,"exploitable_count":65}}
 function hasClosedLoopHeartbeat(payload: Record<string, unknown> | undefined): boolean {

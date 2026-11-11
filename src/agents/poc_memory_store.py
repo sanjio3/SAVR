@@ -76,7 +76,7 @@ class PocMemoryStore:
     """线程安全的 POC 记忆库（JSON 落盘 + 内存缓存）。
 
     用法：
-        store = PocMemoryStore()                      # 默认 data/poc_memory.json
+        store = PocMemoryStore                      # 默认 data/poc_memory.json
         store.record(sample)                          # 写入/更新一条正样本
         few = store.retrieve(family, framework, sig)   # 检索 top-k
     """

@@ -19,7 +19,7 @@ def _get_report_or_404(report_id: int):
 def _build_structured(task_id: int) -> dict:
     """按 task 聚合出可视化看板所需的结构化数据（只读，不改任何落库契约）。
 
-    为什么需要：FINAL_REPORT 是纯 Markdown（reports 表实测 35/35 全是 FINAL_REPORT），
+    为什么需要：FINAL_REPORT 是纯 Markdown，
     数字全压在一张表里不可读；而 findings/vuln_blackboard/trigger_specs 三表已具备
     全部可视化维度（严重度、族、来源引擎、验证状态、sink 身份、闭环状态），只是没人读。
     本函数把这些维度一次算清，前端按维度画图 + 联动筛选，无需再解析 Markdown。
@@ -52,7 +52,7 @@ def _build_structured(task_id: int) -> dict:
         (task_id,))
     total_specs = _one("SELECT COUNT(*) FROM trigger_specs WHERE task_id=? AND COALESCE(suppressed_by_safe_verdict, 0) = 0", (task_id,))
     # 族标错的可观测信号：族标签与「代码能力证据」对不上的条数。
-    # 族标签来自 A1/A2，会标错（实测检出用例里 17.3% 与真实类别完全对不上）。
+    # 族标签来自 A1/A2，会标错。
     # 这里不改族，只把冲突数暴露出来，并同时给出能力族供人工判读。
     family_evidence_conflict = _one(
         "SELECT COUNT(*) FROM trigger_specs WHERE task_id=? "
@@ -95,7 +95,7 @@ def _build_structured(task_id: int) -> dict:
     ):
         matrix.setdefault(str(r.get("f")), {})[str(r.get("v"))] = int(r.get("c") or 0)
 
-    # —— 发现清单（含 Q1 证据强度，让「运行时/两层打架」变人话）——
+    # —— 发现清单——
     from src.iast.canary import CanaryMatcher as _CM
     from src.iast.sink_identity import is_genuine_sink_identity as _Genuine
     items = []
@@ -114,7 +114,7 @@ def _build_structured(task_id: int) -> dict:
         vstat = str(r.get("verification_status") or "")
         istate = str(r.get("iast_state") or "")
         # 证据强度：confirmed 且运行时抵达真 sink = 强；confirmed 但落噪声 sink = 弱
-        # （Q1 修复后这类会被降级，此处仅作展示口径兜底）；仅 DAST 轴 = dast_only。
+        # ；仅 DAST 轴 = dast_only。
         reached = bool(r.get("sink_reached")) or istate in (
             "sink-reached", "sink-reached-probe", "iast-reached", "iast-authz-confirmed")
         noise_only = False

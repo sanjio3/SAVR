@@ -6,7 +6,7 @@ import net.bytebuddy.asm.Advice;
  * L2 propagation: String.format (java.base, bootstrap-injected).
  *
  * format("... %s ...", taintedArg): the produced String is tainted if the format
- * string OR any argument is tainted. Catches the String.format() SQL/command
+ * string OR any argument is tainted. Catches the String.format SQL/command
  * construction bypass form.
  */
 public final class PropagateStringFormatAdvice {

@@ -1,16 +1,16 @@
-"""I2 裁决器（重构文档 §8.1 闭环仲裁 + §4.7.1 覆盖率审计 + §4.6 净化器反哺）。
+"""I2 裁决器。
 
 职责：综合 A2 假说（findings）+ I1 观测（iast_events）+ D2 裁定，做覆盖率差集审计，
 产出差集分类与反哺候选（净化器 + 新规则种子）。所有反哺动作走 RuleFeedback 人工 confirm
 闸门（第三门），本模块只产出候选、绝不自动 confirm（禁止把运行时假象固化成永久规则）。
 
-§4.7.1 差集语义：
+ 差集语义：
 1. 假说有、观测无（hypothesis_only）→ SAST 假阳性嫌疑；跨多次扫描稳定才降级 likely-false-positive
    或触发净化器白名单候选。
 2. 观测有、假说无（observed_only）→ SAST 漏报；IAST 真实命中但无法对齐任何 SAST finding，
    即 SAST 规则未覆盖该 source→sink 路径，作为"新增规则"反哺种子。
 
-§4.6 净化器反哺三门门槛（缺一不可）：
+ 净化器反哺三门门槛（缺一不可）：
 1. 同一净化器多次独立观测一致；
 2. stackTrace 能定位到明确方法（类+方法+行号）；
 3. RuleFeedback 人工 confirm 闸门（禁止自动入库）。
@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 # hypothesis_only 虚高 → 大量「IAST 未观测到匹配 canary」的假反馈回灌 A2（闭环空转）。
 _OBSERVED_STATES = ("arrived", "arrival-sanitized", "sink-reached", "sink-reached-probe")
 
-# 五态 final_state（重构文档 3.18，I2 综合裁定归属）
+# 五态 final_state
 FINAL_CONFIRMED_ATTRIBUTABLE = "confirmed_attributable"
 FINAL_RUNTIME_CONFIRMED = "runtime_confirmed"
 FINAL_AMBIGUOUS = "ambiguous"
@@ -148,7 +148,7 @@ class D2Verdict:
 
 @dataclass
 class I2Decision:
-    """I2 LLM 裁决器对单条 spec 的裁决（§8.1 AI 检测 review 制度）。"""
+    """I2 LLM 裁决器对单条 spec 的裁决。"""
     hypothesis_id: str
     final_state: str
     action: str                    # pass / re_correct / re_send / rollback_to_a2
@@ -169,7 +169,6 @@ class I1Judge:
             state = getattr(v, "state", STATE_NO_ARRIVAL) or STATE_NO_ARRIVAL
             chain = getattr(v, "chain_conformance", None) or {}
             conforms = bool(chain.get("conforms"))
-            # 2026-09-27 一致性修复：reached 判定同样收口到 is_sink_reached(state)（与 D2Judge:216 对齐）。
             # 历史实现 `state == STATE_SINK_REACHED` 漏掉探针显式断言态 sink-reached-probe，导致 I1 对
             # 「经 probe 抵达 sink」的假说误判 reached=False，仅依赖 I1 链路符合性兜底。
             reached = is_sink_reached(state)
@@ -200,7 +199,6 @@ class D2Judge:
     def judge(self, per_hypothesis: Dict[str, "IastVerdict"], raw_dast_impact: Optional[Dict[str, Any]] = None) -> List[D2Verdict]:
         raw = raw_dast_impact or {}
         slices = raw.get("slices") or {}
-        # 真实攻击元数据（2026-08-29）：slice 是 per-param 语义不含元数据，故统一从 raw 取。
         # attack_degraded=全部回放仅发 canary 探针；attack_degraded_any=至少一条降级。
         attack_degraded = bool(raw.get("attack_degraded"))
         attack_degraded_any = bool(raw.get("attack_degraded_any"))
@@ -221,7 +219,7 @@ class D2Judge:
             impact_observed = bool((d1.get("impact_observed") or d1.get("reached"))) if isinstance(d1, dict) else False
             # 单一真相源：sink_reached 判定收口到 is_sink_reached（含探针显式断言态
             # sink-reached-probe）。历史实现用 `state == STATE_SINK_REACHED` 漏掉 probe 态，
-            # 导致 D2 的 sink_reached_count 恒 0（task-5 实测 30 条 sink 事件里 26 条是 probe 态）。
+            # 导致 D2 的 sink_reached_count 恒 0。
             sink_reached = is_sink_reached(state)
             harmful = sink_reached and reached
 
@@ -330,12 +328,12 @@ def parse_stack_frames(stack_trace: str) -> List[Dict[str, Any]]:
 
 
 class I2Adjudicator:
-    """I2 裁决器：覆盖率差集审计 + 反哺候选（§4.7.1 / §4.6）。
+    """I2 裁决器：覆盖率差集审计 + 反哺候选。
 
     rule_feedback：可选 RuleFeedbackService，提供 record_candidate 落库候选（第三门人工 confirm
     不在此调用）。缺省 None 时 harvest_feedback 只返回候选清单、不落库（便于离线测试）。
     min_observations：净化器反哺门1 的"多次独立观测一致"阈值（默认 2）。
-    stability_threshold：§4.7.1 跨扫描稳定阈值——同一 hypothesis_only 跨该数量任务仍无观测 → likely-false-positive（默认 2）。
+    stability_threshold： 跨扫描稳定阈值——同一 hypothesis_only 跨该数量任务仍无观测 → likely-false-positive（默认 2）。
     """
 
     def __init__(
@@ -355,10 +353,10 @@ class I2Adjudicator:
 
     # ------------------------------------------------------------------ 覆盖率审计 #
     def audit_coverage(self, workspace_id: Optional[int] = None, task_id: Optional[int] = None) -> Dict[str, Any]:
-        """§4.7.1 覆盖率审计：SAST 假说集 ⊖ IAST 观测集 → matched / hypothesis_only / observed_only。
+        """ 覆盖率审计：SAST 假说集 ⊖ IAST 观测集 → matched / hypothesis_only / observed_only。
 
         §用户需求④：I2 只审计「有对应 trigger_spec、即真正经 D1 发放过攻击流量的 A2 假说」，
-        不把全部 findings（含 SCA 70 条、以及未解析出可路由端点→没登记 spec 的 SAST 命中）
+        不把全部 findings
         计入 hypotheses——那些从没被 D1 验证过，判为 false-positive 是误判、纯属浪费。
         trigger_specs 就是 D1 的发放清单；以「本任务 findings 中、且存在 trigger_spec 的哈希」
         作为 I2 审计对象（与 spec 取交集可顺带排除跨任务污染的孤儿 spec）。
@@ -399,7 +397,7 @@ class I2Adjudicator:
         matched = sorted(hypothesis_hashes & observed_hashes)
         hypothesis_only = sorted(hypothesis_hashes - observed_hashes)
 
-        # §4.7.1 跨扫描稳定性：hypothesis_only 跨多次扫描稳定 → likely-false-positive
+        #  跨扫描稳定性：hypothesis_only 跨多次扫描稳定 → likely-false-positive
         stability = self._stability_map(hypothesis_only, workspace_id)
         hypothesis_only_detail = [
             {
@@ -410,13 +408,13 @@ class I2Adjudicator:
             for h in hypothesis_only
         ]
 
-        # §3.18 完整 schema：每假说的 evidence_chain（SAST→DAST→IAST→D2）+ included_in_report
+        #  完整 schema：每假说的 evidence_chain（SAST→DAST→IAST→D2）+ included_in_report
         per_hypothesis = []
         for h in matched + hypothesis_only:
             per_hypothesis.append({
                 "vulnerability_hash_v2": h,
                 "flow_type": derive_flow_type(hash_to_family.get(h, "")),
-                "taint_marker": hash_to_canary.get(h, ""),  # §7.2 typed canary 触发参数（前端展示）
+                "taint_marker": hash_to_canary.get(h, ""),
                 "evidence_chain": self._evidence_chain(h, workspace_id),
                 "included_in_report": h in matched,  # 仅 matched 进入报告
                 "sast_hypothesis": {"vulnerability_hash_v2": h},
@@ -431,7 +429,6 @@ class I2Adjudicator:
             },
         }
 
-        # E-1/F-2（2026-09-28 批准）：missing_route 观测面并入 audit_coverage。
         # 源=scan_tasks.summary_json.stage_results.a2_poc.missing_route_watch（benchmark_cli 落盘）。
         try:
             _mrow = self.db.execute(
@@ -489,7 +486,7 @@ class I2Adjudicator:
         }
 
     def adjudicate(self, workspace_id: Optional[int] = None, task_id: Optional[int] = None) -> Dict[str, Any]:
-        """I2 闭环裁决汇总：覆盖率差集 + 反哺候选 + §3.18 完整 schema。"""
+        """I2 闭环裁决汇总：覆盖率差集 + 反哺候选 +  完整 schema。"""
         audit = self.audit_coverage(workspace_id, task_id)
         feedback = self.harvest_feedback(workspace_id, task_id)
         audit["feedback"]["sanitizer_candidate_count"] = len(feedback["sanitizer_candidates"])
@@ -499,10 +496,10 @@ class I2Adjudicator:
             "final_state_summary": self._final_state_summary(audit),
         }
 
-    # ------------------------------------------------------------------ 五态综合裁定（§8.1 I2 归属）#
+    # ------------------------------------------------------------------ 五态综合裁定#
     @staticmethod
     def adjudicate_final_state(*, iast_evidence: Optional[Dict[str, Any]], dast_impact_evidence: Optional[Dict[str, Any]], d2_verdict: Optional[Dict[str, Any]] = None, family: Optional[str] = None, attempts: Optional[List[Dict[str, Any]]] = None, endpoint: str = "") -> Dict[str, Any]:
-        """§8.1 I2 综合裁定：综合 I1 监听（iast_evidence.state + chain_conformance）+ D2 结果点核实
+        """ I2 综合裁定：综合 I1 监听（iast_evidence.state + chain_conformance）+ D2 结果点核实
         （d2_verdict.harmful）+ D1 影响侧（dast_impact_evidence），出五态 final_state（3.18）。
 
         I2 作为总开关收集 I1 与 D2 的结论：D2 结果点有害(d2_verdict.harmful) 与 D1 影响观测
@@ -516,7 +513,6 @@ class I2Adjudicator:
         # 与 no_evidence（永久非漏洞）严格区分——有该标记且无其他证据时，结论应为
         # target_unhealthy 而非 no_evidence，使闭环可重试而非误判「无漏洞」。
         target_unhealthy = bool(dast_impact_evidence.get("target_unhealthy"))
-        # 缺口三（2026-09-27）：被 WAF/拦截器/参数截断 拦截的请求，不应被误判为「漏洞无证据（干净）」。
         # waf_blocked 与 target_unhealthy 并列 rank 0，但语义不同（靶场健康但请求被安全策略拦截）。
         # 优先于 target_unhealthy 与 no_evidence——只要观测到拦截特征，结论即 waf_blocked（可重试/人工确认）。
         waf_blocked = bool(dast_impact_evidence.get("waf_blocked"))
@@ -526,7 +522,6 @@ class I2Adjudicator:
         d2_harmful = bool(d2_verdict.get("harmful"))
         chain = iast_evidence.get("chain_conformance") or {}
         stable_disproof = bool(dast_impact_evidence.get("stable_disproof"))
-        # 真实攻击元数据（2026-08-29）：D1 降级（仅 canary 探针）时，canary 是身份串不是攻击载荷，
         # 它到达 sink 只证明「可达」，不证明「可利用」。此前本函数完全不感知该字段，
         # 导致降级攻击照走 dast_impact=True → 直接落到最强态 confirmed_attributable（假阳性）。
         attack_degraded = bool(dast_impact_evidence.get("attack_degraded"))
@@ -576,14 +571,11 @@ class I2Adjudicator:
                     "chain_conformance": chain,
                     "attack_degraded": attack_degraded,
                 }
-            # —— D2 确认门槛收紧（2026-09-26 F4 后精确率整改③）——
             # 此前「注入族 + 离线 DAST 影响 + 未到 sink」直接判 confirmed_attributable，
-            # 是探针观测为 0 时代的兜底；round-13 探针已实测 1744 个 sink-reached 事件，
             # 该分支沦为精确率杀手：降级攻击（仅 canary 探针）+ 404 响应上的「影响」也升确认。
             # 收紧后：降级攻击且探针无 sink 证据 → 最多 ambiguous（进 suspicious 档，
             # 交 rollback_to_a2 补真实 payload），不再计 confirmed；仅「真实 payload 攻击
             # （非降级）+ 可观测影响」才保留离线确认通道。
-            # 2026-09-26（round15 召回回收）carve-out：若 D2 已独立判定结果点有害
             # （d2_harmful=True，动态确认强证据），即便本次为降级攻击（D1 仅投 canary），
             # 也确认可利用——降级是 payload 质量限制，不是漏洞存在性限制；D2 有害判定
             # 不依赖 404 上的弱影响，故不会重新打开「404 伪影响」这个精确率漏洞。
@@ -714,12 +706,10 @@ class I2Adjudicator:
                 "noise_sink_rejected": True,
             }
 
-        # 2026-10-25（两档证据）：可达 ≠ 有害。族特有有害证据明确缺失时降级为不明确。
         # 注意：_harm_note 必须在分支**外**初始化——此前只在 is_sink_reached 分支里赋值，
         # 导致所有「非 sink-reached」路径（arrival_sanitized / no_arrival，占多数）走到
         # 下面的 reason 拼接时抛 UnboundLocalError，直接崩掉整个裁定（被全量单测抓出）。
         _harm_note = ""
-        # 2026-10-31（本轮实证）：行为 oracle 正向信号本身就是「可观测影响」，
         # 必须与 d2_harmful / dast_impact 同级参与准入 —— 否则它永远进不了下面的
         # harm_evidence 评估分支（原实现只在「已有影响证据」时才调 evaluate，
         # 而 oracle 恰恰是用来**产生**影响证据的，形成死循环）。
@@ -827,7 +817,6 @@ class I2Adjudicator:
                 },
                 "retry": True,
             }
-        # 降级攻击（2026-08-29）：sink 也到了，但 A2 没造出真实 payload，D1 只投了 canary。
         # 这不是 D1 发得不对，重发同一条 canary 毫无意义——必须回灌 A2 补造真实攻击 payload 再跑。
         attack_degraded = bool(dast.get("attack_degraded"))
         biz = dast.get("business_logic") or {}
@@ -848,7 +837,7 @@ class I2Adjudicator:
                 },
                 "retry": False,
             }
-        # 攻击被 WAF / 防护策略拦截（Q6 五类·blocked）：sink 可能根本没收到攻击，
+        # 攻击被 WAF / 防护策略拦截：sink 可能根本没收到攻击，
         # 须升级 payload 变体（编码/替代语法）绕过，而非回滚 A2 重写假说。归入运行时观测失败，
         # 由重放侧 decision 表（_FIVE_CLASS_ACTIONS.blocked → escalate_variant）处理。
         waf_blocked = bool(dast.get("waf_blocked"))
@@ -866,11 +855,9 @@ class I2Adjudicator:
             # 窗口内 I1 从未观测到 canary 到达 sink、且 D1 也未证 reached、且无任何离线 DAST 影响——
             # A2 假说的路由/参数/调用链与实际不符，属于「假说不符合」，按 Q2 回灌 A2 重新推导，
             # 而非无脑重发同一条重放。
-            # 2026-09-19 修正（A/B 暴露的语义矛盾）：若已通过离线 DAST 影响确认（impact_observed=True，
             # 即注入族 Fix B 分支确认的已利用漏洞），则不应再回灌 A2 重推——否则已确认的漏洞会被
             # 丢进闭环二次回灌，稀释 rollback 信号、造成「闭环空转」。降级攻击（attack_degraded）
             # 仍需 rollback（A2 未造真实 payload），其分支在上方已先行返回，不受此处影响。
-            # Q6 五类细分（2026-09-30）：按 HTTP 状态码区分「路由不可达」与「参数未达」，
             # 供重放侧 decision 表走不同动作（repush_endpoint / inject_all_params）。
             _code = dast.get("status_code")
             _fc = "route_unreachable" if _code in (404, 410, 400) else "param_not_arrived"
@@ -881,7 +868,6 @@ class I2Adjudicator:
                 "correction_hint": {"http_status": _code},
                 "retry": False,
             }
-        # Q6 五类·arrived_unconfirmed（2026-09-30 激活）：探针已显式断言 canary 落到 sink 实参
         # （sink-reached-probe 强证据），但 D2 未确认结果点有害。此时「到达」已成立，问题在确认力度，
         # 应升级 payload 变体 + 延长等待窗口重验，而非回滚 A2 重写假说（探针已证到达，说明假说路由正确）。
         # 注：XSS-7 反射类（探针未织 reflection sink）先归 param_not_arrived（见上方 NO_ARRIVAL 分支），
@@ -896,16 +882,15 @@ class I2Adjudicator:
             }
         return {"action": "pass", "reason": "默认通过（未触发明确修正条件）", "correction_hint": {}, "retry": False}
 
-    # ------------------------------------------------------------------ §8.1 I2 LLM 裁决器（AI 检测 review 制度）#
+    # ------------------------------------------------------------------  I2 LLM 裁决器（AI 检测 review 制度）#
     def _get_gateway(self):
         if self._gateway is None:
             try:
-                # 2026-09-19：必须经 resolve_llm_config 补齐 llm 段。
                 # self.config 在两条构造路径上都是局部投影 —— D2 facade 路径传的是
                 # benchmark_cli 的 d2 agent_config（只有 api 子表）、API 路径
                 # （api/dependencies.py）干脆不传 —— 直接喂给 gateway_from_config
                 # 会取不到 llm.provider，判成 offline-heuristic，于是这条
-                # i2-adjudication AI review 链路**从未真正跑过**（实测确认）。
+                # i2-adjudication AI review 链路**从未真正跑过**。
                 from src.core.model_gateway import resolve_llm_config
                 self._gateway = gateway_from_config(resolve_llm_config(self.config))
             except Exception as _e:
@@ -922,7 +907,7 @@ class I2Adjudicator:
         taint_flow_hypothesis: Optional[Dict[str, Any]] = None,
         dast_impact_evidence: Optional[Dict[str, Any]] = None,
     ) -> List["I2Decision"]:
-        """§8.1 I2 LLM 裁决器（AI 检测 review 制度）：综合 I1 + D2 双重证据，以「条」为颗粒度裁定
+        """ I2 LLM 裁决器（AI 检测 review 制度）：综合 I1 + D2 双重证据，以「条」为颗粒度裁定
         pass / re_correct / re_send / rollback_to_a2，并把不符合的假说回灌 A2 的修正提示写入
         feedback_to_a2。无可用 LLM（离线）或解析失败时回退 _adjudicate_rule_based，保证闭环不中断。
 
@@ -930,7 +915,6 @@ class I2Adjudicator:
         五个证明义务），I2 用它和运行时证据对账，产出结构化 proof_resolution 与残差 diff。
         """
         specs = specs or []
-        # 2026-10-31（历史轮次 连续 4 轮实证）：**裁决前从 DB 补齐 oracle 观测**。
         #
         # 时间线：行为 oracle 的探测在 D1 完成（`d1_service._run_family_oracle`）并写
         # `trigger_specs.oracle_state/oracle_signal`；而这里收到的 `specs` 是上游传入的
@@ -1027,7 +1011,6 @@ class I2Adjudicator:
             "reached": bool(d2 and d2.sink_reached),
             "status_code": (d2.detail or {}).get("dast_status_code") if d2 else None,
             "body": (d2.detail or {}).get("dast_body", "") if d2 else "",
-            # 2026-09-19 修复（A/B 暴露的死代码）：D2Judge 在 detail 里已算好 attack_degraded /
             # business_logic / authz_hook_confirmed 等语义信号，但本 bundle 此前只透传 impact/reached，
             # 导致 adjudicate_final_state / decide_next_action 里读取 attack_degraded、business_logic 的分支
             # 全部是死代码 —— 降级攻击的「不回滚、补造 payload」语义与业务族「差分确认」语义从未真正生效。
@@ -1094,7 +1077,6 @@ class I2Adjudicator:
         """
         i1_by_h = {v.hypothesis_id: v for v in i1_verdicts}
         d2_by_h = {v.hypothesis_id: v for v in d2_verdicts}
-        # 2026-10-25（两档证据）：一次性取本任务的重放响应摘要，供族特有有害证据判定。
         # 批量查而非逐条查：349 spec 逐条查会让 I2 多出数百次 DB 往返。
         # fail-open：查不到就传空，判据退化为原逻辑，绝不因取证据失败而改判。
         _attempts_by_spec: Dict[int, List[Dict[str, Any]]] = {}
@@ -1128,7 +1110,6 @@ class I2Adjudicator:
                 dast_impact_evidence["target_unhealthy"] = bool(
                     dast_impact_evidence.get("target_unhealthy") or _outer_dast.get("target_unhealthy")
                 )
-                # 缺口三（2026-09-27）：把 D1 聚合层标记的 WAF/拦截器 拦截信号透传到 final_state 裁定
                 # （与 no_evidence / target_unhealthy 区分，三者并列 rank 0 但语义不同）。
                 dast_impact_evidence["waf_blocked"] = bool(
                     dast_impact_evidence.get("waf_blocked") or _outer_dast.get("waf_blocked")
@@ -1142,10 +1123,9 @@ class I2Adjudicator:
             # 把 spec 的 oracle 结论塞进 iast_evidence（adjudicate_final_state 从那里读），
             # 供 harm_evidence 判定「行为 oracle 正向 ⇒ 有害档证据」。
             #
-            # 2026-10-31（本轮实证）：**必须用直接赋值，不能用 setdefault**。
             # `_evidence_bundle` 产出的 iast_evidence 里通常已经带着 `oracle_state: ""`
             # （空串占位），而 `setdefault` 只在键**不存在**时才写入 ⇒ 真值永远进不去。
-            # 实测：本轮日志已确认 `[I2][oracle-fill] 1/1 条带信号`（specs 侧补齐成功），
+            # 实测：本轮日志已确认 `[I2][oracle-fill] 1/1 条带信号`，
             # 但 oracle 转化仍只有 3/11，就是卡在这一行。
             # 语义上也没问题：spec 里的非空值才是权威观测，空串不构成「已有强信号」。
             if _spec_row.get("oracle_state") or _spec_row.get("oracle_signal"):
@@ -1188,9 +1168,8 @@ class I2Adjudicator:
     def _build_feedback_to_a2(self, hid, verdict, action, spec) -> Dict[str, Any]:
         """把不符合的假说整理成 A2 可消费的回灌提示（闭环反思用）。
 
-        2026-09-17 整改（#4 根因）：原实现在 action=pass 且 confirmed 时直接 return {}，
         导致注入族（I2 判 confirmed=true / action=pass 的典型结局）的 feedback_to_a2 恒为空，
-        闭环退化成「只调重放参数、从不修假说」，a2_feedback 三轮恒为 0（见 doc §4.1）。
+        闭环退化成「只调重放参数、从不修假说」，a2_feedback 三轮恒为 0。
 
         修正：即便整体确认通过，只要链路仍有「确凿缺失节点」（chain_conformance.missing 非空，
         属假说链路本身缺陷：族误判 / 端点幻觉 / 参数位错），仍回灌 A2 使其收敛。
@@ -1211,7 +1190,6 @@ class I2Adjudicator:
             "residual_gaps": {"still_open": missing},
             # 未闭合门禁属假说链路缺陷，显式标类保证进入 a2_actionable（不依赖关键词漂移）
             "failure_class": "hypothesis_defect" if missing else (action.get("failure_class") or ""),
-            # E1（2026-10-10）：透传值级命中形态（hit_live / hit_sanitized / hit_opaque / miss），
             # 供 I2 classify_feedback 识别 RUNTIME_REFUTATION（运行时证否黄金样本）。
             # verdict 由 adjudicate_final_state 透传 iast_evidence，其 value_hit.form 即值级形态。
             "value_hit_form": str(
@@ -1312,7 +1290,7 @@ class I2Adjudicator:
 
     # ------------------------------------------------------------------ 内部 #
     def _sanitizer_candidates(self, workspace_id: Optional[int]) -> List[Dict[str, Any]]:
-        """§4.6 净化器反哺候选：arrival-sanitized 事件 → 解析 stack_trace 定位方法，
+        """ 净化器反哺候选：arrival-sanitized 事件 → 解析 stack_trace 定位方法，
         门1（多次独立观测一致 ≥ min_observations）+ 门2（明确方法）过滤。"""
         sql = ("SELECT sink_method, stack_trace FROM iast_events WHERE canary_state = 'arrival-sanitized'")
         params: List[Any] = []
@@ -1353,7 +1331,7 @@ class I2Adjudicator:
         return candidates
 
     def _rule_seed_candidates(self, workspace_id: Optional[int], task_id: Optional[int]) -> List[Dict[str, Any]]:
-        """§4.7.1 观测有、假说无 → 新增 sink 规则种子（从观测 sink 方法提炼）。"""
+        """ 观测有、假说无 → 新增 sink 规则种子（从观测 sink 方法提炼）。"""
         audit = self.audit_coverage(workspace_id, task_id)
         seeds: List[Dict[str, Any]] = []
         seen: set = set()
@@ -1400,7 +1378,6 @@ class I2Adjudicator:
         sql = "SELECT vulnerability_hash_v2, taint_marker FROM trigger_specs"
         clauses: List[str] = []
         params: List[Any] = []
-        # 2026-10-05（r58 整改方案 2 消费口同步）：已被 safe_verdict 判定为安全实现的 spec
         # 不参与裁决——裁决器读 taint_marker 的目的是「这个假说有没有被运行时证实」，
         # 而这些 spec 静态层已判安全，不该再被判成 confirmed。数据卫生类函数
         # （reconcile_orphan_specs / purge）**故意不过滤**，否则被抑制的 spec 会永远残留。
@@ -1431,7 +1408,7 @@ class I2Adjudicator:
         return [dict(r) for r in (self.db.execute(sql, params, fetchall=True) or [])]
 
     def _stability_map(self, hypothesis_only: List[str], workspace_id: Optional[int]) -> Dict[str, int]:
-        """§4.7.1 跨扫描稳定性：同一 hash 在多少个独立 task 中持续 hypothesis_only。
+        """ 跨扫描稳定性：同一 hash 在多少个独立 task 中持续 hypothesis_only。
         简化实现：直接统计该 hash 在 findings 中出现的不同 task_id 数量（≥1 即本轮 + 历史）。
         """
         if not hypothesis_only:
@@ -1448,7 +1425,7 @@ class I2Adjudicator:
         return result
 
     def _evidence_chain(self, vulnerability_hash_v2: str, workspace_id: Optional[int]) -> List[Dict[str, str]]:
-        """§3.18 evidence_chain：SAST 种子 → DAST 触发 → IAST 观测 → D2 校验。"""
+        """ evidence_chain：SAST 种子 → DAST 触发 → IAST 观测 → D2 校验。"""
         chain = []
         # SAST 种子
         sql = "SELECT id, file_path, line FROM findings WHERE vulnerability_hash_v2 = ? AND COALESCE(source, '') != 'sca'"

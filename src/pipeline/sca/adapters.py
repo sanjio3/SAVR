@@ -91,7 +91,7 @@ def make_finding(
 
 
 # ---------------------------------------------------------------------------
-# 交叉验证 + fixed 版本核查（§用户需求 Q1：双工具都报才算高置信；fixed 版本比对实际版本）
+# 交叉验证 + fixed 版本核查
 # ---------------------------------------------------------------------------
 _QUAL_RANK = {
     "": 4, "release": 4, "final": 4, "ga": 4, "stable": 4,
@@ -149,7 +149,7 @@ def _norm_ver(v: str) -> str:
 
 
 def _norm_comp_name(name: str, ecosystem: str = "") -> str:
-    """归一化组件名，消除跨工具同一组件的命名口径差异（§用户需求 Q1）。
+    """归一化组件名，消除跨工具同一组件的命名口径差异。
 
     Maven 生态下 OSV-Scanner 报 ``groupId:artifactId``、Trivy 也报 ``groupId:artifactId``，
     而 Grype 报裸 ``artifactId``（ecosystem=java-archive）。三者指向同一组件，但字符串不同，
@@ -181,7 +181,7 @@ def _finding_aliases(f: Dict[str, Any]) -> set:
 
 
 def _same_advisory(a: Dict[str, Any], b: Dict[str, Any]) -> bool:
-    """跨工具同 advisory 判定（§用户需求 Q1：双工具都报才算高置信）。
+    """跨工具同 advisory 判定。
 
     先要求组件名一致；再按优先级：
     1) 任一共同 advisory 别名（CVE/GHSA/别名）相交 → 同一 advisory（最强信号，跨工具 ID
@@ -228,7 +228,7 @@ def reconcile_cross_validation(findings: List[Dict[str, Any]]) -> List[Dict[str,
     for idx, f in enumerate(findings):
         sca = f.get("sca") or {}
         # 用归一化组件名+归一化生态分组：OSV 报 groupId:artifactId / Grype 报裸 artifactId
-        # 必须先归一（剥 groupId）才能落到同一桶做交叉比对（§用户需求 Q1）。
+        # 必须先归一（剥 groupId）才能落到同一桶做交叉比对。
         key = (_norm_comp_name(sca.get("component_name", ""), sca.get("ecosystem", "")), _norm_eco(sca.get("ecosystem")))
         by_comp.setdefault(key, []).append(idx)
     for idxs in by_comp.values():
@@ -273,7 +273,7 @@ def apply_fixed_version_check(findings: List[Dict[str, Any]]) -> List[Dict[str, 
        已修复；否则保守判定为仍受影响——本线未 backport 修复即不能断言安全。
 
     修正前的实现是 ``any(actual >= fx for fx in all_fixed)``，会把 9.0.35 与 8.5.96
-    比较后误判为「已修复」（而 9.0 线的修复版本其实是 9.0.83），属跨线误判。
+    比较后误判为「已修复」，属跨线误判。
     """
     for f in findings:
         sca = f.setdefault("sca", {})
@@ -320,7 +320,6 @@ class SCAToolAdapter:
     install_hint = "Install the tool and ensure it is on PATH"
     report_filename = "sca_report.json"
     success_codes: Tuple[int, ...] = (0,)
-    # 2026-09-01：大项目（如 target-mall）依赖网络的扫描器（osv-scanner/grype）在 300s 内拉取
     # 依赖树/OSV API 易超时；放宽到 600s 减少误报「SCA failed」。trivy 拉 DB 失败属镜像源问题，不在此限。
     timeout = 600
 

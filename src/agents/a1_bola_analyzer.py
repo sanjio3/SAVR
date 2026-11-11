@@ -1,4 +1,4 @@
-"""BOLA 业务逻辑策略分析（重构文档 §2.2 / §7.9：SAST-seeded 业务逻辑静态分析）。
+"""BOLA 业务逻辑策略分析。
 
 职责：识别「敏感操作 + 应有控制点缺失」——即某 handler 用外部传入的实体 id 直接做数据访问
 （repository.findById / ORM get / SQL WHERE id= / Mongo find_one(_id)），但方法体内未做归属校验
@@ -58,7 +58,7 @@ _STATE_MACHINE_OP = re.compile(
 # 业务逻辑离线兜底（除 BOLA/IDOR 外，覆盖非 ORM 形态的「设计层」漏洞）：
 #  - 不安全对象存储 / Mass Assignment：外部传入的 Map/Object/DTO 被无校验地 putAll/put/copyProperties
 #    进内部可变状态（如 java-quote 的 importConfig(Map) -> userConfig.putAll）。
-#  - 敏感对象暴露：getter 直接返回内部可变容器/对象引用（如 getQuoteCache() -> quoteCache 含 processor 对象）。
+#  - 敏感对象暴露：getter 直接返回内部可变容器/对象引用（如 getQuoteCache -> quoteCache 含 processor 对象）。
 # 这些在 java-quote 这类内存态靶场里是主要业务逻辑缺陷，ORM/SQL sink 启发式抓不到，故离线补位。
 _MASS_ASSIGN_SINK = re.compile(
     r"""(?ix)

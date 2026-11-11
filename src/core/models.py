@@ -21,7 +21,6 @@ def coerce_line_number(raw: Any) -> Optional[int]:
     - str 纯数字直接转；否则取首个连续数字段（如 "L42"、"42-45" 取 42）
     - 其余（None/空串/无数字文本）一律 0
 
-    不可解析统一返回 **0 而非 None**（2026-09-13 实测修正）：全项目对 line 的判空
     口径是 `line_no <= 0` 即无效，没有任何 `line is None` 分支；返回 None 会让
     `start_line <= vuln_line <= end_line` 这类比较抛 "'<=' not supported between
     instances of 'int' and 'NoneType'"，容错照样吞成静默漏检。0 既符合既有判空口径，
@@ -86,7 +85,6 @@ FAMILY_ZH = {
     "state-machine": "状态机",
     "calculation-logic": "计算逻辑",
     "abuse-dos": "滥用DOS",
-    # 2026-09-18（A1 配置类检测通道）：暴露 / 配置轴两族的展示名
     "config-security": "安全配置",
     "information-disclosure": "信息泄露",
 }
@@ -111,7 +109,6 @@ TYPE_ZH = {
     "OGNL Injection": "OGNL注入",
     "SpEL Injection": "SpEL注入",
     "SSTI": "SSTI",
-    # 2026-09-18（A1 配置类检测通道）
     "Security Misconfiguration": "安全配置不当",
     "Sensitive Data Exposure": "敏感信息泄露",
 }
@@ -195,7 +192,6 @@ class Vulnerability:
     supporting_nodes: List[dict] = field(default_factory=list)
     supporting_node_count: int = 0
     chain_id: str = ""
-    # 2026-09-18（A2 方案二）：聚合吸收成员补行标记。
     # 聚合（_merge_chain_vulnerabilities / _aggregate_canonical_findings）把同族非 canonical 节点
     # 并入聚合 finding 的 supporting_nodes 后，该节点原本不再有自己的 findings 行 —— 于是
     # 「按 file_path 统计覆盖」把 Shiro.java 这类只有成员资格、无独立行的文件读成 0 覆盖，
@@ -207,7 +203,6 @@ class Vulnerability:
     proof_tier: str = "broad_static"
     chain_proof: Dict[str, Any] = field(default_factory=empty_chain_proof)
     proof_gaps: List[str] = field(default_factory=list)
-    # 路径 C（2026-09-20）：聚焦提示词二次证明的留痕。
     # 记录这条漏洞是否被二次证明处理过、问了哪些项、模型给了什么依据、最终是否升级。
     # 用途：区分「规则层证成的 chain_proven」与「模型二次证明补成的 chain_proven」，
     # 避免把模型判断冒充成静态证据；也便于按 prompt 版本做 A/B。
@@ -283,7 +278,6 @@ class Vulnerability:
             'supporting_nodes': self.supporting_nodes,
             'supporting_node_count': self.supporting_node_count,
             'chain_id': self.chain_id,
-            # 2026-09-18（A2 方案二）：聚合吸收成员补行标记，供覆盖率统计与关联桥识别
             'is_absorbed': self.is_absorbed,
             'absorbed_by_group_key': self.absorbed_by_group_key,
             'proof_tier': self.proof_tier,
@@ -297,7 +291,7 @@ class Vulnerability:
             'a21_candidate_score': self.a21_candidate_score,
             'a21_selected': self.a21_selected,
             'a21_reason': self.a21_reason,
-            # 入口解析结果落盘（Q3③）
+            # 入口解析结果落盘
             'entry_resolution': self.entry_resolution,
             'entry_resolved': self.entry_resolved,
             # 污点流假说与确认态

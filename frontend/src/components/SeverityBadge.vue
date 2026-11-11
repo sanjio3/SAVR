@@ -1,6 +1,5 @@
 <script setup lang="ts">
 /**
- * 严重度徽章（批次 4，2026-09-22）。
  *
  * 收敛前：每条 findings 表格里都手写
  *   `<span class="sev-badge" :class="severityTone(finding.severity)">{{ finding.severity }}</span>`

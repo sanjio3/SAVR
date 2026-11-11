@@ -90,7 +90,7 @@ public final class VirtualPatchRegistry {
         if (exact != null) {
             return exact;
         }
-        // 宽松兜底：Origin 渲染成 Method#toString() 之类的完整签名时仍能命中。
+        // 宽松兜底：Origin 渲染成 Method#toString 之类的完整签名时仍能命中。
         List<VirtualPatchTarget> hits = null;
         for (Map.Entry<String, List<VirtualPatchTarget>> entry : BY_KEY.entrySet()) {
             if (origin.contains(entry.getKey())) {

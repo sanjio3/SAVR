@@ -33,7 +33,7 @@ class VerificationResult:
     contract_completeness: Dict[str, Any] = field(default_factory=dict)
     execution_evidence: Dict[str, Any] = field(default_factory=empty_execution_evidence)
     verification_decision: Dict[str, Any] = field(default_factory=dict)
-    # IAST 闭环扩展（重构文档 3.5 / 3.12 / 3.18）
+    # IAST 闭环扩展
     iast_evidence: Dict[str, Any] = field(default_factory=dict)
     dast_impact_evidence: Dict[str, Any] = field(default_factory=dict)
     final_state: str = ""  # 六态：confirmed_attributable / runtime_confirmed / ambiguous / no_evidence / false_positive_sast_only / target_unhealthy / waf_blocked

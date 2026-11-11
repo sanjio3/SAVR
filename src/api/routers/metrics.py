@@ -1,4 +1,4 @@
-"""Cost + operations metrics endpoints (G9 + G12, 第四版 §2.12/§2.6/§2.3).
+"""Cost + operations metrics endpoints (G9 + G12, 第四版 //).
 
 Exposes annual-cost estimation, scan-trigger policies, the operating dashboard
 (denoise/false-kill/adoption rates), and offline ticket export. All handlers are
@@ -62,7 +62,7 @@ def usage_stats(workspace_id: Optional[int] = None):
 
 @router.get("/iast")
 def iast_source_stats(workspace_id: Optional[int] = None, task_id: Optional[int] = None):
-    """§4.5 IAST 来源统计切片（覆盖率 / confirmed_runtime 占比 / 按资产分布），复用关联聚合。"""
+    """ IAST 来源统计切片（覆盖率 / confirmed_runtime 占比 / 按资产分布），复用关联聚合。"""
     return container.metrics_service.iast_source_stats(workspace_id=workspace_id, task_id=task_id)
 
 

@@ -1,4 +1,4 @@
-"""SCA + 代码可达性双条件判定（2026-08-29）。
+"""SCA + 代码可达性双条件判定。
 
 为什么必须有这一层
 ------------------
@@ -311,7 +311,6 @@ def find_dependency_declaration(component: Dict[str, Any],
 
 
 _FP_CACHE: Dict[str, tuple] = {}
-# 2026-11-02 实杀：TTL 原为 5s，但**在 OWASP 全集（2843 文件）上算一次指纹要 11.3s**——
 # TTL 比计算本身还短 ⇒ 缓存永远失效，等于每调一次就重扫一遍源码树。
 # 实测后果：本轮卡在注册后的后处理阶段 30 分钟，0 次重放、0 个探针事件，
 # 但进程系统 CPU 时间高达 1877s（全花在 stat 上）。
@@ -331,7 +330,7 @@ def code_root_fingerprint(code_root: Optional[str]) -> tuple:
     的缓存键调用，而可达性判定是**逐组件**的（一次造弹 90+ 个组件）。
     不做 TTL 时，光是算指纹就是 90 × 0.7s ≈ 1 分钟/spec。
     5s 内的源码变化视为同一版本——一次扫描期间源码本就不该被改；
-    真改了也有 `clear_reachability_cache()` 兜底。
+    真改了也有 `clear_reachability_cache` 兜底。
     """
     if not code_root:
         return ("", -1, -1)
@@ -366,7 +365,6 @@ def _iter_source_files(root: Path):
 
     旧实现是 `root.rglob("*")` 再逐个过滤：rglob 会先走进 target/、node_modules/、
     .git/ 这些大目录，把里面的文件全部 stat 一遍才被 `_SKIP_DIRS` 丢掉。
-    java-sec-code 只有 95 个源文件，一次遍历却要 3.3s（实测），正是这个原因；
     而可达性判定要按组件反复遍历（见 find_usage_entries），累计就是分钟级。
     改成 os.walk + dirnames 就地剪枝后，同一次遍历降到几十毫秒。
     """
@@ -404,7 +402,6 @@ def find_usage_entries(family: str, code_root: Optional[str], limit: int = 20) -
     只扫项目代码，跳过依赖目录 —— 第三方 jar 源码里的 readObject
     不是「本项目的利用入口」，算进来会让可达性判定永远为真。
 
-    **必须缓存**（2026-11-01 实杀）：本函数只依赖 (family, code_root)，
     但 `judge_reachability` 是**逐 SCA 组件**调用的（一次造弹 90+ 个组件），
     于是同一个源码树被完整读 90 遍。本轮实测单条 deserialization spec 在
     `sca_forge_attack_payloads` 里卡 5 分钟以上，17 条 spec 把 D2 批墙钟(600s)

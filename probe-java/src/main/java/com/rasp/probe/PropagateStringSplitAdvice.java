@@ -5,7 +5,7 @@ import net.bytebuddy.asm.Advice;
 /**
  * L2 propagation: String.split (java.base, bootstrap-injected).
  *
- * split() returns NEW Strings derived from this' content; if this is tainted the
+ * split returns NEW Strings derived from this' content; if this is tainted the
  * fragments inherit its taint (e.g. id.split(" ")[0] still flows to a sink).
  */
 public final class PropagateStringSplitAdvice {

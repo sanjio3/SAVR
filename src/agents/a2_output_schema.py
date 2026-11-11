@@ -1,13 +1,13 @@
-"""A2 输出 JSON Schema（2026-10-25，plan §20.3.3 约束解码）。
+"""A2 输出 JSON Schema。
 
 ## 为什么做
 
-`analyze()` 的契约校验失败会「带错误回灌重试一次」。重试是最贵的浪费——每次重试 =
-一次完整 prefill + decode（实测 decode 严格随输出 token 线性，tok/s 恒定 30~36）。
+`analyze` 的契约校验失败会「带错误回灌重试一次」。重试是最贵的浪费——每次重试 =
+一次完整 prefill + decode。
 Ollama 的 `format` 走 llama.cpp 的 grammar 约束解码，用 JSON Schema 可以从**源头**
 让输出必然合规，把「格式幻觉 → 回退重试」这条最贵的浪费压掉。
 
-## 约束口径（与 `_output_contract()` 的 full 档一致，**不裁字段**）
+## 约束口径（与 `_output_contract` 的 full 档一致，**不裁字段**）
 
 - lean 档裁字段已被 A/B **否决**（掉 TP 3 个 + 多 1 个 FP），所以 schema 保留
   `snippet` / `why_bypassable` / `sink_reached_explanation` 等全部审计字段；
@@ -25,7 +25,7 @@ from typing import Any, Dict
 # 合法档位：json（默认，等价于 format="json"，行为不变）/ schema（grammar 约束）/ off（不约束）
 FORMAT_MODES = ("json", "schema", "off")
 
-# sanitizer.type 的合法取值（与 _output_contract() full 档文案一致）
+# sanitizer.type 的合法取值（与 _output_contract full 档文案一致）
 _SANITIZER_TYPES = (
     "parameterized", "whitelist", "encode_html", "encode_sql", "blacklist_replace",
     "regex", "truncate", "cast", "none", "unknown",

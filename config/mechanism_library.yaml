@@ -1,6 +1,5 @@
 version: 1
 
-# 机制表：库「内置闸门」的结构化描述（2026-10-02 落地）
 #
 # 与 config/payload_library.yaml 的分工：
 #   payload_library  = 攻击侧弹药（造什么弹、怎么造出真实 gadget 字节流）
@@ -31,7 +30,7 @@ mechanisms:
     gate: "autoType（ParserConfig.checkAutoType）"
     kind: deny
     default: "off"
-    disable_by: "ParserConfig.getGlobalInstance().setSafeMode(true)"
+    disable_by: "ParserConfig.getGlobalInstance.setSafeMode(true)"
     depends:
       jdk_range: ">=1.8"
       classes: []
@@ -69,7 +68,7 @@ mechanisms:
       classes: []
     verify: "oob"
     source: "ghsa"
-    notes: "口径修正（2026-10-02）：safeMode 于 1.2.68 引入且默认关；≤1.2.82 存在 expectClass 绕过面（CVE-2022-25845），1.2.83 修复；≥1.2.83 无已知通用绕过"
+    notes: "口径修正：safeMode 于 1.2.68 引入且默认关；≤1.2.82 存在 expectClass 绕过面（CVE-2022-25845），1.2.83 修复；≥1.2.83 无已知通用绕过"
 
   - id: jackson-default-typing
     family: deserialization
@@ -79,7 +78,7 @@ mechanisms:
     gate: "enableDefaultTyping / @JsonTypeInfo"
     kind: allow
     default: "off"
-    disable_by: "ObjectMapper.enableDefaultTyping()"
+    disable_by: "ObjectMapper.enableDefaultTyping"
     depends:
       jdk_range: ">=1.8"
       classes: []
@@ -111,7 +110,7 @@ mechanisms:
     gate: "Constructor vs SafeConstructor"
     kind: allow
     default: "off"
-    disable_by: "new Constructor()"
+    disable_by: "new Constructor"
     depends:
       jdk_range: ">=1.8"
       classes: []
@@ -223,7 +222,7 @@ mechanisms:
     gate: "(无内置多态类型绑定 / 无 autoType 等价物)"
     kind: allow
     default: "on"
-    disable_by: "（默认即安全）避免 new Gson().fromJson(json, Object.class) 后再强转危险类 / 使用 unsafe TypeAdapter"
+    disable_by: "（默认即安全）避免 new Gson.fromJson(json, Object.class) 后再强转危险类 / 使用 unsafe TypeAdapter"
     depends:
       jdk_range: "*"
       classes: []
@@ -262,7 +261,7 @@ mechanisms:
       classes: ["org.springframework.expression.spel.standard.SpelExpressionParser"]
     verify: "echo"
     source: "source-mined"
-    notes: "RCE 形如 T(java.lang.Runtime).getRuntime().exec(...)；无 autoType，靠应用把用户输入喂给求值器"
+    notes: "RCE 形如 T(java.lang.Runtime).getRuntime.exec(...)；无 autoType，靠应用把用户输入喂给求值器"
 
   - id: ognl
     family: ssti
@@ -294,7 +293,7 @@ mechanisms:
       classes: ["org.mvel2.MVEL"]
     verify: "echo"
     source: "source-mined"
-    notes: 'MVEL 模板/脚本注入，形如 @java.lang.Runtime@getRuntime().exec(...)' 
+    notes: 'MVEL 模板/脚本注入，形如 @java.lang.Runtime@getRuntime.exec(...)'
 
   - id: velocity
     family: ssti
@@ -317,7 +316,7 @@ mechanisms:
     ecosystem: maven
     package: org.freemarker:freemarker
     version_range: "*"
-    gate: "Freemarker 模板注入（<#assign / ?new() / ?api / TemplateModel 任意方法）"
+    gate: "Freemarker 模板注入（<#assign / ?new / ?api / TemplateModel 任意方法）"
     kind: allow
     default: "off"
     disable_by: "不将用户输入拼进模板；用 ?api 保护 / 2.3.17+ 受限"
@@ -326,7 +325,7 @@ mechanisms:
       classes: ["freemarker.template.Configuration"]
     verify: "echo"
     source: "source-mined"
-    notes: '<#assign ex="freemarker.template.utility.Execute"?new()> ${ex("id")} 是经典 payload'
+    notes: '<#assign ex="freemarker.template.utility.Execute"?new> ${ex("id")} 是经典 payload'
 
   - id: thymeleaf
     family: ssti
@@ -342,7 +341,7 @@ mechanisms:
       classes: ["org.thymeleaf.spring5.SpringTemplateEngine"]
     verify: "echo"
     source: "source-mined"
-    notes: 'SSTI 形如 __${T(java.lang.Runtime).getRuntime().exec("id")}__::.x'
+    notes: 'SSTI 形如 __${T(java.lang.Runtime).getRuntime.exec("id")}__::.x'
 
   # ---------------- 协议 / 解析器（JDK 与框架层闸门）----------------
   - id: jndi-trusturlcodebase

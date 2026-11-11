@@ -48,7 +48,7 @@ public final class SinkOutcomeAdvice {
             try {
                 origin = self == null ? "" : self.getClass().getName();
             } catch (Throwable ignored) {
-                // 极端情况：getClass() 也失败（类加载已在关闭）。仍尝试记录，origin 留空。
+                // 极端情况：getClass 也失败（类加载已在关闭）。仍尝试记录，origin 留空。
                 origin = "";
             }
             BootstrapBridge.recordSinkOutcome(origin, thrown);

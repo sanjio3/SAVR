@@ -4,7 +4,7 @@
 产出每节点命中报告。
 
 观测数据两路，方案 B 优先、方案 A 兜底：
-- 方案 B（动探针，已落地）：探针在每次「携带平台 canary 身份的污点值」经过 hook 时，
+- 方案 B：探针在每次「携带平台 canary 身份的污点值」经过 hook 时，
   把该 hook 的 origin(class.method) 记入本请求有序 taint_path，reportSink 时回带进事件
   context.taint_path（解析后形如 [{"role":"source|transform|sink","origin":"FQCN.method"}, ...]）。
   I1 据此对每个 transform 节点做「类名后缀 + 方法名」精确匹配，把方案 A 下只能标
@@ -40,7 +40,7 @@ def _origin_matches_signature(origin: str, signature: str) -> bool:
     o_class = origin.rsplit('.', 1)[0] if '.' in origin else origin
     s_class = signature.rsplit('.', 1)[0] if '.' in signature else ''
 
-    # 反序列化等价集（方案 B 核心收益）：ObjectInputStream.readObject() 是 final 方法，ByteBuddy
+    # 反序列化等价集（方案 B 核心收益）：ObjectInputStream.readObject 是 final 方法，ByteBuddy
     # 无法对其织入 advice（类被 retransform 但 readObject 本体仍是原字节码，onEnter 永不触发），探针
     # 实际以非 final的 resolveClass（反序列化每个对象时必被调用）/ readUnshared 作为 transform 落点。
     # 三者语义等价「污点流经 ObjectInputStream 反序列化入口」，故 A2 预测 readObject 而探针观测到

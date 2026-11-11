@@ -367,7 +367,6 @@ const compareIds = ref<string>("12,9,10,11");
 const compareResults = ref<{ task_id: number; detected: number; confirmed: number; semantic: number; specs: number; iast: number }[]>([]);
 const compareLoading = ref(false);
 
-// 黄金集基准：由后端按靶场选择（java-sec-code=29 类中 28 类可重放 / target-mall=35），此处只消费不再写死。
 // summary_only=1 的响应把 golden_* 放在 summary 内，故三级回退。
 const goldenTotal = computed(() => report.value?.golden_total ?? report.value?.summary?.golden_total ?? report.value?.reconcile?.length ?? 0);
 const goldenTarget = computed(() => report.value?.golden_target ?? report.value?.summary?.golden_target ?? "—");

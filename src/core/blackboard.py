@@ -1,7 +1,5 @@
 """黑板（单一真相源）与轮次体系。
 
-背景（2026-09-07 落地）：
-- 此前「轮次身份」out-of-band（只活在 task.name 字符串与独立 target-mall-round.txt 里），
   导致同一 task 被多轮覆写成混合库，单轮归因做不到（task-3：漏斗读数 47→25 自相矛盾）。
 - 此前「展示计数」各处自存快照（scan_progress / summary_json / results 各一份），与 DB 实表
   长期漂移，只能靠 事后对账补丁续命。
@@ -28,7 +26,6 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # 代码版本指纹取样文件：这些文件的 mtime 变化即代表「跑的可能不是我以为的代码」。
-# 取自历史事故重点（P0-2：trigger_spec_registry 旧代码假阳性；A2 prompt 模板事故）。
 _FINGERPRINT_FILES = (
     "src/iast/trigger_spec_registry.py",
     "src/core/vuln_hash.py",
@@ -159,7 +156,6 @@ def close_open_runs(db, task_id: int, status: str = "failed") -> int:
     """闭合该 task 下所有未收口的 run（孤儿轮次 / 陈旧记录根治）。
 
     finish_run 只按单个 run_id 收口，而 scan_runs 可能对同一 task 留多条 running 记录
-    （task-8 实测：id=8 陈旧自 2026-09-14、id=66 当前），只收口最大那条会让陈旧记录
     永远停在 running —— 这就是「scan_runs 陈旧记录」的来源。此处按 task 批量闭合
     所有 finished_at 为空的 run，返回闭合条数。fail-open，失败只告警。
     """
@@ -212,7 +208,6 @@ def sync_blackboard(db, task_id: int, run_id: Optional[int] = None,
     - confirm_state：该 vhash 的 D2 验证进入确认态（verification_status ∈
       confirmed_exploitable/exploitable）或 IAST canary 运行时到达 sink（iast_state ∈
       SINK_REACHED_STATES）才计为 confirmed；仅「存在 spec（待重放假说）」不算确认。
-      （F4 修复：旧实现把「有 spec」直接当 confirmed，导致 detected==confirmed 无区分力）
     - sink_reached：存在 iast_events，其 canary 匹配该 spec 的 taint_marker
       且 canary_state ∈ SINK_REACHED_STATES → 1
     返回写入/更新的行数。
@@ -279,7 +274,7 @@ def sync_blackboard(db, task_id: int, run_id: Optional[int] = None,
 
     # 5) 清理孤儿黑板行：本 (task, run) 下、vhash 既不在 findings 也不在 specs 的残留行。
     #    成因：auto_register 写入 spec 后，后续 consolidation/去重删除了该 spec，但黑板行
-    #    仍保留 confirm_state='confirmed'，导致「黑板 confirmed」虚高（task-5 实测 124 vs 实表 58）。
+    #    仍保留 confirm_state='confirmed'，导致「黑板 confirmed」虚高。
     #    黑板是单真相源，必须随 findings/specs 实时收敛，禁止残留孤儿行。
     valid_vh = set(findings) | set(specs)
     if valid_vh:
@@ -302,7 +297,6 @@ def sync_blackboard(db, task_id: int, run_id: Optional[int] = None,
         # 两侧都归一为身份段再比对（历史实现用完整 taint_marker 全等 22 字符事件 canary，恒 0 命中）
         sink_reached = 1 if (taint and canary_key(taint) in reached_canaries) else 0
         detect_state = "detected" if (vh in findings or vh in specs) else "undetected"
-        # F4 修复：confirm_state 必须基于真实确认判据，禁止「有 spec 即 confirmed」。
         # trigger_spec 只是 A2 的待重放假说（候选攻击面），不等于已确认可利用；
         # 只有 D2 验证为可利用或 IAST 运行时真正到达 sink 才算 confirmed。
         verif = (spec.get("verification_status") or "").strip().lower()
@@ -527,7 +521,7 @@ def repair_summary_snapshot(db, task_id: int, run_id: Optional[int] = None) -> D
     """把 scan_tasks.summary_json 里自存的展示快照对齐到黑板真值（铁律：展示计数从黑板派生）。
 
     成因：summary_json.stage_results.a2_poc.registered_trigger_specs 是扫描期写入的快照，
-    与后续 DB 实表/黑板长期漂移（task-5 实测快照 124 vs 实表 58），导致前端展示虚高。
+    与后续 DB 实表/黑板长期漂移，导致前端展示虚高。
     此处不删快照机制，仅在 --sync 后把快照值改写为当前真值，使展示与黑板一致。
     返回被改写的字段。
     """
@@ -580,7 +574,6 @@ def repair_summary_snapshot(db, task_id: int, run_id: Optional[int] = None) -> D
 def derive_counts(db, task_id: int, run_id: Optional[int] = None) -> Dict[str, int]:
     """从黑板派生展示计数（唯一真相源）。禁止各处自存快照。
 
-    分级口径（2026-09-26 F4 后精确率整改⑤）：
     - confirmed：D2 验证可利用 或 IAST sink 到达（强证据档）；
     - suspicious：已检出但未达确认判据（弱证据档 = detected - confirmed），
       含 verification_status=provisional / no_evidence / 未知族等；
@@ -636,9 +629,7 @@ def derive_counts(db, task_id: int, run_id: Optional[int] = None) -> Dict[str, i
 _DETECT_RANK = {"undetected": 0, "detected": 1}
 _CONFIRM_RANK = {"unconfirmed": 0, "confirmed": 1}
 _VERIF_RANK = {"": 0, "no_evidence": 0, "invalidated": 0, "provisional": 1, "exploitable": 2, "confirmed": 3, "confirmed_exploitable": 3,
-                # I 族路由（2026-09-28）：独立终态，秩与 confirmed_exploitable 同级，但不入 verified 口径。
                 "confirmed_code_property": 3}
-# 2026-09-21：invalidated = 「本轮结论不可信、可重试」（靶场重启/不可用窗口内的验证，
 # 见 src/iast/target_epoch.py）。rank 取 0：它既不是确认也不是否证，绝不能压过任何真实
 # 结论（跨 run 合并仍保留历史 run 的最强态）。
 
@@ -737,7 +728,6 @@ def consistency_check(db, task_id: int, run_id: Optional[int] = None, auto_fix: 
     自愈（auto_fix=True，默认）：黑板是「单一真相源」，其派生计数必须实时反映当前
     DB 实表（findings / trigger_specs / iast_events）状态。spec 会在落库后被
     reconcile_orphan_specs / second_pass 等路径裁剪或回灌，若黑板未随之重算就会残留
-    stale「confirmed」孤儿行（run 14 实测 126 vs 65）。因此在断言前先重算黑板并
     对齐前端快照，使自检结果恒为「当前真相」而非「某次同步时的快照」。
     auto_fix=False 时退化为纯校验（不改库），供需要区分「漂移」与「真不一致」的场景。
     """
@@ -759,7 +749,6 @@ def consistency_check(db, task_id: int, run_id: Optional[int] = None, auto_fix: 
             return -1
 
     db_specs = _scalar("SELECT COUNT(*) FROM trigger_specs WHERE task_id=? AND COALESCE(suppressed_by_safe_verdict, 0) = 0", (task_id,))
-    # 真实确认口径（F4 修复后）：D2 验证为可利用 或 IAST 运行时到达 sink 的 spec vhash 数
     db_confirmed_spec_vh = _scalar(
         "SELECT COUNT(DISTINCT vulnerability_hash_v2) FROM trigger_specs WHERE task_id=? AND COALESCE(suppressed_by_safe_verdict, 0) = 0 "
         "AND (verification_status IN ('confirmed_exploitable','exploitable') "
@@ -786,14 +775,12 @@ def consistency_check(db, task_id: int, run_id: Optional[int] = None, auto_fix: 
         "snapshot_registered": snap_specs,
     })
 
-    # F4 修复后：黑板 confirmed 必须等于「真实确认 spec vhash 数」，而非裸 spec 数
     # （旧实现 confirmed==spec 数导致 detected==confirmed 无区分力）。
     if db_confirmed_spec_vh >= 0 and derived["confirmed"] >= 0 and db_confirmed_spec_vh != derived["confirmed"]:
         alerts.append(
             f"真实确认 spec vhash({db_confirmed_spec_vh}) != 黑板 confirmed({derived['confirmed']})："
             "黑板 confirm_state 未对齐 D2/IAST 确认判据（可先 --sync 再校验）"
         )
-    # 漏斗单调性：detected >= confirmed >= sink_reached（F4 修复后的核心不变量）
     if derived["confirmed"] > derived["detected"]:
         alerts.append(
             f"黑板 confirmed({derived['confirmed']}) > detected({derived['detected']})：漏斗倒置，"

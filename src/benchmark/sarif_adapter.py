@@ -67,7 +67,7 @@ def _description_of(spec: Dict[str, Any]) -> str:
         return str(desc)
     fam = str(spec.get("family") or "").strip().lower().replace(" ", "_")
     ep = str(spec.get("target_endpoint") or "")
-    return f"OWASP Benchmark {ep} ({fam})"
+    return f"{ep} ({fam})" if ep else fam
 
 
 def _verification_state_of(status: str) -> str:

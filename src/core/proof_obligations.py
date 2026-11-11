@@ -20,7 +20,7 @@ DEFAULT_CREDENTIAL_FAMILIES = {"default-credentials"}
 # 声明差分信号类型，即视为 gate 与 success_signal 已满足，避免结构性误判为 broad_static（进而被
 # d2_zero_audit 标 A2_PROOF_FAILURE）。注入型族（sql/xss/command/deserialization 等）绝不在此集合内，
 # 行为完全不变，保护现有已确认项。
-_DIFFERENTIAL_PROOF_FAMILIES = DIFFERENTIAL_PROOF_FAMILIES  # 真源见 src/core/exploit_spec.py（2026-09-03 合并 P1–P5 五套判据）
+_DIFFERENTIAL_PROOF_FAMILIES = DIFFERENTIAL_PROOF_FAMILIES
 
 # 业务/逻辑类家族「显示名 → 规范差分族」别名表。A2 产出的 payload_family 是混用的：既有规范英文
 # （idor / race-condition / state-machine）、变体英文（race condition / vertical-privilege-escalation /
@@ -30,7 +30,7 @@ _DIFFERENTIAL_PROOF_FAMILIES = DIFFERENTIAL_PROOF_FAMILIES  # 真源见 src/core
 # 差分豁免，被结构性误判为 broad_static → A2_PROOF_FAILURE。此表把各类显示名归一为规范差分 token，
 # 使 F3 豁免真正连上（「executor 未接」根因）。仅覆盖业务/越权/认证/滥用类；注入型族（sql/ssrf/xss/
 # 命令/模板/xxe 等）不在此表，行为不变。
-_FAMILY_ALIAS_TO_DIFF = _BUSINESS_LOGIC_FAMILY_ALIASES  # 真源见 src/core/exploit_spec.py；本文件不再维护副本（2026-09-03 合并 P1–P5）
+_FAMILY_ALIAS_TO_DIFF = _BUSINESS_LOGIC_FAMILY_ALIASES
 
 
 def _canonical_diff_family(raw: str) -> str:
@@ -195,17 +195,15 @@ def has_idor_source_evidence(vuln: Any, parameter_name: str = "", evidence: Opti
     return False
 
 
-# SQL 注入「外部可控输入」的文本兜底判据（2026-10-05）。
 # 原实现用硬编码 token 子串比对，只认 `getparameter(` 这一个字面形态，于是：
 #   getParameterValues( / getParameterNames( / getParameterMap(  → 因后缀不匹配全漏
 #   getCookies( / getHeader(                                    → 整类漏
 #   scr.getTheParameter(（自定义包装类 getter）                  → 整类漏
-# 实测后果：OWASP sample-200 上三个真漏洞（BenchmarkTest00100 cookie 遍历 /
 # 00595 getParameterNames / 01552 自定义包装类）A2 已判「真漏洞」，却在 A21 候选
 # 评分处被 `missing query-like source evidence` 刷掉，永不生成 spec ⇒ L1 恒漏。
 # 改成正则，覆盖「get 开头、含 parameter/header/cookie 的任意取值 API」。
 _SQLI_SOURCE_TEXT_RE = re.compile(
-    # 注意 `parameter` 两侧都要留 \w*：只留前侧会漏掉 getParameterMap( / 
+    # 注意 `parameter` 两侧都要留 \w*：只留前侧会漏掉 getParameterMap( /
     # getParameterNames( 这类带后缀的形态（后缀落在 `parameter` 之后，匹配不到 `(`）。
     r"get\s*\w*parameter\w*\s*\("    # getParameter / getParameterValues / getParameterNames
                                      # / getParameterMap / getTheParameter（自定义包装类）
@@ -483,7 +481,7 @@ def evaluate_proof_obligations(
 
     # F3：差分证明族的结构性豁免——业务类漏洞在 SAST 阶段无法满足注入型的 gate/回显门槛，其证据
     # 由 D1 运行时差分收集。只要「已声明差分信号类型」或「已解析出真实 HTTP 路由（route）」即把 gate
-    # 与 success_signal 视为已满足（并补齐可达性/攻击者可控/载荷形态这些 SAST 可判的项），使 proof_tier
+    # 与 success_signal 视为已满足，使 proof_tier
     # 可达 chain_proven，不再被 d2_zero_audit 误标 A2_PROOF_FAILURE。业务族极少声明 signal_type（其证明
     # 本就在运行时差分收集），故旧门槛（强制 signal_type）结构性把它们误判为 broad_static；放宽为
     # 「有 route 即可」后，凡 SAST 已解析出真实端点的业务族即可达 chain_proven。注入型族不进入此分支，行为不变。
@@ -558,15 +556,12 @@ def empty_taint_flow_hypothesis() -> Dict[str, Any]:
 def _sink_present(vuln: Any, exploit_spec: Optional[Dict[str, Any]]) -> bool:
     """是否识别到 sink（危险函数调用点）。注意：识别到 sink 只是候选，不等于危险。
 
-    2026-10-05（r58 方案 5）补 fallback：原先只看 ``vuln.sink`` 与
     ``exploit_spec.poc_chain`` 两处，但 A2 实际把 sink 位置记在 ``vuln.file`` +
-    ``vuln.line`` 上而 ``vuln.sink`` 常留空串 ⇒ ``sink_present`` 在 r58 全 4777 条
     spec 上恒为 False ⇒ ``flow_complete``（= source ∧ sink ∧ reachable ∧
     barrier_free）恒为 False，**整个污点流假说里最严格的那一档从未被点亮过**，
     依赖它的闸门模拟（precision_gate_sim 的 G5）也只能算出 0%。
     这里补的 fallback 读的是同一份 sink 定位信息，不引入新证据、不放宽语义。
 
-    影响面（r58 实测回算）：补齐后 1724 条 flow_complete 变 True，其中 1659 条
     本来就是 chain_proven（``confirmed`` 早已为 True，不受影响），真正因本修复
     改变 confirmed 判定的只有 65 条 broad_static（1.4%）。
     """

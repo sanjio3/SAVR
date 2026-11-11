@@ -3,7 +3,7 @@
 设计定位（纠正 v1「新建中层」的误解）：消毒器观测（PropagateLibEscapeAdvice 等）已由探针
 完成，本模块**只做关联与族相关性判断**，不重新插桩。
 
-探针侧经 ``HookRuntime.currentSinkSanitizer()`` 在 sink 实参级记录消毒器快照，格式：
+探针侧经 ``HookRuntime.currentSinkSanitizer`` 在 sink 实参级记录消毒器快照，格式：
 
     sink_sanitizer = "sanitizerId|family1,family2"
 

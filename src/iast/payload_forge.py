@@ -292,7 +292,6 @@ class PayloadForge:
             "文本型注入请输出 JSON 字符串），不要解释、不要 markdown 代码块。"
         )
         try:
-            # 2026-09-19 修：ModelGateway.complete 是 keyword-only 签名
             # （def complete(self, *, purpose, prompt, context=None, prompt_version="")），
             # 原实现写成 complete(prompt) → 恒抛 TypeError → 被下面 except 吞掉，
             # 于是「LLM 兜底造弹」这条腿一直是死的（即便注入了 gateway 也永远返回 []）。
@@ -328,7 +327,7 @@ class PayloadForge:
             payloads            可投放的 payload 列表（空表示无弹可投，D1 应降级）
             selected_chain      实际选中的链（dict）
             reachability        可达性判定结果（dict）
-            reason              为什么选/为什么不选（写清楚，便于 I2 与人工复盘）
+            reason              为什么选/为什么不选
             source              library / llm / none
             degraded            是否无可投弹（True 时 D1 必须标 attack_degraded）
         """
@@ -412,7 +411,7 @@ class PayloadForge:
 # ysoserial 靠反射改写 JDK 内部类字段来构造 gadget（如 HashSet.map /
 # AnnotationInvocationHandler.memberValues）。Java 9+ 的 JPMS 会阻断这些反射，
 # Java 24 上 CC6 等链必挂（InaccessibleObjectException）。Java 8 不认识 --add-opens，
-# 故只在 9+ 加。因此 ysoserial 必须用 JDK8 生成——见 _resolve_java_bin（§Q5）。
+# 故只在 9+ 加。因此 ysoserial 必须用 JDK8 生成——见 _resolve_java_bin。
 _ADD_OPENS_MODULES = ("java.lang", "java.util", "java.io", "java.lang.reflect", "java.net")
 _RESOLVED_JAVA_BIN: Optional[str] = None
 
@@ -433,7 +432,7 @@ def _java_major_version(java_bin: str = "java") -> int:
 
 
 def _resolve_java_bin() -> str:
-    """为 ysoserial 解析一个可用的 java 二进制（§Q5：ysoserial 必须在 JDK8 下生成）。
+    """为 ysoserial 解析一个可用的 java 二进制。
 
     优先级：
     1. 显式环境变量 ``YSO_JAVA_HOME`` / ``JAVA8_HOME`` → 该 JDK 的 bin/java（用户显式指定即信任为 JDK8）；
@@ -478,7 +477,6 @@ def _resolve_java_bin() -> str:
             except OSError:
                 continue
 
-    # 2.5) 本机已装的 JDK8（2026-11-02 补）：JAVA_HOME 常指向 JDK21（CodeQL 需要），
     # 但机器上往往同时装着 JDK8。不扫一遍就会误报「未找到 JDK8」并回退裸 java——
     # 实测那条警告是假的（PATH 上的 java 恰好就是 1.8.0_65），但换台机器就真会失败。
     # 复用 A1 的 JDK 扫描（它已经会认 jdk65 / 1.8 这类目录名）。

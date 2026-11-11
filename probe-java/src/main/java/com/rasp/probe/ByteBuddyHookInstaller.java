@@ -74,7 +74,6 @@ public final class ByteBuddyHookInstaller {
                 installXssResponseHooks(instrumentation);
                 installResponseRedirectHooks(instrumentation);
                 installXssServletOutputHooks(instrumentation, bootstrapDir);
-                // Phase1 根因修复（2026-10-11）：PrintWriter bootstrap hook 被 CoyoteWriter
                 // 子类 override 绕过（javap 证实其重写了全部 write/print/println），
                 // 必须直钩 Tomcat 的 CoyoteWriter 才能观测裸 servlet 响应体写入。
                 installCoyoteWriterHooks(instrumentation);
@@ -174,7 +173,7 @@ public final class ByteBuddyHookInstaller {
                                 .on(namedOneOf("execute", "executeQuery", "executeUpdate", "executeLargeUpdate",
                                         "addBatch").and(takesArgument(0, String.class))))
                         // L3 语义层：同一 matcher 上再挂一个 exit advice 采集「抛没抛异常」。
-                        // 用两个独立 .visit() 而非 Advice.with(...).advice(...)：后者在
+                        // 用两个独立 .visit 而非 Advice.with(...).advice(...)：后者在
                         // byte-buddy 1.15.11 不存在（with 方法无此重载），且本代码库既有
                         // 多 advice 模式（installResponseRedirectHooks）即为此写法。
                         .visit(Advice.to(SinkOutcomeAdvice.class)
@@ -282,7 +281,7 @@ public final class ByteBuddyHookInstaller {
 
     private static void installDeserializationHooks(Instrumentation instrumentation, File bootstrapDir) {
         // 方案 B 反序列化桥接：把「污点流经反序列化入口」作为 transform 跳点，供 I1 逐节点核对。
-        // 关键坑（JDK24 实测）：java.io.ObjectInputStream.readObject() 是 final 方法，ByteBuddy 无法
+        // 关键坑：java.io.ObjectInputStream.readObject 是 final 方法，ByteBuddy 无法
         // 对其织入 advice（类会被「transformed」但 readObject 本体仍是原字节码，onEnter 永不触发）。
         // 故改为钩住非 final 的 resolveClass(ObjectStreamClass)——它在反序列化每个对象时必被调用，
         // 是「反序列化确实在发生」的可靠语义点；readObject 仅在成功反序列化路径上间接触发它。
@@ -293,7 +292,6 @@ public final class ByteBuddyHookInstaller {
                 .transform((builder, typeDescription, classLoader, module, protectionDomain) -> builder
                         .visit(Advice.to(BootstrapGenericSinkAdvice.class)
                                 .on(named("resolveClass").and(takesArguments(1))))
-                        // 2026-09-28 第三层：构造器污点传播（流 → ObjectInputStream 实例）。
                         // 用独立 advice 类而非 BootstrapGenericSinkAdvice：后者会把构造器 origin
                         // 落进 onGenericSink，把反序列化错标成 sink，破坏 chain_conformance
                         // 的 transform 匹配（该节点本应是「污点流经的桥接点」）。
@@ -352,7 +350,6 @@ public final class ByteBuddyHookInstaller {
                                 .on(named("transform"))))
                 .installOn(instrumentation);
 
-        // XXE sink: dom4j。java-sec-code /xxe/DocumentHelper/vuln 经
         // org.dom4j.DocumentHelper.parseText 解析不可信 XML，不属于本方法覆盖的 JAXP
         // 层级（DocumentBuilder / XMLReader / SAXParser / Transformer），此前无插桩。
         // dom4j 是应用类加载器类型（fat jar 内依赖），故走默认注入策略。
@@ -477,19 +474,16 @@ public final class ByteBuddyHookInstaller {
                         .or(nameStartsWith("org.apache.http.impl.client"))
                         // Apache HttpAsyncClient 的实现在 org.apache.http.impl.nio.client，
                         // 不是 org.apache.http.impl.client 的子包（末段是 nio 而非 client），
-                        // 只写前者会整族漏插桩。java-sec-code /ssrf/HttpSyncClients/vuln 即走此路径：
-                        // HttpAsyncClients.createDefault() -> CloseableHttpAsyncClient.execute()。
+                        // HttpAsyncClients.createDefault -> CloseableHttpAsyncClient.execute。
                         .or(nameStartsWith("org.apache.http.impl.nio.client"))
                         .or(nameStartsWith("okhttp3."))
                         // okhttp 2.x 的包名是 com.squareup.okhttp（无数字 3），4.x/3.x 才是 okhttp3。
-                        // java-sec-code 依赖 okhttp 2.5.0，只写 okhttp3 会整族漏插桩。
                         .or(nameStartsWith("com.squareup.okhttp.")))
                 .transform((builder, typeDescription, classLoader, module, protectionDomain) -> builder
                         .visit(Advice.to(GenericSinkAdvice.class)
                                 .on(namedOneOf("send", "sendAsync", "execute", "newCall"))))
                 .installOn(instrumentation);
 
-        // SSRF sink: javax.imageio.ImageIO.read(...)。java-sec-code /ssrf/ImageIO/sec 经此
         // JDK API 发起请求，不落到 sun.net.www.protocol.http.HttpURLConnection 的
         // connect/getInputStream（探针此前无任何 imageio 插桩，该端点因此恒 no-arrival）。
         // ImageIO 属 java.desktop 模块，须走 bootstrap 注入策略。
@@ -536,12 +530,9 @@ public final class ByteBuddyHookInstaller {
                                 .on(namedOneOf("lookup", "lookupLink", "list", "listBindings", "search"))))
                 .installOn(instrumentation);
 
-        // 2026-09-28（ldap 族真 sink 覆盖，B 路线前提）：
         // JDK9+ 起 javax.naming 属于 **java.naming 模块**，由 platform classloader 加载，
         // **不在 bootstrap classpath 上**——只走上面那条 bootstrapBuilder 会静默不匹配
-        // （fail-open：既不报错也不产事件）。实证：OWASP 靶场 run 32/34 的 ldap_injection
         // 族 6 条 spec 全部 confirmed_exploitable，却 0 条 naming 类探针事件；而历史
-        // run 19/20 有 48/11 条 naming 事件（彼时织入路径不同）。
         // 故追加一条 baseBuilder 织入，覆盖 platform 侧的实现类
         // （InitialContext / InitialDirContext / DirContext 实现等），使 ldap 族真 sink
         // （DirContext.search / Context.lookup）可被观测——这是 sink_identity 族一致性
@@ -591,8 +582,7 @@ public final class ByteBuddyHookInstaller {
     }
 
     /**
-     * XSS 响应体出口 sink（缺口修复）：OWASP Benchmark 等裸 servlet 应用经
-     * {@code response.getWriter().println/print/write} 把反射型 XSS 载荷（用户输入）写进响应体，
+     * {@code response.getWriter.println/print/write} 把反射型 XSS 载荷（用户输入）写进响应体，
      * 但 {@link #installXssResponseHooks} 只盖 Spring AbstractHttpMessageConverter，裸 servlet 出口
      * 不可观测 → xss 族稳定 26~27 条 no_evidence。这里把 {@code java.io.PrintWriter} /
      * {@code java.io.PrintStream} 的 write/print/println 织入统一 sink 闸门
@@ -611,16 +601,15 @@ public final class ByteBuddyHookInstaller {
     }
 
     /**
-     * Tomcat 响应体出口 sink（Phase1 根因修复，2026-10-11）：裸 servlet 应用（如 OWASP Benchmark）
-     * 经 {@code response.getWriter().println(bar)} 把受污染参数写进响应体。{@link
+     * 经 {@code response.getWriter.println(bar)} 把受污染参数写进响应体。{@link
      * #installXssServletOutputHooks} 钩的是 {@code java.io.PrintWriter}，但 Tomcat 运行期实际类型是
      * {@code org.apache.catalina.connector.CoyoteWriter extends PrintWriter}，且 javap 证实它
      * <b>重写了全部</b> write/print/println 方法。ByteBuddy 按类织入：advice 挂在 PrintWriter
      * 自身方法上，子类 override 不调 super 即完全绕过 → 响应体写入路径零事件，xss 族
      * 「到达但值未捕获」(C 类) 与「无事件」(A 类) 缺口由此而来。
      *
-     * <p> CoyoteWriter 属 catalina（Tomcat）类、非 java.base，故走 {@link #baseBuilder()}
-     * （与 JNDI hook 同构，BootstrapGenericSinkAdvice 已实证可用于 base 类）；复用
+     * <p> CoyoteWriter 属 catalina（Tomcat）类、非 java.base，故走 {@link #baseBuilder}
+     * ；复用
      * BootstrapGenericSinkAdvice → onGenericSink，canary 门控防误报（普通流量不产生事件）。
      * 后端确认闸要求 value_hit（canary 真出现在记录值里）才升 confirmed_exploitable，
      * 安全用例（体写 'foo'/'bar'）虽产生到达事件但值级 miss，不会误报。
@@ -635,7 +624,7 @@ public final class ByteBuddyHookInstaller {
                                 .on(namedOneOf("write", "print", "println")
                                         .and(takesArgument(0, String.class))))
                         // write(char[],int,int)：char 数组体写入路径（resolveCanaryForSink 经
-                        // sample() 把 char[] 还原成文本后同样能扫到身份段）。
+                        // sample 把 char[] 还原成文本后同样能扫到身份段）。
                         .visit(Advice.to(BootstrapGenericSinkAdvice.class)
                                 .on(named("write")
                                         .and(takesArgument(0, char[].class))
@@ -645,7 +634,7 @@ public final class ByteBuddyHookInstaller {
     }
 
     /**
-     * XPath 求值 sink（缺口修复）：javax.xml.xpath.XPath / XPathExpression 的 evaluate 把攻击者
+     * XPath 求值 sink：javax.xml.xpath.XPath / XPathExpression 的 evaluate 把攻击者
      * 可控 XPath 表达式交予 XML 引擎求值，是 XPath 注入（xpathi 族）的唯一真 sink，此前无任何 hook →
      * 运行时到达证据拿不到。XPath 类型属 java.xml 模块，走 bootstrap 注入（同 XML/反序列化族）。
      * 复用 BootstrapGenericSinkAdvice → onGenericSink，canary 门控防误报。
@@ -659,7 +648,6 @@ public final class ByteBuddyHookInstaller {
                                 .on(namedOneOf("evaluate", "compile"))))
                 .installOn(instrumentation);
 
-        // 2026-10-14（xpathi 召回恒 0 根因修复）：javax.xml 属 **java.xml 模块**，由 platform
         // classloader 加载，不在 bootstrap classpath 上——只走上面那条 bootstrapBuilder 会**静默
         // 不匹配**（fail-open：不报错也不产事件）。实证：全库 XPath evaluate 事件 = 0，xpathi 族
         // TP 全部 0 召回。与 javax.naming 同型，故追加 baseBuilder 织入覆盖 platform 侧实现类
@@ -672,7 +660,6 @@ public final class ByteBuddyHookInstaller {
                                 .on(namedOneOf("evaluate", "compile"))))
                 .installOn(instrumentation);
 
-        // 具体实现类兜底（2026-10-14，批准修法）：hasSuperType(接口) 对 java.xml 的 platform 实现类
         // 可能匹配不到，故按已知实现类名直连。JDK 8 到 21 的实现类名稳定为
         // com.sun.org.apache.xpath.internal.jaxp.*。走 bootstrapBuilder（java.xml 属 platform loader）。
         for (String _xpImpl : new String[]{
@@ -688,9 +675,7 @@ public final class ByteBuddyHookInstaller {
     }
 
     /**
-     * 信任边界违背 sink（trustbound 族，2026-10-14 新增）：{@code HttpSession.setAttribute /
      * putValue} 把请求可控值写入会话作用域，是 trust boundary violation 的真 sink。此前探针
-     * **无任何 HttpSession hook** ⇒ trustbound 族召回恒 0（实证 run 351 trustbound 真漏洞
      * no-arrival 7、确认 0）。javax/jakarta.servlet 由容器类加载器加载，走 baseBuilder；复用
      * GenericSinkAdvice → onGenericSink，canary 门控防误报。
      */
@@ -703,9 +688,8 @@ public final class ByteBuddyHookInstaller {
                                 .on(namedOneOf("setAttribute", "putValue"))))
                 .installOn(instrumentation);
 
-        // 具体实现类兜底（2026-10-14，批准修法）：hasSuperType(HttpSession) 对 Tomcat 容器类加载器
         // 加载的实现类可能匹配不到，故按已知 Tomcat 实现类名直连——StandardSessionFacade 是 servlet
-        // 拿到的门面（request.getSession() 的返回类型），StandardSession 是真正落库的会话对象。
+        // 拿到的门面（request.getSession 的返回类型），StandardSession 是真正落库的会话对象。
         baseBuilder()
                 .type(named("org.apache.catalina.session.StandardSessionFacade")
                         .or(named("org.apache.catalina.session.StandardSession")))
@@ -716,7 +700,7 @@ public final class ByteBuddyHookInstaller {
     }
 
     /**
-     * XStream 反序列化 sink（缺口修复）：com.thoughtworks.xstream.XStream.fromXML 把不可信 XML
+     * XStream 反序列化 sink：com.thoughtworks.xstream.XStream.fromXML 把不可信 XML
      * 反序列化为任意 Java 对象，是 XStream 反序列化 gadget 的唯一真入口，XML hooks 与
      * installPolymorphicDeserHooks 都不盖它 → 此前不可观测。XStream 是应用类加载器类型（fat jar 依赖），
      * 走默认注入策略；复用 GenericSinkAdvice → onGenericSink，canary 门控防误报。
@@ -731,29 +715,26 @@ public final class ByteBuddyHookInstaller {
     }
 
     private static void installAsyncContextHooks(Instrumentation instrumentation, File bootstrapDir) {
-        // 2026-10-31（历史轮次 实证）：**从 hook 范围里摘掉 java.lang.Thread**。
         //
         // 原实现把 java.lang.Thread 的所有构造函数也织入 BootstrapAsyncArgumentAdvice：
         //     .type(named("java.lang.Thread").or(named("CompletableFuture")))
-        //     .on(isConstructor().or(isMethod().and(nameContains("Async"))))
+        //     .on(isConstructor.or(isMethod.and(nameContains("Async"))))
         // 而该 Advice 的实现是 `@Advice.AllArguments(readOnly=false) Object[] args`：
         // 每次调用都要把参数整体复制成数组，再逐个 BootstrapBridge.wrapAsyncArgument。
         //
         // 为什么这会致命：Tomcat 8.5 的线程池（TaskThread extends Thread）在线程扩容时
         // 正是靠 `new Thread` 创建 worker。重放把线程池打满 ⇒ 疯狂创建线程 ⇒ 全部挤在
         // 这段 bootstrap 注入的 Advice 上 ⇒ worker 创建被拖死，JVM 活着但不再响应请求。
-        // 实测 java-sec-code（Spring Boot 1.5 / 内嵌 Tomcat 8.5.11）：
         //   日志停在某一刻后再无输出，curl 返回 000，堆栈落在
         //   AsyncContext$TaintAwareRunnable.run ← TaskThread$WrappingRunnable.run。
         // 反证：把 max-threads 从 200 加到 500 反而更容易卡 —— 线程创建变多了。
-        // Tomcat 9（OWASP Benchmark）之所以没事，是它的 worker 创建时机与数量不同，属侥幸。
         //
         // 收益/代价：在 Thread 构造函数上传播污点收益极低（跨线程本就跨了请求边界，
         // 下游 sink 断言基本用不上），代价却是每次线程创建都过一遍 JDK 核心类的 Advice。
         // CompletableFuture 的 Async 方法已覆盖真正需要的异步传播场景，故只保留它。
         //
         // 注意：Executor / ExecutorService 两段**保留** —— 它们走 HookRuntime.wrapRunnable，
-        // 未污染线程有 CircuitBreaker.instrumentationEnabled() 与 Scope.capture()==null
+        // 未污染线程有 CircuitBreaker.instrumentationEnabled 与 Scope.capture==null
         // 两处短路，开销可忽略，且不触碰 JDK 核心类。
         bootstrapBuilder(instrumentation, bootstrapDir)
                 .type(named("java.util.concurrent.CompletableFuture"))
@@ -790,7 +771,6 @@ public final class ByteBuddyHookInstaller {
     /**
      * 把「会被织入 java.base 类型的 advice / 桥接类」注入 bootstrap 类加载器。
      *
-     * <p><b>硬规则（2026-09-14 血泪，禁违反）</b>：只要一个 advice 类的目标类型包含
      * {@code java.base} 类（java.lang.String / java.io.File / java.net.URL / java.nio.file.Paths /
      * java.lang.reflect.Field / java.util.Arrays ...），该 advice 类就必须在本方法里登记
      * {@code ClassInjector...Target.BOOTSTRAP.inject(...)}。原因是 ByteBuddy 把 advice 方法体
@@ -799,8 +779,6 @@ public final class ByteBuddyHookInstaller {
      *
      * <p>漏登记的后果不是「该族静默失效」，而是<b>应用全线 500</b>：bootstrap 解析不到 advice 类
      * → 每次执行到被织入的方法就抛 {@code NoClassDefFoundError}，Tomcat dispatcherServlet 直接挂掉。
-     * 2026-09-14 的 {@code PropagateBoundaryAdvice} 与更早的 {@code BoundaryTaintSupport}
-     * 两次事故都是漏登记，不是「advice 不能引用新增类」——新增类只要一并登记就能用。
      *
      * <p>另外 {@code ClassInjector.UsingInstrumentation.of(...)} 与 {@code Map.of} 都卡 10 个
      * (type, bytes) 对，所以按批拆分，新加的类另起一批即可。
@@ -904,7 +882,6 @@ public final class ByteBuddyHookInstaller {
             // java.nio.file.Paths / java.io.StringReader / ByteArrayInputStream 全在 java.base，
             // advice 类必须显式注入 bootstrap，否则织入 java.base 的字节码在运行时解析不到
             // com/rasp/probe/PropagateBoundaryAdvice → NoClassDefFoundError → dispatcherServlet 500
-            // （2026-09-14 实测：8092 全线 500，/login /products 均失败）。
             ClassInjector.UsingInstrumentation.of(bootstrapDir,
                             ClassInjector.UsingInstrumentation.Target.BOOTSTRAP, instrumentation)
                     .inject(Map.of(
@@ -912,9 +889,7 @@ public final class ByteBuddyHookInstaller {
                             ClassFileLocator.ForClassLoader.read(PropagateBoundaryAdvice.class),
                             TypeDescription.ForLoadedType.of(PropagateBoundaryStaticAdvice.class),
                             ClassFileLocator.ForClassLoader.read(PropagateBoundaryStaticAdvice.class),
-                            // 反序列化构造器传播（2026-09-28 第三层）：ObjectInputStream 在 java.base，
                             // advice 类必须显式注入 bootstrap，否则织入后运行时解析不到
-                            // → NoClassDefFoundError → 靶场全线 500（2026-09-14 同类事故）。
                             TypeDescription.ForLoadedType.of(PropagateObjectStreamCtorAdvice.class),
                             ClassFileLocator.ForClassLoader.read(PropagateObjectStreamCtorAdvice.class)));
         });
@@ -1035,7 +1010,7 @@ public final class ByteBuddyHookInstaller {
      * File / URL / Path / InputSource) 包裹后，原 String 内容在载体里取不到 (toString/getSystemId
      * 只剩 class@hash)，导致 sink 处 canary 现场断言在 String->载体 边界丢失，XXE / 路径穿越 /
      * 文件上传等族永远 no-arrival。本方法在载体构造时刻把源内容按载体身份登记进 TaintHub.CARRIER_CONTENT，
-     * 由 HookRuntime.sample() 在 sink 处兜底回收。载体均为 java.base / java.xml 类型，走 bootstrap 注入。
+     * 由 HookRuntime.sample 在 sink 处兜底回收。载体均为 java.base / java.xml 类型，走 bootstrap 注入。
      */
     private static void installBoundaryHooks(Instrumentation instrumentation, File bootstrapDir) {
         bootstrapBuilder(instrumentation, bootstrapDir)
@@ -1045,7 +1020,6 @@ public final class ByteBuddyHookInstaller {
                         .or(named("java.net.URL"))
                         .or(named("java.nio.file.Paths"))
                         .or(named("org.xml.sax.InputSource")))
-                // 2026-09-14：必须拆成两个 advice 类 + 两个互斥匹配器。
                 // 同一 advice 类含两个 @OnMethodExit 时 ByteBuddy 1.15.11 抛
                 // "Duplicate advice for Delegate to ...onCtor(...) and ...onStatic(...)"，
                 // 六个边界类整类插桩失败（日志 152 次）。
@@ -1222,7 +1196,7 @@ public final class ByteBuddyHookInstaller {
     /**
      * 数组重组传播 (手册 11.1.3 十.5). {@code Arrays.copyOf} / {@code copyOfRange} are the
      * instrumentable half of array reorganisation — {@code System.arraycopy} and
-     * {@code array.clone()} are native/intrinsic and can never be woven.
+     * {@code array.clone} are native/intrinsic and can never be woven.
      *
      * <p>Only the reference-array overloads ({@code Object[]}, {@code byte[]}, {@code char[]})
      * are matched: those are the ones that carry attacker data (request-body buffers, split
@@ -1265,19 +1239,16 @@ public final class ByteBuddyHookInstaller {
         installWeakCryptoHooks(instrumentation, bootstrapDir);
     }
 
-    // 方案 B（2026-09-25）：weakrand / crypto / hash / securecookie 四族真 sink 补桩。
-    // 此前这四族零 hook（grep 计数=0），benchmark 重放即使执行到 new Random() /
+    // 此前这四族零 hook（grep 计数=0），benchmark 重放即使执行到 new Random /
     // Cipher.getInstance("DES") / MessageDigest.getInstance("MD5") / Cookie.setSecure(false)
     // 也无任何探针事件，D2 永远 no_evidence，被迫靠「弱确认口径」折算——现补齐观测点闭环。
     // 全部复用 GenericSinkAdvice：sink 名经 @Advice.Origin 自动带出（如 java.util.Random.nextInt），
     // canaried 重放请求命中即 sink-reached 断言（onGenericSink 既有分支），普通流量走 L1 签名观测，
     // CircuitBreaker/HookMetrics 频控与 isSelfOriginated 自指防护照常生效。
     private static void installWeakCryptoHooks(Instrumentation instrumentation, File bootstrapDir) {
-        // 2026-10-08 根因修复（决定性实证）：
         // 上面三条（java.util.Random / javax.crypto.Cipher / java.security.MessageDigest）此前用
-        // baseBuilder() + GenericSinkAdvice 织入，而它们都是 **java.base 模块、bootstrap 类加载器**
+        // baseBuilder + GenericSinkAdvice 织入，而它们都是 **java.base 模块、bootstrap 类加载器**
         // 的类——baseBuilder 的 InjectionStrategy.UsingUnsafe 无法把 advice 注入 bootstrap loader，
-        // ByteBuddy 织入静默失败（既不报错也不产事件）。实证：run 246 的 2220 条 iast_events 里
         // sink_file 分布只有 FileInputStream/FileOutputStream/DocumentBuilder/ProcessBuilder/
         // Runtime/RandomAccessFile/JDBC Statement/sendRedirect/setHeader/Files.newInputStream，
         // MessageDigest / Cipher / Random / Cookie 命中数全为 0（注意 "Random" 的 42 条是
@@ -1287,7 +1258,6 @@ public final class ByteBuddyHookInstaller {
         // 后果：这四族 D2 永远拿不到真 sink 证据，judge_algorithm/random/attribute 三个判据函数
         // 即使代码接通也是空转（无事件可判），只能退回「借别族 sink 确认」→ FP 与 TP 一起确认。
 
-        // weakrand：java.util.Random 随机值产出点（nextInt 为主，OWASP Benchmark CWE-330 形态）。
         // 用 BootstrapRandomSourceAdvice（而非 BootstrapGenericSinkAdvice）：
         // 后者会被 Cipher/MessageDigest 等静态方法复用，无法加 @Advice.This；
         // 前者在 advice 内看 receiver 真实类型，CSPRNG 子类（SecureRandom 继承陷阱）直接跳过，
@@ -1316,7 +1286,6 @@ public final class ByteBuddyHookInstaller {
                 .installOn(instrumentation);
 
         // securecookie：javax + jakarta 双包名（应用类加载器，走 baseBuilder 即可）。
-        // 2026-10-08 补 <init>：OWASP Benchmark 的 securecookie **真漏洞形态是「创建 Cookie 但
         // 从不设 flag」**，只 hook setSecure/setHttpOnly 永远抓不到（设了 flag 的反而是 safe 用例）。
         // 补上构造器 hook 后，「有 Cookie.<init> 但无 setSecure(true)/setHttpOnly(true)」即可作为
         // 「flag 缺失」的正向证据 —— 这正是 family_verdict.judge_attribute_family 一直在等的输入。
@@ -1540,7 +1509,7 @@ public final class ByteBuddyHookInstaller {
             // 后端 no-iast-evidence 归因靠它二分：「不在台账」= 探针没插到这条路径（观测缺失，
             // 不得判无漏洞）；「在台账」= 插到了但这次没触发（真漏报，重放要改）。
             // 早期方案曾想用「首次命中时登记」，但那样零事件请求的台账也是空的，二分失效，
-            // 故必须挂在 onTransformation（织入成功即登记）。
+            // 故必须挂在 onTransformation。
             try {
                 HookRuntime.registerInstalledHook(
                         "class|" + typeDescription.getName(),

@@ -1,4 +1,4 @@
-/** sast-ai 自定义 sink 建模（叠加在官方 java-queries 之上，不改平台主逻辑）。
+/** SAVR 自定义 sink 建模（叠加在官方 java-queries 之上，不改平台主逻辑）。
  *
  * 只补官方查询「没建模到的特殊形态」，不重复官方已覆盖的经典形态：
  * - SQL：Connection.prepareCall(...)、Spring JdbcTemplate/NamedParameterJdbcTemplate 包装

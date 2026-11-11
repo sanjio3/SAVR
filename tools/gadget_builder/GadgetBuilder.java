@@ -12,7 +12,7 @@ import java.util.Map;
 /**
  * Sink-pattern gadget builder (方案 1a).
  *
- * 针对 ctf-java-quote 这类「应用对反序列化对象的某字段调用 Transformer.transform()」的
+ * 针对 ctf-java-quote 这类「应用对反序列化对象的某字段调用 Transformer.transform」的
  * 自定义接线：应用把反序列化得到的 Map 放进 userConfig，随后 CacheProcessor.process(userConfig)
  * 取出 key="transformer" 的值强转为 Transformer 并逐条 cache 值调用 transformer.transform(...)。
  *

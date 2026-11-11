@@ -94,7 +94,6 @@ class Config:
         output.setdefault("formats", ["json", "markdown"])
 
         agents = self._config.setdefault("agents", {})
-        # 2026-09-18（B3 评审）：移除 a1.rules_file 默认值。
         # 原默认路径 src/config/rules/java_rules.yaml 是死配置 —— 全仓无任何代码加载它
         # （A1 现役规则来自 a1_injection_heuristic 的内置规则表；src/config/rules/
         # 下另有 rule_feedback 的回写通道 generated_rules.yaml），保留只会让配置指向
@@ -117,8 +116,6 @@ class Config:
         hitl = agents.setdefault("d2", {}).setdefault("hitl", {})
         hitl.setdefault("approval_mode", "off")
         hitl.setdefault("tool_allowlist", [])
-        # 2026-09-24：闸门实际按「动作类别」放行（d2_strategy 比对 act_allowlist）。
-        # 此前全项目只有读取、从未写入 —— 导致批准后重跑仍被拦（批准链路断层），故补默认值。
         hitl.setdefault("act_allowlist", [])
 
     def _replace_env_vars(self, obj):
@@ -144,7 +141,6 @@ class Config:
             "model": self.get("api.model", ""),
             "temperature": self.get("api.temperature", 0.1),
             "max_tokens": self.get("api.max_tokens", 4096),
-            # 2026-09-19：兜底 provider 与本地 ollama 段一并放进聚合结果。此前只列云端
             # provider 子表，导致任何拿 config.get('api') 去组装降级链的调用方都看不到
             # ollama / fallback_provider，表现为「主用切了本地但兜底仍走云端」。
             "fallback_provider": self.get("api.fallback_provider", "anthropic-compatible"),

@@ -140,7 +140,7 @@ def extract_execution_evidence(raw_output: str, exploit_spec: Optional[Dict[str,
     return normalize_execution_evidence(evidence)
 
 
-# 五态 final_state（重构文档 3.18）
+# 五态 final_state
 FINAL_CONFIRMED_ATTRIBUTABLE = "confirmed_attributable"
 FINAL_RUNTIME_CONFIRMED = "runtime_confirmed"
 FINAL_AMBIGUOUS = "ambiguous"
@@ -161,7 +161,7 @@ def _judge_dast_path(
     fallback_exploitable: bool,
     fallback_reason: str,
 ) -> Dict[str, Any]:
-    """既有 DAST/AI 危害裁定路径（重构文档 3.5 之前的判定逻辑，原样保留）。"""
+    """既有 DAST/AI 危害裁定路径。"""
     outcomes = spec.get("expected_outcomes", {}) or {}
     contract = spec.get("validation_contract", {}) or {}
 
@@ -284,11 +284,11 @@ def judge_verification(
     iast_evidence: Optional[Dict[str, Any]] = None,
     dast_impact_evidence: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """危害裁定（重构文档 3.5 / 2.1 / 3.18）。
+    """危害裁定。
 
     以两条正交信号做裁定：IAST 证据（SINK_HIT，保真+可达）与 DAST/AI 影响证据（危害）。
     当传入 iast_evidence（含 state）时走 IAST 感知的五态组合裁定；否则保持既有 DAST/AI
-    裁定路径并向后兼容（补齐 final_state / iast_evidence / dast_impact_evidence 键）。
+    裁定路径并向后兼容。
     """
     spec = normalize_exploit_spec(exploit_spec)
     evidence = normalize_execution_evidence(execution_evidence)

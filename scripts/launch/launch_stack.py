@@ -19,7 +19,6 @@ import errno
 import atexit
 import ctypes
 
-# 2026-11-06 开源 P0：仓库内不得出现任何本机绝对路径或固定凭据。
 # 运行时路径 / token 一律走环境变量，未配置时用相对仓库根的可移植默认值。
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 项目根
 _VENV_BIN = "Scripts" if os.name == "nt" else "bin"
@@ -62,19 +61,17 @@ TOKEN = os.environ.get("SAST_AI_PROBE_TOKEN", "")
 STATUS_FILE = os.path.join(ROOT, "stack_status.json")
 # ysoserial 必须在 JDK8 下生成（JDK9+ 的 JPMS 会挡掉它的反射 gadget 构造）。
 # 后端 spawn 时把 YSO_JAVA_HOME 注入后端环境，确保 payload_forge 真正用上 JDK8，
-# 不受启动管理器的 shell 环境（可能仍是 JDK24）影响（§Q5）。
+# 不受启动管理器的 shell 环境（可能仍是 JDK24）影响。
 JDK8_HOME = os.environ.get("SAST_AI_JDK8_HOME", "")
 # 同 launch_target_mall.py：默认 CREATE_NO_WINDOW (0x08000000) 不弹窗，
 # SASTAI_SHOW_WINDOW=1 才用 DETACHED_PROCESS (0x8)。两者互斥。
-# 2026-10-04 追加 CREATE_BREAKAWAY_FROM_JOB (0x01000000)：没有它，看门狗一死，
 # 同 Job 内被 spawn 的后端与 scan_task_runner 子进程会**一起被杀**
-# （实测 20:46 taskkill 看门狗 → 8000 后端 + run 100/102 两个 runner 同时消失，
 #  两小时的 D2 进度全丢，reconcile 随后把 100/102/103/104/105 全判 failed）。
 # 「用户手动重启看门狗」是既定工作流，后端与在跑任务必须能扛住这件事。
 DETACH = 0x00000200 | (0x00000008 if os.environ.get("SASTAI_SHOW_WINDOW") else 0x08000000) | 0x01000000
 MANAGER_LOG = os.path.join(ROOT, "stack-manager.log")
 # 启动宽限期：子进程已 spawn 但端口尚未监听时，在该时间内只等待、不杀、不重建。
-# 根因（实测）：uvicorn 冷启动约 8s，而看门狗 5s 轮询；启动窗口内"子进程存活但端口
+# 根因：uvicorn 冷启动约 8s，而看门狗 5s 轮询；启动窗口内"子进程存活但端口
 # 未监听"被误判为僵尸并立即杀死，导致每 ~8s 重启一次（restarts 飙到 59，后端永不稳，
 # 全量扫描必失败）。宽限期须 > 冷启动时间，给 worker 足够时间完成 bind。
 BOOT_GRACE = 30
@@ -195,22 +192,10 @@ def _backend_env():
     no_proxy = "127.0.0.1,localhost,::1"
     env["NO_PROXY"] = no_proxy
     env["no_proxy"] = no_proxy
-    # OOB 第四层（2026-09-29 启用）：反序列化族「payload 确证被执行」的带外回执。
-    # 公网权威域名场景只需配 SAST_AI_OOB_BASE_DOMAIN（命令默认 nslookup <token>.<base>，
-    # 回执端跑 --mode dns）。本机实验室无公网权威域名、且靶机与平台同机，故改为本地 HTTP
-    # 回执通道：token 走 URL 路径，回执端跑 --mode http --port 8088。
+    # 带外回执默认走本地 HTTP 通道；跨机部署时由外部显式覆盖这两个变量。
     env.setdefault("SAST_AI_OOB_BASE_DOMAIN", "sastai-oob.local")
     env.setdefault("SAST_AI_OOB_COMMAND_TEMPLATE", "curl -s http://127.0.0.1:8088/{token}")
-    # java-sec-code 层3修复回归验证必填的运行时变量：
-    #   SAST_AI_DESER_YSOSERIAL=1  -> payload_library 启用 ysoserial 反序列化载荷族
-    #   SAST_AI_SHIRO_KEY=...      -> payload_library._discover_shiro_key 优先读该 env 解密 rememberMe
-    # 这两个变量被 payload_library 在运行时直接 os.environ 读取，必须注入后端进程环境
-    # （java-sec-code 靶场自身的已知 Shiro 密钥，非真实凭据）。setdefault 保留外部显式覆盖。
-    env.setdefault("SAST_AI_DESER_YSOSERIAL", "1")
-    env.setdefault("SAST_AI_SHIRO_KEY", "kPH+bIxk5D2deZiIxcaaaA==")
-    # 看门狗放宽（2026-10-01）：长全量扫描在 i2 闭环之外的阶段（Phase2/finalize）
-    # 不产出进度心跳，默认 2700s(45min) 会被误判卡死强杀。放宽到 10800s(3h) 给足余量，
-    # 扫描子进程经 spawn() 继承该 env。永久修复另见 task_runner.py 心跳覆盖。
+    # 长扫描的中间阶段不产出进度心跳，放宽看门狗阈值避免误判卡死。
     env.setdefault("SAST_AI_STUCK_HEARTBEAT", "10800")
     return env
 
@@ -239,7 +224,6 @@ def _find_pid_on_port(port):
 def _interpreter_of(pid):
     """取进程命令行（用于判断持有端口的进程属于哪个解释器）。
 
-    禁 wmic（安全策略黑名单 + 已弃用），改用 psutil 直读（2026-09-29）。
     """
     try:
         import psutil
@@ -252,7 +236,6 @@ def _interpreter_of(pid):
 def _proc_is_venv(pid):
     """持有端口的进程是否属于本项目栈（用于拒绝收养 D:\\Python 旧栈残留）。
 
-    重要（2026-09-10 自杀循环事故修复，勿回退）：
     本项目 .venv 建在系统 D:\\Python 3.12.6 之上，venv 的 python.exe 运行时会以 base
     解释器（"D:\\Python\\python.exe"）身份出现；uvicorn 的 "Started server process"
     子进程尤其如此 —— 监听 8000 的正是它，其 CommandLine 不含 ".venv" 字面量。
@@ -409,7 +392,7 @@ def main():
                         if ret is None:
                             # 子进程存活但端口未监听：很可能是"正在启动"（boot grace），
                             # 绝不能立即当僵尸杀掉。uvicorn 冷启动约 8s > 5s 轮询间隔，
-                            # 立即杀会形成"每 8s 重启一次"的死循环（实测 restarts=59）。
+                            # 立即杀会形成"每 8s 重启一次"的死循环。
                             age = time.time() - st.get("_started_ts", 0.0)
                             if age < BOOT_GRACE:
                                 _in_grace = True
@@ -428,7 +411,6 @@ def main():
                     else:
                         reason = "端口未监听且无子进程，重新拉起"
                     if not _in_grace:
-                        # 启动失败退避（2026-10-04）：可执行文件路径失效（FileNotFoundError /
                         # WinError 2）这类 spawn 期错误，5s 轮询会无限高频重试——实测前端
                         # node 路径升级后失效，连续失败 792 次、日志刷满、页面一直打不开。
                         # 这里对「spawn 本身失败」做指数退避（15s→30s→…→300s 封顶），
@@ -472,7 +454,6 @@ def main():
                     "started_at": st["started_at"] or "adopted",
                     "last_restart_reason": st.get("last_reason"),
                     "managed_by_stack": managed and st["proc"] is not None,
-                    # 启动失败可观测性（2026-10-04）：只暴露 listening=false 时看不出
                     # 「是进程没起来还是起来了没监听」——补失败次数与可执行路径。
                     "spawn_fail_streak": st.get("fail_streak", 0),
                     "cmd_exe": (defn["cmd"][0] if defn.get("cmd") else None),

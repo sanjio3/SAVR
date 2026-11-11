@@ -1,4 +1,4 @@
-"""D2 证据通道注册表（Part2 定稿本轮 M4，2026-10-03 落地）。
+"""D2 证据通道注册表。
 
 背景（为什么要从 if-return 单链换成注册表）：
     d2_facade._verify_sink_result 原本是一条 if-return 单链——第一个命中的分支直接 return，
@@ -9,7 +9,6 @@
          其他族即便收到了回调也不会被采信。
       3. 无法审计：落库的只有最终一句话 reason，看不出「跑了哪些通道、各自结论是什么」。
 
-评审的三条（2026-10-02 决策丙）：
       - 六条通道按证明力分级：带外回调 4 > 结果点比对 3 = 语义差分 3 > 时间盲注 2 =
         探针 sink 断言 2 > 代码属性 1。
       - M7 落地后为「跨请求回显」（echo_marker）加第七条通道：证明力 3，与结果点同档
@@ -57,14 +56,11 @@ CHANNEL_STRENGTH: Dict[str, int] = {
     # 注入点只在这里才看得见。与带外同档（都是服务端/浏览器真的执行了我想让它执行的东西），
     # 但排序在带外之后：带外是服务端主动出网，浏览器那步仍可能被目标自己的 CSP/沙箱挡下。
     "browser_dom": 4,
-    # 2026-10-10 新增「值级 sink 实参」（value_level_sink_arg）：
     # 我方投放的数据**真的出现在危险函数的实参值里**（不是探针那条 trace 级断言 canary_match）。
     # 这是当前唯一能分开「静默成功型 TP」与「共用 sink 的 FP」的可观测判据 —— 离线实测
-    # run 25130 条真 FP **零穿透**，73 条真 TP 里覆盖 16~17 条。
     # 证明力取 4（与带外同档）：它跨过了「污点是否真的流到」与「值有没有被替换/参数化」两层
     # 不确定性；排序在带外(0)之后、浏览器 DOM 之前——它是服务端执行现场的一手比对。
     "value_level_sink_arg": 4,
-    # 2026-10-10 新增「sink 现场异常签名」（sink_exception）：探针在家族真实危险 sink 现场
     # 抛出的异常类名属本族危险操作签名（如 SQL 注入触发 java.sql.SQLException、命令注入触发
     # java.io.IOException）。它是「危险操作真的执行并抛错」的一手事实，跨过了「污点是否抵达」
     # 的不确定性，与 canary 断言 / 值级命中正交，是独立的 definitive 阳性候选。
@@ -319,9 +315,8 @@ def applicable_channels(family: str, facts: Optional[Dict[str, Any]] = None,
     # 证据时只剩 probe_sink_assert 一条）会被破坏，对账时也会谎报覆盖度。
     if _value_hit_present(iast):
         out.append("value_level_sink_arg")
-    # B2 sink 异常签名（2026-10-10）：证据驱动（与值级通道同一纪律）——探针真的在 sink
     # 现场录得异常类名才参与（零额外重放）。缺这条会让已注册的评估器永远进不了计划
-    # （F8 回归锁实测：sink_exception 从未出现在 evaluate_all 的通道清单里）。
+    # 。
     if str((iast or {}).get("sink_exception_class") or "").strip():
         out.append("sink_exception")
     if _code_property_applicable(family):
@@ -381,16 +376,15 @@ def channel_participation(family: str, facts: Optional[Dict[str, Any]] = None,
                           iast: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """该族的通道参与全景（含**没参与的**及原因），供报告口径诚实标注。
 
-    ## 为什么需要这个函数（2026-10-07 实测发现）
 
     注册表里有 8 条通道，但**实际参与的可能只有 5~6 条**，而落库的只有最终那句
     `reason`，看不出「跑了哪些、每条结论是什么」。于是看报告的人会默认「六条通道都跑了」。
 
     真实案例：M13「DAST 浏览器扩展」（`browser_dom`，证明力 4，本是最高档）在 OWASP
     Benchmark 全集上**一条都不会触发**：
-      1. `is_dom_family()` 只认 dom / client_side / javascript 等前端族，而全集是
+      1. `is_dom_family` 只认 dom / client_side / javascript 等前端族，而全集是
          纯后端注入族（sqli / cmdi / pathtraver / ldapi …）；
-      2. 本机 `playwright` 未安装，`backend_available()` 恒 False。
+      2. 本机 `playwright` 未安装，`backend_available` 恒 False。
     两条各自都足以让它永不参与。机制本身是健康的（unavailable 三态如实上报、
     不伪造结论，红线没破），但**报告不标注就等于谎报覆盖度**。
 
@@ -632,8 +626,6 @@ def strength_of(verdict: Dict[str, Any]) -> int:
         return 0
 
 
-# ── P1：对照实验差分确认（2026-10-10 落地）──
-# 背景：OWASP Benchmark 安全/不安全用例共用同一危险函数 sink（探针在两侧都把 canary 断言到
 # sink），故「canary 到 sink」(probe_sink_assert, strength 2) 无法区分真漏洞(TP)与误报(FP)。
 # 唯一能区分的是**真实可观测影响**：不安全用例的有害载荷会在响应/时延上产生控制载荷没有的
 # 差异（SQL 报错 / 命令回显 / 文件读出 / 时延差），安全用例的载荷被净化器中和后与控制一致。
@@ -733,8 +725,6 @@ def register_differential_evaluator() -> None:
         if not isinstance(diff, dict) or not diff.get("attempted"):
             return None
         harmful = bool(diff.get("harmful"))
-        # 2026-10-09（r250 实证）：harmful=False（响应级无差异）绝不能进仲裁 —— OWASP 数据流族的
-        # 「静默成功型 TP」与 FP 在 HTTP 响应层完全不可区分（两侧响应都是静态页，r250 把 33 个
         # 真 TP 连同 FP 一起降级，召回 69.8%→35.4%）。差分只在 harmful=True 时作为正向证据
         # 参与仲裁（strength 3，可压过 probe_sink_assert 的仅到达）；harmful=False 只留档不裁决。
         if not harmful:

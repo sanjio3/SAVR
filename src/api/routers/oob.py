@@ -1,6 +1,5 @@
-"""OOB（带外）回调 HTTP 接收端点（2026-10-02 发难清单 Q1 落地）。
+"""OOB（带外）回调 HTTP 接收端点。
 
-oob_monitor（src/iast/oob_monitor.py）自 2026-09-28 起提供了回执登记/等待/D2 关联
 的完整链路，但其文档明确「回调接入方——DNS 服务 / HTTP 回调端点——调 record_callback」，
 此前平台**没有**这个 HTTP 接收端点，HTTP 形态的带外验证（SSRF / XXE http 实体 /
 Log4j ${jndi:http://...} 等）打出来没人接，回执永远为空。

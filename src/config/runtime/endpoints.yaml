@@ -3,7 +3,7 @@
 # 它只作为 manifest 声明的 config 资源基线；真正注入运行逻辑的反序列化/命令注入等
 # 路由、镜像、标记现已统一从 src/core/workspace_runtime.py 读取（默认值=本文件历史硬编码并集）。
 # 新靶场接入时，通过 workspace.settings['workspace_runtime_config'] 的 endpoints 字段
-# （workspace_runtime.endpoints_override()）覆盖，禁止在本文件继续追加靶场专属对照表。
+# （workspace_runtime.endpoints_override）覆盖，禁止在本文件继续追加靶场专属对照表。
 
 endpoints:
   # Java CTF - 实际的路由

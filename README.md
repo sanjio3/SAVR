@@ -169,7 +169,7 @@ Register a workspace pointing at your target, attach the probe, and submit a tas
 API or the UI. A CLI entry point exists for debugging:
 
 ```bash
-python -m src.cli.scan_task_runner --task-id 1 --target /path/to/target/src \
+python -m src.cli.scan_task_runner --task-id <id> --target /path/to/target/src \
   --output-dir output/run1 --no-sca
 ```
 
@@ -182,7 +182,7 @@ match. When they do not, the ingest endpoint answers HTTP 200 with `accepted=0`,
 to misread as success:
 
 ```bash
-python tools/probe_preflight.py --workspace-id 4 --http
+python tools/probe_preflight.py --workspace-id <id> --http
 ```
 
 `ready=true` means the session row exists, the heartbeat is fresh, and a handshake carrying
@@ -208,17 +208,7 @@ To choose a model:
    secret stays in the environment.
 
 Environment variables keep the `SAST_AI_` prefix from the project's earlier name. That prefix
-is part of the run contract — two of the six baseline `run_env` keys are spelled with it — so it
-is deliberately left unchanged for backwards compatibility.
-
-### Keys that change whether a run is valid
-
-- `SAST_AI_STAGE_CACHE=0` for a measured run. Otherwise cached A1/A2 output masks run-to-run
-  variation. Code default is `1`, so this must be explicit.
-- `SAST_AI_CLOSED_LOOP=0` unless you specifically want the I2 feedback loop. It has no measured
-  gain and it adds an LLM dependency to the confirmation path.
-- `SAST_AI_BENCHMARK_PRIOR=1` keeps the route-layout prior on. Turning it off is the experiment
-  that measures how much of the recall depends on knowing the route names.
+is part of the run contract and is kept for backwards compatibility.
 
 ---
 

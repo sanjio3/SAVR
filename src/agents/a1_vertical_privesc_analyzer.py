@@ -1,4 +1,4 @@
-"""垂直越权 + 跨模块/跨业务越权 静态分析（重构文档 §2.2 业务逻辑策略分析）。
+"""垂直越权 + 跨模块/跨业务越权 静态分析。
 
 垂直越权（vertical_privesc）：低权限用户执行了高权限操作。识别「敏感/管理类操作」
 （删用户、改配置、审核、授权等）且方法体内未见角色/权限校验（无 @PreAuthorize / hasRole /
@@ -114,7 +114,7 @@ def analyze_file(path: str, content: str, lang: Optional[str] = None) -> List[Di
             or _ADMIN_ROUTE.search(route or body)
         )
         has_auth_only = has_token(low_body, _AUTH_ONLY_CHECK) and not has_token(low_body, _ROLE_CHECK)
-        # 仅做身份校验的私有方法（如 private boolean loggedIn()）也算缺授权信号
+        # 仅做身份校验的私有方法（如 private boolean loggedIn）也算缺授权信号
         if not has_auth_only and _AUTH_ONLY_METHOD.search(body):
             has_auth_only = not has_token(low_body, _ROLE_CHECK)
         if is_priv and has_auth_only:

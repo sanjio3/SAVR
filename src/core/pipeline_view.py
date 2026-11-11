@@ -1,4 +1,4 @@
-"""pipeline 阶段 -> 具体任务清单（2026-09-17 落地，替代前端空壳阶段卡片）。
+"""pipeline 阶段 -> 具体任务清单。
 
 背景：前端 TaskDetailPage 总览原用「阶段卡片」（只有阶段名 / 状态 / 一句话释义 /
 前 3 个指标），用户看不出每个阶段究竟在做什么具体任务。本模块把各阶段**已产出**的
@@ -8,7 +8,6 @@
     {"total": N, "items": [{"name": str, "status": str, "detail": str}, ...]}
 
 items 最多 MAX_TASKS_PER_STAGE 条——pipeline 会随 task_progress 事件每秒推送一次，
-不设上限会把事件体积重新撑大（2026-09-14 瘦身把事件从 0.34MB 降到数十 KB 的教训）。
 因此只回传前若干条代表性任务 + 总数，前端按需「查看全部」。
 
 数据来源口径：优先用已落库的细粒度数组（attack_plan.entries / d1.replayed_specs_detail /
@@ -29,14 +28,11 @@ _TERMINAL_OK = {
     "completed", "complete", "done", "ok", "success", "passed", "pass",
     "confirmed", "exploitable", "verified", "replay_done", "replay_reconciled",
     "reconciled", "closed", "healthy",
-    # 2026-09-17：按 run 16 真实取值补齐的确认态（D2 裁决 / AP 运行时 / IAST 观测）。
     # 缺这些会让已确认的条目被误判成 pending（实测 attack_plan 55 条 confirmed_exploitable
     # 全显示 pending）。
     "confirmed_exploitable", "confirmed_attributable", "runtime_confirmed",
     "business_confirmed", "d2_confirmed", "observed",
     "business-logic-confirmed", "sink-reached-probe", "iast-reached",
-    # 2026-09-17 修正：no_evidence / ambiguous 是 D2-I2 的**终态裁决结论**——验证确实跑完了，
-    # 结论是「无证据」/「不明确」，不是「还没跑」。此前一律按 pending 显示，run 17 实测
     # 110 条 D2 验证里 66 条 no_evidence 全画成待处理灰点，看起来像 D2 只做了 44 条。
     # 结论本身由 detail 的「有害 / 无害 / 置信」承载，状态点只回答「跑没跑完」。
     # unconfirmed 保持 pending（确属未确认，不是裁决终态）。
@@ -47,7 +43,6 @@ _TERMINAL_RUN = {
 }
 _TERMINAL_BAD = {
     "failed", "error", "refuted", "blocked", "unhealthy", "target_unhealthy", "aborted",
-    # 2026-09-21：invalidated = 靶场重启/不可用窗口内的验证结论（可重试，非终局）。
     # 归入「非完成」桶，避免前端把它画成已完成绿点。
     "invalidated",
 }
@@ -81,7 +76,6 @@ def _norm_status(value: Any) -> str:
 def _best_status(*values: Any) -> str:
     """多级状态字段取「最优确认态」。
 
-    run 16 实测：attack_plan 同一条目可能 verification_status=unconfirmed 而
     runtime_status=d2_confirmed（最终裁决未闭环，但运行时已确认）。若只取第一个字段，
     已确认的条目会被误判成 pending。故依次找确认态 -> 失败态 -> 运行态，都没有才 pending。
     """
@@ -314,7 +308,6 @@ def build_stage_tasks(stage_key: str, stage_results: Dict[str, Any],
 def _fallback_progress_tasks(stage_key: str, st: Dict[str, Any]) -> Dict[str, Any]:
     """阶段明细尚未产出时的进度兜底：只用该阶段**自身的真实 metrics/message** 生成条目。
 
-    背景（2026-09-18，run 18 运行态实测）：D2 与 I2 是耗时最长的两个阶段，但它们的
     任务清单来源分别是 ``d2.verifications_detail``（D2 收尾才写）与
     ``i2.closed_loop.history``（闭环每轮收尾才写）。于是整段 D2 跑着的 50 多分钟里，
     前端「阶段任务」显示 0 个任务——正是「运行状态须同步前端」要避免的形态。
@@ -338,7 +331,6 @@ def _fallback_progress_tasks(stage_key: str, st: Dict[str, Any]) -> Dict[str, An
                 _norm_status(m.get("d2_verify_status")),
                 "已证可利用 %d 条" % int(m.get("d2_verify_exploitable_count") or 0)))
     elif stage_key == "d1":
-        # D1 无候选是真实结论（如 run 18 的 d1 candidate_count=0），别让它显示成一张空卡片
         if "candidate_count" in m or "finding_count" in m:
             cand = int(m.get("candidate_count") or 0)
             items.append(_task(
@@ -366,7 +358,7 @@ def attach_stage_tasks(pipeline: Dict[str, Dict[str, Any]],
         st = out.get(key)
         if not isinstance(st, dict):
             # 该阶段不在实时 pipeline 里（如 scan_task_runner 缺 a2_poc）：有 stage_results
-            # 就如实取它的状态，不要一律 pending（实测 a2_poc status=completed 曾被显示成 pending）。
+            # 就如实取它的状态，不要一律 pending。
             own_status = (sr.get(key) or {}).get("status")
             st = {"status": str(own_status) if own_status else "pending",
                   "message": "", "metrics": {}}

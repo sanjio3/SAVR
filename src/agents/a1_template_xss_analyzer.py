@@ -1,6 +1,5 @@
 """模板层 XSS 跨文件静态分析（块4 #17/#18：Thymeleaf th:utext 非转义输出）。
 
-背景（2026-09-10，块4）：
 反射型 / 存储型 XSS 的 sink 常常不在 Java 里，而在 Thymeleaf 模板的 ``th:utext`` 上。
 Java 侧只看到 ``model.addAttribute("keyword", keyword)``，看不到它最终有没有被 HTML 转义；
 模板侧只看到 ``th:utext="${keyword}"``，看不到值从哪来。单看任何一侧都判不出来，必须跨文件关联。
@@ -251,7 +250,7 @@ def _match_read_endpoint(read_eps: List[Dict[str, Any]], field: str,
     再退回按字段匹配。注意不把 /comments 这类集合路由当同路径——那不是长页，
     标记反查扫它纯属白跑一趟。
 
-    **aliases 为什么必须传**（实测踩出来的字段名错配）：
+    **aliases 为什么必须传**：
       读接口侧登记的是 model key（``model.addAttribute("content", o)`` 里的 content），
       写接口侧登记的是模板表达式里的实体字段（``${content.signature}`` 里的 signature）。
       两者不在同一个命名空间，只按字段名匹配时**永远对不上**——静态定位会恒为空，

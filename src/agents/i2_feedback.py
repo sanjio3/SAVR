@@ -1,6 +1,6 @@
-"""I2 → A2 / 重放侧 的反馈分流与闭环控制（2026-09-07 落地）。
+"""I2 → A2 / 重放侧 的反馈分流与闭环控制。
 
-背景（task-4 实测证据）：
+背景：
 - I2 产出 feedback_to_a2=60、rollback_to_a2=30，二次回灌确实触发，但确认数纹丝不动。
 - 失败原因分布：**60/60 首因都是「IAST 未观测到匹配 canary」**，端点幻觉/参数缺失/族误判 = 0。
   即回灌给 A2 的全是「运行时观测失败」，而 A2 是静态分析器，重跑只能产出同一条假说 → 空转。
@@ -29,7 +29,6 @@ HYPOTHESIS_DEFECT = "hypothesis_defect"        # A2 假说本身有缺陷：端�
 RUNTIME_OBSERVATION = "runtime_observation"    # 运行时没观测到：canary 未到 sink / 等待窗口不足 → 改重放侧
 PROBE_NOT_INSTRUMENTED = "probe_not_instrumented"  # 探针未插桩该 sink → 探针侧，本轮不可修
 JUDGE_MISCLASSIFY = "judge_misclassify"        # D2 裁决误判 → 裁决侧
-# E1（2026-10-10）：运行时证否黄金样本。探针在 sink 现场实测「数据到了但被净化」
 # （value_level_sanitized / hit_sanitized），即「静态侧声称漏洞、运行时确证无害」——
 # 这是**有判据的 definitive 阴性**，是改进静态分析器（消减 over-claim）的最高价值样本，
 # 与「证据缺失」彻底区分。它**不**进 A2（A2 是静态分析器，重跑只产同一条假说），而是
@@ -39,7 +38,6 @@ RUNTIME_REFUTATION = "runtime_refutation"
 # 只回灌 A2 的类别
 A2_ACTIONABLE = (HYPOTHESIS_DEFECT,)
 
-# Q6 五类运行时细分（2026-09-30 落地）：对 RUNTIME_OBSERVATION 的结构化细分，用于驱动
 # 「重放侧变体梯子」决策表（_FIVE_CLASS_ACTIONS）。它们保留具体类名（如 arrived_unconfirmed），
 # 但在 route_feedbacks 时归入 RUNTIME_OBSERVATION 桶，使 plan_replay_adjustments 能走五类决策表，
 # 同时不进入 a2_actionable（A2_ACTIONABLE 仅含 hypothesis_defect），故不触发 A2 静态重写。
@@ -49,7 +47,6 @@ RUNTIME_FIVE_CLASS = (
     "param_not_arrived",  # 参数未到达 sink（200/3xx/5xx 但 canary 未观测）
     "arrived_unconfirmed",# 探针确证到达 sink 但 D2 未确认有害
     "window_missed",      # 等待窗口错过事件（I1 窗口无事件但后续确认）
-    # 2026-10-02 新增：鉴权墙（302 跳登录 / 401 无凭据）。与 blocked 的关键差别是——
     # 鉴权墙下**良性请求也进不去**， offshore 补上会话即可； block 是「良性能进、带 Payload 被拒」。
     "auth_missing",
 )
@@ -63,8 +60,6 @@ _CHAIN_GATE_TOKENS = (
 )
 
 # 分流关键词（按优先级匹配；命中即返回）
-# 2026-09-14 修正：旧表把「链路不符 / 确凿缺失节点」放在 runtime_observation，导致
-# java-sec-code 一轮 29 条反馈 100% 判成运行时观测失败、a2_feedback 三轮恒为 0，
 # 闭环退化成「只调重放参数、从不修假说」。链路不符按定义属假说缺陷，已迁入 hypothesis_defect。
 _CLS_RULES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     (PROBE_NOT_INSTRUMENTED, ("探针未插桩", "未插桩", "no instrumentation", "instrumentation missing")),
@@ -72,7 +67,6 @@ _CLS_RULES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
         "端点幻觉", "参数缺失", "缺失参数", "受害者资源 id 缺失", "victim_resource_id 缺失",
         "族误判", "family mismatch", "路由不存在", "route not found", "endpoint hallucination",
         "参数名错误", "parameter mismatch", "方法不匹配", "method mismatch",
-        # —— 2026-09-14 从 runtime_observation 迁入：链路层/门禁层的假说缺陷 ——
         "I1 链路不符", "链路不符", "确凿缺失节点", "chain mismatch", "missing chain node",
         "attacker_control_proven", "gate_bypass_or_satisfaction_proven", "payload_shape_proven",
     )),
@@ -144,7 +138,7 @@ def _evidence_value_hit_form(item: Dict[str, Any]) -> str:
 
 
 def _is_runtime_refutation(item: Dict[str, Any]) -> bool:
-    """E1（2026-10-10）：运行时证否黄金样本判定。
+    """E1：运行时证否黄金样本判定。
 
     命中条件（任一即可）：显式 failure_class=RUNTIME_REFUTATION、显式 runtime_refutation 标记、
     value_level_sanitized 为真、或值级命中形态为 hit_sanitized（数据到了 sink 但被针对本族净化）。
@@ -163,7 +157,7 @@ def _is_runtime_refutation(item: Dict[str, Any]) -> bool:
 
 
 def _is_threw(item: Dict[str, Any]) -> bool:
-    """E1（2026-10-10）：A2 生成/执行异常判定。
+    """E1：A2 生成/执行异常判定。
 
     A2 产出的 PoC/payload 在合成期或重放期抛异常（语法错误、生成失败）属**假说缺陷**——
     回灌 A2 重生成 payload，而不是当成运行时观测失败。命中条件：显式 threw/generation_error/
@@ -185,7 +179,6 @@ def _is_threw(item: Dict[str, Any]) -> bool:
 def classify_feedback(item: Dict[str, Any]) -> str:
     """给单条 I2 反馈判定 failure_class。
 
-    判定顺序（2026-10-10 E1 增加值级/生成异常优先层）：
     0. 结构化/显式 failure_class（含 RUNTIME_REFUTATION）；
     1. E1 值级证否：hit_sanitized / value_level_sanitized → RUNTIME_REFUTATION（不进 A2）；
     2. E1 生成异常：threw / 语法错误 → HYPOTHESIS_DEFECT（回灌 A2 重生成）；
@@ -249,8 +242,7 @@ def route_feedbacks(feedbacks: List[Dict[str, Any]]) -> Dict[str, List[Dict[str,
         RUNTIME_OBSERVATION: [],
         PROBE_NOT_INSTRUMENTED: [],
         JUDGE_MISCLASSIFY: [],
-        # E1（2026-10-10）：运行时证否黄金样本桶。与 HYPOTHESIS_DEFECT 并列、不进 a2_actionable，
-        # 由 a2_actionable() 显式排除（A2_ACTIONABLE 仅含 hypothesis_defect），供静态侧消费。
+        # 由 a2_actionable 显式排除（A2_ACTIONABLE 仅含 hypothesis_defect），供静态侧消费。
         RUNTIME_REFUTATION: [],
     }
     for fb in dedup_feedbacks(feedbacks):
@@ -287,7 +279,7 @@ def _feedback_hid(fb: Dict[str, Any]) -> str:
 
 def attach_directives(routed: Dict[str, List[Dict[str, Any]]],
                       adjustments: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
-    """把具体改进指令并入送 A2 的反馈项（2026-10-02，补最后一公里）。
+    """把具体改进指令并入送 A2 的反馈项。
 
     此前指令只挂在 plan_replay_adjustments 产出的 adjustments 上，而 A2 消费的是
     feedback_to_a2（经 route_feedbacks → a2_actionable 透传），两条路不相通 ——
@@ -296,7 +288,6 @@ def attach_directives(routed: Dict[str, List[Dict[str, Any]]],
     这里按 hypothesis_id 把指令并回反馈项，并把 instruction 追加进 reason：
     即便下游只透传 reason 文本进 prompt，指令也一定带得过去。
 
-    2026-10-02（#Q2 残留修复）补两处：
     1) **埋点**：此前按 hid 精确匹配，匹配不上就静默跳过，无任何计数可查——指令到底
        有没有并进去、丢了多少，外部无从判断（真值只能靠读本模块源码确认）。
        现返回统计写入 ``routed["_directive_stats"]``，由调用方落进 stage_results.i2。
@@ -332,7 +323,7 @@ def attach_directives(routed: Dict[str, List[Dict[str, Any]]],
             _hid = _feedback_hid(fb)
             d = by_hid.get(_hid)
             if not d:
-                # 统计失配（Q2 残留 2）：hypothesis_id 为空或与 adjustments 不同源。
+                # 统计失配：hypothesis_id 为空或与 adjustments 不同源。
                 stats["unmatched"] += 1
                 if len(stats["unmatched_ids"]) < 20:
                     stats["unmatched_ids"].append(_hid or "<empty>")
@@ -370,9 +361,7 @@ def a2_actionable(routed: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any
 
 
 # ---------------------------------------------------------------------------
-# D10 定向闭环（2026-10-26）：只把「可救子集」喂给 LLM 闭环
 # ---------------------------------------------------------------------------
-# 背景（run 471/472 实测）：全量 LLM 闭环重跑烧掉 4528.9s（占单轮 29.1%），
 #   而 gain = 0（iterations=1、228 条 feedback、LLM 判因仅 4 次调用/1 次重分类）。
 #   同一轮里**确定性重试**只用 192.4s 就拿到 +9 确认 —— 效率差 23 倍。
 #   根因：反馈里 95%+ 是 runtime_observation（"canary 未观测到"），而其中绝大多数
@@ -421,11 +410,10 @@ def filter_recoverable(feedbacks: List[Dict[str, Any]]) -> Tuple[List[Dict[str, 
 
 def a2_rerun_budget_ok(n_files: int, remaining_s: float,
                        per_file_s: float = 25.0) -> Tuple[bool, str]:
-    """D10 预算预检（2026-10-26）：文件级 a2_rerun 能否在剩余预算内完成。
+    """D10 预算预检：文件级 a2_rerun 能否在剩余预算内完成。
 
     背景：预算闸只在闭环轮次间生效，拦不住单轮内的 A2 重跑——473 实测 51 条
     hypothesis_defect 触发数十文件重跑，单轮 2237.8s / gain=0；471 全量 4528.9s /
-    gain=0；run 24 烧 47min / gain=-7。故在执行前估算「文件数×单文件耗时」，
     超出剩余预算即建议跳过（只做重放侧调整，秒级）。
 
     返回 (是否放行, 说明)。remaining_s<=0 直接不放行。
@@ -449,11 +437,10 @@ def a2_rerun_budget_ok(n_files: int, remaining_s: float,
 
 
 # ---------------------------------------------------------------------------
-# F-3 defect 五类分流（2026-09-28 批准）：hypothesis_defect 内部再分五类，
 # 各类绑定定向动作或仅记录——不再全挤一类、也不再有「151 条同类触发全量 rerun」的盲动。
 # ---------------------------------------------------------------------------
 DEFECT_SUBCLASSES = (
-    "endpoint_hallucination",   # 端点幻觉 → a2_rerun（白名单内，定向修复）
+    "endpoint_hallucination",
     "missing_parameter",        # 参数缺失 → a2_rerun（白名单内）
     "family_mislabel",          # 族误判 → a2_rerun（白名单内）
     "chain_mismatch",           # 链路不符 → replay_adjust + 记录（重放侧调整优先）
@@ -512,9 +499,8 @@ _STATIC_FIXABLE_TOKENS = (
 
 
 def a2_rerun_actionable(feedbacks: List[Dict[str, Any]]) -> Tuple[bool, str]:
-    """止损预检（2026-09-28 落地）：这批 hypothesis_defect 反馈，A2 重跑真的修得好吗？
+    """止损预检：这批 hypothesis_defect 反馈，A2 重跑真的修得好吗？
 
-    背景（run 24 实测）：57 条反馈全部判成 hypothesis_defect，闭环据此重跑 A2，
     烧掉 47 分钟，gain = **-7**（可利用数反而少了 7 条）。根因是这些反馈的语义并非
     「假说猜错了」，而是 residual_gaps.still_open = [reachable, attacker_control_proven,
     gate_bypass_or_satisfaction_proven, payload_shape_proven] —— 即假说声称可达/可控/
@@ -530,7 +516,6 @@ def a2_rerun_actionable(feedbacks: List[Dict[str, Any]]) -> Tuple[bool, str]:
     if not items:
         return False, "无反馈"
 
-    # E2（2026-10-10）：A2 payload 重生成的条件化入口。
     # 仅当「值级命中为 hit_live（数据确证到达 sink 且未净化，路径真实）+ threw（A2 生成的
     # payload 抛异常/语法错误）」才放行 A2 重生成 payload——这是唯一 A2 重跑能修好的情况：
     # 路径已证真实，只差 payload 质量（语法/执行）。其余情况（miss / hit_sanitized /
@@ -545,7 +530,6 @@ def a2_rerun_actionable(feedbacks: List[Dict[str, Any]]) -> Tuple[bool, str]:
             f"放行定向重生成（路径真实、仅 payload 质量缺陷）"
         )
 
-    # 2026-10-02（重放智能化）：带**具体改进指令**的反馈允许定向重跑 A2。
     # 旧实现把所有运行时失败一律挡在 A2 之外（省钱但学习信号也断了），
     # 现在只要能给出可执行指令（净化器约束 / 必须避开什么 / 已试过什么），就放行——
     # A2 不再是"被同一句话重复提示"，而是拿到明确的改写要求。
@@ -586,16 +570,10 @@ def a2_rerun_actionable(feedbacks: List[Dict[str, Any]]) -> Tuple[bool, str]:
         return False, (
             f"{gate_hits}/{len(items)} 条为门禁悬置且无静态可修信号，跳过 a2_rerun"
         )
-    # B-2 触发白名单（2026-09-28 批准）：仅端点幻觉/参数缺失/族误判等静态可修 defect
-    # 允许触发 rerun；无静态可修信号的一律 skip。旧默认「无信号保守执行」已按批准翻转
-    # ——run 27 实证 151 条无静态信号的 hypothesis_defect 触发全量 rerun，产物退化召回 -19pt。
     return False, "无静态可修信号（触发白名单外），跳过 a2_rerun"
 
 
 # ---------------------------------------------------------------------------
-# B-1 a2_rerun 产物硬闸（2026-09-28 批准）：rerun 产物登记后与原产物对比三项健康度，
-# 任一退化超阈值 → 丢弃 rerun 产物、回滚登记原产物并发告警。背景：run 27 实测
-# 151 defect → 全量 rerun → spec 294→179（-39%）→ 召回 -19pt，rerun 从上线至今零正增益。
 # 阈值可经环境变量覆盖：SAST_AI_A2_RERUN_GATE_TOTAL（默认 0.10）、
 # SAST_AI_A2_RERUN_GATE_ENDPOINT（默认 0.10，相对）、SAST_AI_A2_RERUN_GATE_INJECTION（默认 0.20）。
 # ---------------------------------------------------------------------------
@@ -665,7 +643,6 @@ def spec_health_gate(before: Optional[Dict[str, Any]], after: Optional[Dict[str,
     return True, "rerun 产物健康度达标"
 
 
-# 一等公民口径（2026-10-02）：净化器判定为「不可绕过」的 spec 落成显式状态。
 # 此前这类只能落 unconfirmed / no_evidence，把"过滤器有效、不可利用"这个**真阴性**
 # 混进"没打到"里 —— 既丢结论又污染对账（精确率是本项目瓶颈）。
 FILTERED_NOT_EXPLOITABLE = "filtered_not_exploitable"
@@ -829,10 +806,9 @@ _RETRY_MAX_ROUNDS = int(os.environ.get("SAST_AI_RETRY_MAX_ROUNDS", "2") or 2)
 
 
 def plan_retryable_replay(db, task_id: int, max_rounds: int = 0) -> Dict[str, Any]:
-    """可重试 no_evidence 的定向重放清单（2026-09-28 落地）。
+    """可重试 no_evidence 的定向重放清单。
 
     背景：纪律规定 verdict=clean 且靶场停机窗口为空 ⇒ 属**可重试** no_evidence，
-    但 run 32 实测一批 xss spec 正是此类（0 事件、无 downtime），却只被 replay_adjust
     原地重放同一发请求，永远捞不回来。
 
     这里只做「该不该再放一次」的判定，**不替代**重放执行：
@@ -843,11 +819,9 @@ def plan_retryable_replay(db, task_id: int, max_rounds: int = 0) -> Dict[str, An
     """
     import json as _json
     _max = int(max_rounds or _RETRY_MAX_ROUNDS)
-    # 零到达轮次上限（2026-10-08，r65 实测：155 条 retryable 里 150 条 IAST 零/弱到达，
     # 第 2 轮原样重放对这些 spec 是纯窗口开销）。零到达 spec 重试封顶
     # SAST_AI_RETRY_ZERO_ARRIVAL_ROUNDS（默认 1 轮）；有到达迹象（sink-reached-*）或任务发生过
     # 靶场停机（downtime，证据缺失可能是时序问题）不受此限。设为 2 恢复旧行为。
-    # safe-pattern-veto（2026-10-08 并入）：静态安全裁决不是重放能翻案的（重放不改代码），
     # 同样只给 1 轮机会。
     try:
         _zero_cap = int(os.environ.get("SAST_AI_RETRY_ZERO_ARRIVAL_ROUNDS", "1") or 1)
@@ -888,7 +862,6 @@ def plan_retryable_replay(db, task_id: int, max_rounds: int = 0) -> Dict[str, An
             "endpoint": r.get("target_endpoint"),
             "round": _round,
         }
-        # 2026-10-02（判完就停）：已判定「不可绕过」的 spec 是终态，不再进重试环。
         # 真净化器前死磕只会烧轮次与 LLM，且会把"不可利用"的真阴性结论搅浑。
         try:
             from src.core.filter_verdict import is_terminal as _is_terminal
@@ -899,7 +872,6 @@ def plan_retryable_replay(db, task_id: int, max_rounds: int = 0) -> Dict[str, An
         except Exception:
             pass
         # 零到达封顶：IAST 从未观测到 canary（no-arrival / no-iast-evidence / 无状态）的 spec，
-        # 原样重放产出新事件的概率极低（r65 重试 clear 率 8.7% 且全靠 late-event 运气），
         # 只给 _zero_cap 轮机会；有过到达（sink-reached-*）或靶场停机过的不受限。
         # safe-pattern-veto 同样封顶：静态安全裁决不是重放能翻案的。
         _cap = _max
@@ -922,11 +894,9 @@ def plan_retryable_replay(db, task_id: int, max_rounds: int = 0) -> Dict[str, An
 
 
 # ---------------------------------------------------------------------------
-# Q6 重放智能化：按族内置 payload 变体梯子（2026-09-30 落地，静态表不依赖 LLM）
 # ---------------------------------------------------------------------------
 # 基线 → URL 编码 → 双重编码 → 大小写/空白混淆 → 替代语法。
 #
-# 2026-10-03（Part2 M3）两处修正，勿回退：
 # ① 默认宿主原为 ``127.0.0.1:8088``，而真实回执端点是后端 ``/api/oob/{token}``
 #    （端口 8000）—— 端口对不上，靶场就算出网了请求也打到没人监听的端口，
 #    回执恒为零且**看不出错**（payload 生成了、投出去了、就是没人接）。
@@ -1016,7 +986,7 @@ def _oob_payload(family: str, base: str) -> str:
 
 
 def oob_companion_payload(family: str, base: str, token: str = "") -> str:
-    """带外**伴随**弹（2026-10-03 M3）：与基线同时投放，而不是等梯子爬到末阶。
+    """带外**伴随**弹：与基线同时投放，而不是等梯子爬到末阶。
 
     与 _oob_payload（梯子末阶的确认弹）的区别：
       - 末阶弹 = 前面都失败了才投，用于「还能不能救回来」；
@@ -1039,7 +1009,7 @@ def oob_companion_payload(family: str, base: str, token: str = "") -> str:
 
 
 def oob_available(family: str) -> bool:
-    """该族是否具备带外弹形态（供重放策略层决定要不要投、要不要登记 token）。
+    """该族是否具备带外弹形态。
 
     投给一个根本不会出网的族，得到的只是「投了但没回」，既浪费重放预算，又把真阴性
     伪装成「带外也没打通」的假阴性 —— 所以先问再做。
@@ -1071,7 +1041,6 @@ def next_variant_payload(base: str, family: str, current_level: int) -> tuple:
     return (nxt, apply_variant_transform(nxt, base, family), True)
 
 
-# 五类失败 → 重放侧动作（Q6 决策表，2026-09-30 落地）。覆盖 §二 决策表的五类：
 # 路由不可达 / 参数未达 / 到达未确认 / 窗口错过 / 被拦截。
 _FIVE_CLASS_ACTIONS: Dict[str, List[str]] = {
     "route_unreachable": ["repush_endpoint", "switch_param_location"],
@@ -1079,20 +1048,18 @@ _FIVE_CLASS_ACTIONS: Dict[str, List[str]] = {
     "arrived_unconfirmed": ["escalate_variant", "extend_wait_window"],
     "window_missed": ["extend_wait_window"],
     "blocked": ["escalate_variant"],
-    # 2026-10-02：鉴权墙 → 带会话重推该端点即可（不是拦不住，是压根没带身份进去）。
     "auth_missing": ["repush_endpoint"],
 }
 
 
 
 # ---------------------------------------------------------------------------
-# 2026-10-02 落地：blocked 与 route_unreachable 的结构化分层判据（批次 #BVR）
 #
 # 背景：两者在「结果终点」上都表现为没到 sink，但成因完全不同——一个是放错位置（错放），
 # 一个是路对了被拦（拦截）。此前 `_infer_failure_class` 拿 D2 的 reason 自然语言做关键词
 # 匹配，且第一条分支含 "endpoint"/"no-arrival" 这类极泛的词，导致 reason 里只要出现这些词、
 # 哪怕同时写了 waf/blocked，也会被抢先判成 route_unreachable —— 五类信号因此长期失真，
-# blocked→escalate_variant 分支实际不可达（variant_escalated 两轮实测恒为 0）。
+# blocked→escalate_variant 分支实际不可达。
 #
 # 修法：改以「一组确定的可观测事实」分层——状态码 + 响应摘要（拒绝签名）+ 到达事实 +
 # 是否被确证有害。同一条 spec 的重放天然只有一组这样的事实，判据是确定的、不再漂移。
@@ -1190,7 +1157,6 @@ def classify_runtime_evidence(evidence: Any) -> str:
     if status == 401 and ("www-authenticate" in _hdr_blob or not _has_reject_signature(body)):
         return AUTH_MISSING
 
-    # 3) 被拦：拒绝状态码，或 200 包裹拒绝短语（java-sec-code cmdFilter 的典型形态）
     if status in _DENY_STATUS or (status == 200 and _has_reject_signature(body)):
         if _has_reject_signature(body) or status in (403, 406, 407, 429):
             # 攻击 payload 确实被拒 且没被确证有害 → 判 blocked（走进重试环升变体）
@@ -1211,10 +1177,9 @@ def classify_runtime_evidence(evidence: Any) -> str:
 def _infer_failure_class(reason: str) -> str:
     """无结构化事实时，从 reason 关键词反推五类之一（best-effort，用于记录）。
 
-    2026-10-02 修正次序与词表（#BVR）：旧实现**先判** route_unreachable，且词表含
     "endpoint" / "no-arrival" 这类极泛的词 —— 结果 reason 里只要出现这些词，哪怕同时
     写了 waf/blocked，也会被抢判成 route_unreachable，blocked→escalate_variant 分支
-    因此长期不可达（variant_escalated 两轮实测恒为 0）。
+    因此长期不可达。
 
     新次序：**先判具体成因（鉴权 / 拦截），再判泛化的到达类失败**，并踢掉会劫持的泛词。
     """
@@ -1256,7 +1221,6 @@ def plan_replay_adjustments(routed: Dict[str, List[Dict[str, Any]]]) -> List[Dic
         seen.add(hid)
         reason = str(fb.get("reason") or "")
         fb_class = str(fb.get("failure_class") or "")
-        # 2026-10-02（#BVR）：无显式 classification 时，先用**结构化可观测事实**（状态码 /
         # 响应摘要 / 到达事实 / 是否确证有害）判定，判不出来才回落到自然语言关键词。
         # 这一步是 blocked 与 route_unreachable 能可靠分离的关键。
         if not fb_class:
@@ -1280,7 +1244,6 @@ def plan_replay_adjustments(routed: Dict[str, List[Dict[str, Any]]]) -> List[Dic
             if not actions:
                 actions = ["inject_all_params", "extend_wait_window"]
             fb_class = fb_class or _infer_failure_class(reason)
-        # 2026-10-02（重放智能化）：把失败原因翻译成**具体改进指令**，而不是只留一句自然语言。
         # 指令里带净化器约束(FilterSpec)、必须避开的片段、以及轨迹记忆里已试过且无效的载荷，
         # 让下一轮合成/重放不再重复无效打法——这是"Agent 式自主学习"所缺的那一环。
         _directive: Dict[str, Any] = {}
@@ -1315,8 +1278,7 @@ def apply_replay_adjustments(db, task_id: int, adjustments: List[Dict[str, Any]]
 
     只改「请求怎么发」，不改漏洞假说本身——这是与 A2 回灌的本质区别。
 
-    bump_round（2026-10-08）：闭环在 a2_rerun 重登记（second_pass 先清库再重建）后会用同一批
-    adjustments **补写**（否则同轮写入被清库吞掉，actions 落地恒 0）。补写时必须 bump_round=False，
+    adjustments **补写**。补写时必须 bump_round=False，
     否则 round 被推到 2 会让 plan_retryable_replay 误判封顶、重试环整体失效。
     """
     if not adjustments:
@@ -1350,7 +1312,6 @@ def apply_replay_adjustments(db, task_id: int, adjustments: List[Dict[str, Any]]
             n += 1
         except Exception as _e:
             logger.warning("[i2_feedback] 应用重放调整失败 spec=%s：%s", row["id"], _e)
-        # 2026-09-28（xss 0 事件跟进）：此前只有 switch_param_location 真正落库，
         # inject_all_params / extend_wait_window **只进 plan、不改任何字段**——闭环看起来
         # 「做了重放侧调整」，实际仍按原样重放同一发请求，0 事件的 spec 永远捞不回来。
         # 这里把三个动作全部落到 spec.raw_json.replay_adjust（累计轮次 + 动作集合），
@@ -1396,7 +1357,6 @@ def apply_replay_adjustments(db, task_id: int, adjustments: List[Dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------
-# 差集驱动的结构化回灌（Q1 第五步，2026-09-14 落地）
 # ---------------------------------------------------------------------------
 def difference_set_feedbacks(db, task_id: int, limit: int = 200) -> List[Dict[str, Any]]:
     """把「假说集 ⊖ 观测集」的差集条目转成结构化回灌项。
@@ -1448,11 +1408,10 @@ class ClosedLoopController:
     - 新：最多 max_iterations 轮；每轮记录 (iteration, 分流结果, 采取动作, 增益)；
       以「新增 confirmed/verified 数」为增益判据，连续无增益即停并标记 exhausted。
 
-    #④ 防卡死（2026-09-26 落地）：原 should_continue 只覆盖「增益为负」，**完全没覆盖
     「调用被阻塞」**。round-15 死在 i2_rerun（iteration=1、replay_adjustments=0），
     因 canary 重放被双 runner 并发踩踏永久阻塞，却无超时能把循环拽出。新增：
-    - stall_timeout：距上次 note_progress() 超过该秒数即判 stalled（覆盖「阻塞」非仅 gain）。
-    - note_progress()：编排侧每完成一次有效进展（迭代结束 / 阶段心跳）调用，刷新时间戳。
+    - stall_timeout：距上次 note_progress 超过该秒数即判 stalled（覆盖「阻塞」非仅 gain）。
+    - note_progress：编排侧每完成一次有效进展（迭代结束 / 阶段心跳）调用，刷新时间戳。
     - failure_class=replay_stall：stall 终止时写入 summary，便于前端/报告定位。
     """
 
@@ -1460,7 +1419,7 @@ class ClosedLoopController:
         self.max_iterations = max(1, int(max_iterations))
         self.min_gain = max(0, int(min_gain))
         # stall_timeout 默认 20 分钟：低于项目「scan_progress.json >45min 判卡死」阈值，
-        # 但高于单轮 D2 重验正常耗时（实测 ~7min），避免误杀正常轮。
+        # 但高于单轮 D2 重验正常耗时，避免误杀正常轮。
         self.stall_timeout = max(60, int(stall_timeout))
         self.history: List[Dict[str, Any]] = []
         self._last_progress = time.time()

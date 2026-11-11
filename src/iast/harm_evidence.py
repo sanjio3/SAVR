@@ -1,4 +1,4 @@
-"""族特有「有害证据」判定（2026-10-25，两档证据的第一档实现）。
+"""族特有「有害证据」判定。
 
 ## 背景
 
@@ -9,9 +9,7 @@ D2 的确认判据长期只有「可达」这一档：canary 到达 sink、值�
   - `impact_observed` 判定过宽（canary 回显进 cookie 值就算「影响观测」）。
 
 实测后果：两个 FP 都从这里进来——
-  - BenchmarkTest00016（family=http response splitting）：canary 回显在 cookie 值里，
     但响应头没有任何 CRLF 拆分痕迹；
-  - BenchmarkTest00121（family=stack trace exposure）：探针断言值到达，
     但响应体里没有一行堆栈帧。
 
 ## 设计：三态而非二值
@@ -54,7 +52,6 @@ _FAMILY_ALIASES = {
     "stack_trace_exposure": "stack_trace_exposure",
     # 注意：error message exposure 不能映射到 stack_trace_exposure。
     # 它的危害是「泄露内部错误信息」，不需要堆栈帧；早期误映射导致 469 里 8 条
-    # 真漏洞（pathtraver/cmdi 的报错回显）被当成「无堆栈帧」降级 —— 已回滚。
     "error message exposure": "error_message_exposure",
     "sqli": "sql_injection",
     "sql injection": "sql_injection",
@@ -75,7 +72,6 @@ _ORACLE_HARM_SIGNALS = {
     "time_delay": "command_execution",
     "file_signature": "path_traversal",
     "reflection_raw": "xss",
-    # 2026-10-31 新增 4 族：这些族的「值在 sink 处已被转换」（URL 对象 / Location 头 /
     # 序列化对象 / 被过滤的 header），值级 canary 匹配永远判不出来，只有黑盒行为可观测。
     # signal 名与 response_oracle.judge 产出的完全一致，一一对应，不做模糊匹配。
     "location_reflect": "url_redirect",
@@ -83,14 +79,12 @@ _ORACLE_HARM_SIGNALS = {
     "header_injected": "crlf_injection",
     "error_reflect": "ssrf",
     "internal_url_reflect": "ssrf",
-    # 2026-11-06（jsc 625）：WebSocket 命令执行。信号由 `_run_websocket_oracle`
     # 的 ws_echo 臂产出 —— 端点把 `echo <marker>` 的 stdout 通过 WS 帧送回来，
     # 是「命令在服务端真实执行」的硬观测，强于任何响应反射。
     # 这里必须映射到平台侧族名 command_execution（而非 oracle 侧 websocket_cmd），
-    # 因为 spec.family 存的是 command_execution，`_oracle_positive_signal()` 用它比对；
-    # 且 ws_echo 臂只在 `_is_websocket_sink()` 命中时投放，不会误放普通 cmdi 端点。
+    # 因为 spec.family 存的是 command_execution，`_oracle_positive_signal` 用它比对；
+    # 且 ws_echo 臂只在 `_is_websocket_sink` 命中时投放，不会误放普通 cmdi 端点。
     "websocket_echo": "command_execution",
-    # 2026-11-06（jsc 626/627）：表达式注入与反序列化两族此前没有行为 oracle。
     # expr_eval 认「注入表达式被引擎求值并返回结果」（拼接/算术，排除原样回显）；
     # deser_object_accepted 认「阴阳对照成立：非对象字节被拒、攻击者载荷被
     # 反序列化器接受」，只证明反序列化入口被真实触发，不等同于 RCE 命令执行。
@@ -120,9 +114,6 @@ def normalize_family(family: Optional[str]) -> str:
     return _FAMILY_ALIASES.get(f, f.replace("-", "_").replace(" ", "_"))
 
 
-# endpoint 前缀 → 真实族（2026-10-25 族一致性纠正）。
-# 实测依据：/securecookie-00/BenchmarkTest00016 被标成 family=http response splitting，
-# /crypto-00/BenchmarkTest00121 被标成 stack trace exposure —— 这两族在 Benchmark 真值里根本不存在，
 # 是平台把用例的**辅助 finding** 误标出来的。若按误标族判「族特有证据」，会把
 # 「族误标的真漏洞」（如 02339，实为 securecookie 真漏洞）一起降级，白掉 TP。
 # 以 endpoint 前缀为准纠正族后，再判该族证据，才能既不误伤也不放过。
@@ -157,10 +148,10 @@ def benchmark_prior_enabled() -> bool:
 
 
 def family_from_endpoint(endpoint: Optional[str]) -> str:
-    """从 Benchmark 风格 URL 前缀推真实族：/securecookie-00/BenchmarkTest00016 → secure_cookie。
+    """从 URL 前缀推断漏洞族：/securecookie-00/<case-id> → secure_cookie。
 
-    非 Benchmark 风格 URL 返回空串（此时不做纠正，保持原族）。
-    E11 消融：SAST_AI_BENCHMARK_PRIOR=0 时整体关闭本先验。
+    非该风格的 URL 返回空串（此时不做纠正，保持原族）。
+    设置 ``SAST_AI_BENCHMARK_PRIOR=0`` 可整体关闭本先验。
     """
     if not benchmark_prior_enabled():
         return ""
@@ -247,7 +238,6 @@ def _eval_stack_trace_exposure(text: str) -> Dict[str, Any]:
 def _eval_oracle_family(family: str, oracle_state: str, oracle_signal: str) -> Dict[str, Any]:
     """有行为 oracle 的族：正向信号即有害证据；无信号返回 unknown（不降级）。"""
     want = _ORACLE_HARM_SIGNALS.get(oracle_signal)
-    # 2026-10-31：族名走 oracle 侧归一后再比对。
     # 原因：平台 canonical 名与 oracle canonical 名不完全一致 —— 平台把 CRLF 存成
     # `http_response_splitting`、把 SSRF 存成 `server_side_request_forgery`，
     # 而 oracle 侧统一归到 `crlf_injection` / `ssrf`。不归一会导致「信号对、族比对失败」。
@@ -287,7 +277,6 @@ def evaluate(family: Optional[str], *,
     dast = dast_impact_evidence or {}
 
     # 属性族：确认走静态强证据门禁（benchmark_cli._strong_property_evidence），此处不判。
-    # 实测教训（2026-10-25，469 回放）：早期试过在这里返回 harm_absent（理由是「运行时可达
     # 对属性族无意义」），结果误伤 72 条真漏洞——属性族的 spec 确实经过本分支确认，
     # 降级等于把 weak_hash/weak_crypto/weakrand/secure_cookie 的真漏洞全砍掉。
     # 属性族的误报（如 00016）根因在**登记阶段的族误标**导致静态门禁用错判据，
@@ -297,7 +286,7 @@ def evaluate(family: Optional[str], *,
                 "detail": "属性族确认走静态强证据门禁，不在此处判",
                 "family_used": fam, "family_corrected": corrected}
 
-    # oracle 优先：正向信号本身就是最强证据（462/469 实测正向精度 16/16）
+    # oracle 优先：正向信号本身就是最强证据
     os_ = oracle_state or str((iast_evidence or {}).get("oracle_state") or "")
     osig = oracle_signal or str((iast_evidence or {}).get("oracle_signal") or "")
     if os_ or osig:
@@ -326,7 +315,6 @@ def evaluate(family: Optional[str], *,
     elif fam in ("sql_injection", "command_execution", "path_traversal", "xss",
                  "url_redirect", "cors", "crlf_injection", "ssrf",
                  "http_response_splitting", "server_side_request_forgery"):
-        # 2026-10-31：后 6 个是新增的行为 oracle 族。平台 canonical 名与 oracle 侧不同名
         # （http_response_splitting↔crlf_injection、server_side_request_forgery↔ssrf），
         # 故两种写法都要列，具体比对在 _eval_oracle_family 里归一。
         got = _eval_oracle_family(fam, os_, osig)

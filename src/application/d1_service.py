@@ -23,7 +23,6 @@ from src.infrastructure.db import Database
 
 logger = logging.getLogger(__name__)
 
-# 报文 dump 的写锁（2026-10-29）：D2 并发重放时会多线程同时落盘，必须串行化避免行交错。
 _D1_DUMP_LOCK = threading.Lock()
 
 
@@ -31,7 +30,6 @@ def _dump_outbound(method, url, final_url, query, headers, cookies, body,
                    content_type, files=None) -> None:
     """SAST_AI_D1_DUMP_REQ=1 时把一次出站请求落一行 JSONL。
 
-    2026-10-29（sqli 投放定位）：replay 有**两条**发包路径——主路径（replay 内联 requests）
     与旁路 `_send_one`（canary 名注入/followup）。第一版只给 `_send_one` 加了 dump，
     结果看到的全是旁路畸形请求（POST 变 GET、query 空、body key 空），差点据此误判根因。
     故抽成本函数，两条路径共用，避免再出现「观测口径只覆盖一半」的坑。
@@ -66,11 +64,9 @@ def _dump_outbound(method, url, final_url, query, headers, cookies, body,
 # 会挤掉真正要跑的通道（响应回读 / 回显比对 / 带外）。
 _STATE_QUERY_CANDIDATE_BUDGET = 2
 
-# R26：可回滚验证的上下文状态（线程隔离）。replay() 与 business_logic.verify() 各有一次包装，
 # 用 TLS 让内层复用外层，避免把「已投放」的状态当成基线。
 _RESTORE_TLS = threading.local()
 
-# R26 修复：规范化基线（canonical baseline）。
 # 每个 (service_url, rid) 在进程内「首次观测到的可回滚基线」被记为规范化基线；所有回滚都写回
 # 规范化基线，而不是「本次重放前的现场快照」。这样即使某次回滚失败、或靶标在进入前已被污染，
 # 后续回滚仍会把靶标还原到规范化基线，杜绝「快照到已污染现场 → 把污染当成基线保留」的基线中毒。
@@ -81,14 +77,8 @@ _CANONICAL_LOCK = threading.Lock()
 def _join_url(base_url: str, path: str) -> str:
     """把 spec / 路由的相对路径拼到靶场 base_url 上，**必须保留 base_url 的 context path**。
 
-    2026-10-12（r81 实证）：D1 主重放通道原先写 ``urljoin(base_url + "/", path)``，
-    而 path 恒带前导斜杠（如 ``/xss-00/BenchmarkTest00030``）。urljoin 对以 ``/`` 开头的
     相对 URL 一律按绝对路径处理，会**静默丢弃 base_url 的 context path**：
 
-        urljoin("http://h:8444/benchmark/", "/xss-00/BenchmarkTest00030")
-          -> "http://h:8444/xss-00/BenchmarkTest00030"      # 404，servlet 根本不执行
-        _join_url("http://h:8444/benchmark", "/xss-00/BenchmarkTest00030")
-          -> "http://h:8444/benchmark/xss-00/BenchmarkTest00030"   # 200 + 反射
 
     OWASP 全集靶场（service_url 带 /benchmark）因此连续三代 xss 分片 arrivals 恒 0：
     107/131 条重放全部打在 Tomcat 404 页上，事件表里只剩 Response.setHeader，
@@ -105,7 +95,6 @@ def _join_url(base_url: str, path: str) -> str:
 _COOKIE_OCTET_DISALLOWED = re.compile(r"[^\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]")
 
 
-# 2026-11-06（jsc 628 根因）：per-request 认证守卫。
 # 628 实测 60 次登录墙 302 中 59 次集中在 /sqli/jdbc/vuln、45 次是 oracle 探测臂；
 # 根因是 _tech_session_cache 一轮扫描共用一次登录、无 TTL / 无失效检测，而跑批 67.5min
 # 超过 Tomcat 默认 30min 会话。守卫只认明确的登录路径，避免误伤 /file/status 业务跳
@@ -189,11 +178,10 @@ def _attempt_action(auth_state: str = "") -> Dict[str, str]:
 
 def _fallback_auth_cookies(target: Optional[Dict[str, Any]] = None,
                            force: bool = False) -> Dict[str, str]:
-    """bootstrap 拿不到会话时的**兜底登录**（2026-10-31，若依 P3）。
+    """bootstrap 拿不到会话时的**兜底登录**。
 
     背景：技术族会话通道依赖 ``target["login"]`` + ``bootstrap_accounts``，
     而 bootstrap 是「按应用注册信息推演」的，对没登记过登录表单的应用常常空手而归
-    （RuoYi 实测：login 已配置但 bootstrap 无产出 ⇒ 重放恒 302）。
 
     这里补一条**直接登录**的兜底：配置来源按优先级
       1. 环境变量 ``SAST_AI_AUTH_SESSION``（JSON 字符串）
@@ -227,7 +215,6 @@ def _fallback_auth_cookies(target: Optional[Dict[str, Any]] = None,
         return {}
     base_url = ""
     if isinstance(target, dict):
-        # 2026-11-05（jsc 622）：兼容 workspace 原生键名 target_url。
         # 历史上只认 service_url / base_url，而 workspace.settings_json 用的是 target_url，
         # 上游一旦没做键名映射，这里直接 return {} ⇒ 兜底登录静默失效 ⇒ 全片 302。
         base_url = str(target.get("service_url") or target.get("base_url")
@@ -237,7 +224,6 @@ def _fallback_auth_cookies(target: Optional[Dict[str, Any]] = None,
     try:
         from src.iast.auth_session import get_manager
         # 进程级单例：per-spec 新建 manager 等于「每条 spec 登录一次」，
-        # 会拖慢扫描并把 RuoYi 这类有在线会话管理的目标反复踢下线。
         _mgr = get_manager(settings)
         if force:
             try:
@@ -267,8 +253,6 @@ def _fallback_auth_cookies(target: Optional[Dict[str, Any]] = None,
 def sanitize_cookie_value(value: str) -> str:
     """把要放进 Cookie 头的值净化到 RFC6265 cookie-octet 允许集。
 
-    2026-09-22 落地：D1 投放 canary 时用的是 spec 的 taint_marker，而 taint_marker 可能是
-    「身份段 + payload 文本」拼接（实测 run 31 spec 8901 的 marker 为
     ``s4st41ebbebe1cc5cd727a"><svg0a973df9``）。这类值直接塞进 ``Cookie:`` 头会被 Servlet 容器
     判为非法：容器要么整条 cookie 解析失败、要么把值截断在双引号处，Spring 侧随即报
     ``Missing cookie 'xss'`` 并返回 400 —— 控制器根本不执行，sink 自然 0 事件（no-arrival）。
@@ -300,9 +284,7 @@ _CONN_FAILURE_MARKERS = (
 def is_connection_level_failure(err: str) -> bool:
     """判断 D1 重放失败是否属于「靶场根本没应答」（连接拒绝/重置/超时/DNS 失败）。
 
-    2026-09-22 落地（target_unhealthy 误标根因链的**源头**修复）：原实现在「重试 3 次仍失败」的
     分支里一律置 ``target_unhealthy=True``，注释理由是「这通常是靶场 5xx/连接异常/超时（靶场不健康）」。
-    但实测证据推翻了这个前提：run 26/27/28/30/31 的 ``target_unhealthy`` **全部**伴生
     ``verdict=clean`` / ``restarts=0`` / ``downtime_windows=[]``（基线态与活动态是同一个 pid），
     一条不可用证据都没有。真实成因是：单次请求超时（高并发排队，或载荷本身连不通的端点）
     与「靶场 5xx」都会被归入此分支，而它们都不满足「靶场不健康」。
@@ -345,18 +327,14 @@ def _should_use_multipart(
     当 ``content_type`` 声明 multipart、而 ``param_location`` 是 query/body/form 时，
     参数会被塞进 query string，目标侧 Spring 的 ``@RequestParam MultipartFile``
     永远取不到值（文件字段不在 multipart 体里）→ 该 spec 的 sink 0 事件、永久 no-arrival。
-    实测 run 31 spec 8773（POST /file/upload/picture，ct=multipart/form-data，param=file，loc=query）。
 
     两级判据：
     1. ``content_type`` 含 multipart —— 线格式的权威声明，直接采信。
     2. ``content_type`` 为空时**极窄推断**：method 是写方法、param_location 是 query/body/form、
        端点路径有「上传语义段」、且参数名有「文件词元」。
 
-    第 2 级为什么必须窄：实测 run 29/30/31 三个任务里「ct 空 + POST + loc∈{query,body,form}」
-    共 56 条，其中绝大多数是**合法的** query/body 表单（/login 的 username、target-mall 的
     /wallet/withdraw 等）。若一律改投 multipart，会把大量正常流量带偏，制造新的漏检。
     加上「端点段 + 参数词元」双条件后，三个任务里仅命中 2 条
-    （run 29 spec#8529 / run 31 spec#8856，与 8773 同端点同参数，仅 ct 为空），无误伤。
 
     匹配用「段/词元」而非子串：子串会把 /profile/update 误判成上传端点（见 _camel_tokens 注释）。
     """
@@ -364,7 +342,7 @@ def _should_use_multipart(
     if ploc not in ("query", "body", "form"):
         return False  # 已声明 header/cookie/path/multipart，不存在线格式矛盾
     if str(method or "").upper() not in ("POST", "PUT", "PATCH"):
-        return False  # multipart 只用于写方法；GET 上声明 multipart 是登记错误，不猜
+        return False
     ct = str(content_type or "").lower()
     if "multipart" in ct:
         return True
@@ -377,9 +355,7 @@ def _should_use_multipart(
     return seg_hit and tok_hit
 
 
-# ── raw-body 端点：读整个请求体的 sink（2026-11-06，jsc 627 实测）────────────
 #
-# jsc 三个端点用 WebUtils.getRequestBody() / @RequestBody String 读**整个请求体**：
 #   Fastjson.Deserialize(@RequestBody String params) → JSON.parseObject(params)
 #   XStreamRce.parseXml(request)                     → xstream.fromXML(xml)
 #   QLExpress.vuln1(request)                        → runner.execute(express)
@@ -477,11 +453,10 @@ _PRIV_ORDER = {"guest": 0, "anonymous": 0, "user": 1, "member": 1, "customer": 1
 _WEAK_JWT_SECRETS = [
     "secret", "secret123", "password", "123456", "key", "jwt", "jwtsecret",
     "admin", "test", "changeme", "default", "letmein", "qwerty", "abc123",
-    "supersecret", "mysecret", "token", "apikey", "mall_secret", "target-mall",
+    "supersecret", "mysecret", "token", "apikey",
 ]
 
-# target-mall 已知业务端点请求 schema（取自靶场 Controller 的 @RequestParam 真实签名，非猜测，
-# 见 target-mall/src/main/java/com/sanjio/mall/web/*.java）。当 spec 无 body 且端点命中此表时，
+# 字段表来自常见业务表单约定。当 spec 无 body 且端点命中此表时，
 # D1 据此构造合法 application/x-www-form-urlencoded 请求体，避免把 400/无响应误读成"端点已做鉴权拒绝"。
 # 仅把请求装配到「可被靶场接收」的形态，不臆造任何确认结果——是否 confirmed 由靶场实际鉴权/业务逻辑决定。
 # 字段值为占位示例（非真实越权目标），仅供 DAST 重放触发端点业务逻辑。
@@ -508,7 +483,6 @@ def _privilege_rank(role: str) -> int:
 def _decode_jwt_uid(token: str) -> Optional[Any]:
     """从 JWT 的 payload 段解析 uid/sub/user_id 声明（不校验签名，仅供 BOLA/IDOR 重放挑受害者 id）。
 
-    靶场 token（如 target-mall 的 mall_token）payload 含 uid 声明；取到后存入账户 dict 的 user_id，
     供 replay_bola 在 VICTIM_FROM_POOL 哨兵下解析真实受害者资源 id。非 JWT（不透明 token）返回 None。
     """
     if not token or token.count(".") < 2:
@@ -540,7 +514,7 @@ def _extract_set_cookie_value(set_cookie_header: str, cookie_name: str) -> str:
 
 
 def _sanitizer_aware_synth(spec: Dict[str, Any], family: str) -> Dict[str, Any]:
-    """净化感知造弹入口（2026-10-02）：在净化器约束内合成候选，并用确定性闸门过滤。
+    """净化感知造弹入口：在净化器约束内合成候选，并用确定性闸门过滤。
 
     一等公民判定优先：若登记阶段已判定「不可绕过」（真净化器），直接返回空候选并标记
     filter_effective —— 不再造弹、不再重试，避免死磕，并把"不可利用"这个真阴性结论保住。
@@ -626,8 +600,6 @@ class D1Service:
     DENY_WORDS = ("forbidden", "unauthorized", "permission denied", "access denied", "not allowed", "无权限", "未授权", "禁止")
     SUCCESS_WORDS = ("success", "ok", "true", "created", "updated", "deleted")
     SKIP_PATH_TOKENS = ("health", "swagger", "static", "favicon", "actuator", "metrics")
-    # WAF/拦截器/参数截断 信号（2026-09-27 落地，评审缺口三）：用于把「被安全基础设施拦截」
-    # 与「漏洞无证据（干净）」区分开。检测是**保守**的——OWASP Benchmark 靶场无 WAF，默认不触发，
     # 仅当响应显式携带 WAF 特征或 4xx 拒绝 + 拒绝词时才置 waf_blocked，避免误伤正常 200 响应。
     # 拒绝类状态码（应用拦截器 / 授权过滤器 / 参数校验拒绝）。
     _WAF_BLOCK_STATUS = (401, 403, 405, 406, 407, 429)
@@ -637,12 +609,9 @@ class D1Service:
         "request blocked by", "blocked by", "security policy", "waf", "防火墙", "安全策略",
         "denied by", "rate limit", "rate-limit", "too many requests", "captcha",
     )
-    # 应用层「输入过滤/拒绝」文案（2026-10-01 批次 C）。
-    # 实证：java-sec-code 的 /codeinject/sec（SecurityUtil.cmdFilter 白名单）被拒时返回
     # **HTTP 200 + "Bad boy. I got u."** —— 既不是 4xx、也没有任何 WAF 响应头，
     # 上面的两条判据（WAF 签名 / 4xx+拒绝词）全部落空 → waf_blocked 恒 False →
     # decide_next_action 的 blocked 分支永不触发 → escalate_variant 永不点火
-    # （run 44/45/46 实测 variant_escalated 恒为 0）。
     # 此类判定必须保守：仅在「2xx + 短响应 + 明确拒绝文案」三者同时成立时才判拦截，
     # 避免误伤正常业务 200 响应。
     _FILTER_REJECT_PHRASES = (
@@ -659,7 +628,7 @@ class D1Service:
                                headers: Optional[Dict[str, str]], response: Any, text: str,
                                waf_blocked: bool, elapsed_ms: int, attempt_no: int = 1,
                                auth_state: str = "") -> None:
-        """把一次重放尝试结构化落库到 replay_attempts（观察层，2026-10-23）。
+        """把一次重放尝试结构化落库到 replay_attempts。
 
         动机：响应证据此前只写进 19MB 的报告 JSON（dast_impact_evidence），跨轮查不到，
         LLM 判因读不到，I2 只能靠规则表猜「payload 被拦」还是「打法错」。
@@ -676,7 +645,6 @@ class D1Service:
                 return
             _hdr_digest = ""
             try:
-                # 2026-11-03：这里此前存的是**请求头**（`headers` 参数），字段名却叫
                 # `resp_headers_digest`。后果：CORS 的确认判据（响应头是否反射了
                 # 攻击者 Origin）根本无从判断 —— 603 实测 5 条 cors spec 全部停在
                 # `no-arrival`，而 oracle 臂的响应体是正常业务数据（请求确实成功了）。
@@ -709,8 +677,7 @@ class D1Service:
                     str(method or "GET").upper(),
                     str(param_name or ""),
                     str(param_location or "query"),
-                    # 2026-11-06（jsc 624）：上限从 2000 提到 8000。
-                    # 2000 会把 Shiro rememberMe 的 AES 包装弹（实测 2816 字符）
+                    # 2000 会把 Shiro rememberMe 的 AES 包装弹
                     # 从中间切断 ⇒ 落库样本解码后 1500 字节、不是 16 的倍数 ⇒
                     # 复核时手工重打必抛 IllegalBlockSizeException，被误判成
                     # 「载荷形态/密钥/对齐都错了」（实际投放用的是完整值，未截断）。
@@ -739,7 +706,6 @@ class D1Service:
     def _is_waf_blocked(self, status_code: Optional[int], text: str, headers: Optional[Dict[str, str]] = None) -> bool:
         """判定重放响应是否「被 WAF / 拦截器 / 参数截断」拦截（而非漏洞无证据）。
 
-        2026-09-27 落地（评审缺口三）。口径：
           - 显式 WAF 签名（响应头/体含 cloudflare / mod_security / waf / 防火墙 / 安全策略 /
             rate limit / too many requests 等）：强信号，直接判拦截；
           - 拒绝类状态码（401/403/405/406/407/429）+ 拒绝词（DENY_WORDS）：应用拦截器 / 授权过滤器 /
@@ -765,7 +731,6 @@ class D1Service:
                 return True
         return False
 
-    # ───────────────────── 族级行为 oracle（可见率治本，2026-10-24） ─────────────────────
     def _run_family_oracle(self, *, spec: Dict[str, Any], family: str, servlet_name: str,
                            param_name: str, param_location: str, method: str, url: str,
                            timeout: Any, files: Any, content_type: str, primary_value: str,
@@ -785,7 +750,6 @@ class D1Service:
         if not orc.oracle_enabled():
             return None
         fam = orc.canonical_family(family)
-        # 2026-11-05（jsc 622 spec 237906/237997/238010）：WebSocket 命令执行端点的
         # stdout 走 WebSocket 帧、不进 HTTP 响应体，普通 cmdi 的 delay 臂永远测不到。
         # 仅当 spec 的 sink / 路由明确指向 WebSocket 时才提升族，普通 cmdi 端点零影响。
         if fam == "command_execution" and self._is_websocket_sink(spec):
@@ -800,7 +764,6 @@ class D1Service:
         elif ploc == "path":
             skip = "path_channel_unsupported"
         elif not param_name and not servlet_name and fam != "websocket_cmd":
-            # websocket_cmd 的命令注入参数根本不在 HTTP 层（jsc 622 实测 param_name=''），
             # 空参数是这类端点的正常形态，不能按 no_param 把探测臂误杀。
             skip = "no_param"
         if skip:
@@ -831,10 +794,9 @@ class D1Service:
             _arm_auth_state = ""
             try:
                 if p.channel == "name":
-                    # 关键修正（run 460 实证）：D1 主路径的名注入会投
                     # `<taint_marker>=<servlet_name>`、`<taint_marker>Z=<servlet_name>` 两组参数，
                     # servlet 取「值 == servlet 名」的**第一个**参数 ⇒ 探测臂排在后面永远选不中
-                    # （cmdi-01441 实测：带 marker 56ms / 去掉 marker 4099ms）。
+                    # 。
                     # 故名通道先把「值 == servlet_name」的旧参数全部摘掉，只留探测臂这一个。
                     for _k in [k for k, v in list(query.items()) if str(v) == servlet_name]:
                         query.pop(_k, None)
@@ -845,7 +807,6 @@ class D1Service:
                     headers[_hname] = p.payload
                     _pn, _pl = _hname, "header"
                 else:
-                    # 2026-11-06（jsc 625 实测）：expression_injection / deserialization
                     # 的端点读的是**整个请求体**（QLExpress.vuln1 与 XStreamRce.parseXml
                     # 都用 WebUtils.getRequestBody），把探测臂包成 {"_body": "..."} 的
                     # JSON 对象会让两端恒解析失败，必须走裸串投递。
@@ -882,7 +843,6 @@ class D1Service:
                 arm = orc.ArmResult(arm=p.arm, payload=p.payload,
                                     status=int(getattr(_resp, "status_code", 0) or 0),
                                     body=_txt, elapsed_ms=_ms, note=p.note,
-                                    # 2026-10-31：url_redirect / cors / crlf_injection 三族的
                                     # 正向信号全在响应头里，必须带上，否则 judge 判不出来。
                                     headers=dict(getattr(_resp, "headers", None) or {}))
                 # 观察层落库：每次探测臂一行（attempt_no 用 100+ 段位，与主/绕过臂区分）
@@ -936,11 +896,10 @@ class D1Service:
                            "reason": verdict.get("reason"), "arms": len(arms)},
                 "body": body}
 
-    # ------------------------------------------------ WebSocket 命令执行探测（2026-11-05）
 
     @staticmethod
     def _is_websocket_sink(spec: Dict[str, Any]) -> bool:
-        """spec 是否指向 WebSocket 命令执行端点（jsc 622 spec 237906/237997/238010）。
+        """spec 是否指向 WebSocket 命令执行端点。
 
         只看 SAST 侧已知事实：sink 文件名含 websocket，或 target_endpoint 含 /websocket/。
         命中才把 command_execution 提升为 websocket_cmd；普通 cmdi 端点一律不受影响。
@@ -955,8 +914,6 @@ class D1Service:
                      headers: Optional[Dict[str, Any]] = None) -> str:
         """同步封装异步 WebSocket 客户端：连上、发一条命令、收一帧回显。
 
-        2026-11-06（jsc 625 实证）：WS 握手必须复用 HTTP 注册那一步的会话凭据。
-        java-sec-code 是 anyRequest().authenticated()，不带 Cookie 的握手会被 302
         到 /login，websockets 17.2 跟随重定向后把 http://.../login 当 WS URI 校验，
         抛 `InvalidURI: scheme isn't ws or wss` ⇒ oracle 恒 inconclusive，623/624 的
         websocket_cmd 点即由此漏报。另外本机靶场必须直连：环境里的 HTTP_PROXY 会
@@ -1026,7 +983,6 @@ class D1Service:
         parsed = urlparse(str(url or ""))
         scheme = "wss" if parsed.scheme == "https" else "ws"
         netloc = parsed.netloc
-        # 注册端点沿用 spec 的真实 HTTP 路由（jsc 622 实测 /websocket/cmd），不硬编码靶场路径。
         reg_url = urlunparse((parsed.scheme, netloc, parsed.path or "/", "", "", ""))
         wp = orc.build_ws_probe(probe_token)
         arms: List[Any] = []
@@ -1040,7 +996,6 @@ class D1Service:
                 )
                 reg_status = int(getattr(reg, "status_code", 0) or 0)
                 # 只认 2xx：302/401/403 是登录墙或拦截，不是端点注册成功，
-                # 绝不能据此去连 WebSocket（jsc 622 实测 sqli 整片 302 就是这类假到达）。
                 reg_ok = 200 <= reg_status < 300
                 frame = ""
                 if reg_ok:
@@ -1098,7 +1053,6 @@ class D1Service:
         self.gateway = gateway
 
     # ------------------------------------------------------------------ LLM 网关注入 #
-    # 2026-09-19：D1 有两条 LLM 通路，都需要 self.gateway：
     #   1) 业务语义复核 _ai_overlay_judgement（purpose=d1-ai-overlay）；
     #   2) SCA 选弹的 LLM 兜底 PayloadForge.forge_from_sca（purpose=payload-forge）。
     # 但历史上**没有任何构造点传 gateway**，于是 self.gateway 恒为 None，两条腿都是死的
@@ -1346,12 +1300,10 @@ class D1Service:
     def _ensure_login_config(self, target: Dict[str, Any], spec: Dict[str, Any]) -> None:
         """target 缺登录配置时，从 ``workspaces.settings_json`` 确定性兜底补齐。
 
-        2026-11-05（jsc 622 实证）：workspace 4 明明配了 login（JSESSIONID + csrf + 两组凭据），
-        但 sqli spec 238030/238031 的 replay_attempts 请求头里一个 Cookie 都没有、整片 302。
         根因不是配置，而是 **D1 有多条调用入口**（benchmark_cli._auto_replay / orchestrator /
         REST /dast/replay），此前只在 _auto_replay 一处做过 login 透传，其余路径漏传即静默失效。
 
-        故把兜底下沉到 replay() 这个唯一入口：只补不覆盖，上游已透传时零改动；
+        故把兜底下沉到 replay 这个唯一入口：只补不覆盖，上游已透传时零改动；
         按 workspace_id 做实例级缓存，避免每条 spec 查一次库。任何异常静默忽略，绝不阻断重放。
         """
         if target.get("login") or target.get("auth"):
@@ -1388,7 +1340,6 @@ class D1Service:
         except Exception as exc:  # noqa: BLE001
             logger.debug("[D1.auth] workspace 登录配置兜底失败（忽略）：%s", exc)
 
-    # ── per-request 认证守卫（2026-11-06，jsc 628 根因修复）──────────────────
     def _auth_guard_enabled(self) -> bool:
         return str(os.environ.get("SAST_AI_D1_AUTH_GUARD", "1")).strip().lower() \
             not in ("0", "false", "off")
@@ -1467,9 +1418,8 @@ class D1Service:
             return resp, "reauth_failed"
 
     def replay(self, trigger_spec: Dict[str, Any], target: Dict[str, Any], session: Any = None, accounts: Any = None) -> "DastImpact":
-        """§3.17 D1 重放路由：按 category 把假说分发到正确的攻击通道。
+        """ D1 重放路由：按 category 把假说分发到正确的攻击通道。
 
-        2026-08-29 统一链路铁律（评审）：
         - 业务逻辑族（bola/race/vertical_privesc/...）是身份问题，不是污点问题，
           canary 追踪对它无效 → 走 business_logic.verify 的双账户差分重放。
         - 其余（OWASP 普通漏洞）走「请求头 canary + 参数真实 payload」：
@@ -1482,7 +1432,6 @@ class D1Service:
 
         spec = dict(trigger_spec or {})
         target = dict(target or {})
-        # 2026-11-05：登录配置兜底必须在任何路由分支之前、且只依赖 spec.workspace_id，
         # 这样无论从哪条入口进来，技术族会话通道都能拿到 login（见 _ensure_login_config）。
         self._ensure_login_config(target, spec)
         # per-request 认证守卫上下文：_guarded_request 在 _send_one / oracle 探测臂里
@@ -1494,7 +1443,6 @@ class D1Service:
                           str((target.get("login") or {}).get("url") or "")),
             "relogin_count": 0,
         }
-        # 2026-11-03：jndi 回连归账。log4j 在写日志的瞬间发起连接，可能比 HTTP 响应还晚，
         # 所以监听器必须知道「接下来这批请求属于哪个 spec」，不能靠重放前后取差值。
         if str(spec.get("family") or "").lower() in ("jndi_injection", "jndi"):
             try:
@@ -1509,7 +1457,6 @@ class D1Service:
         _ep = str(spec.get("target_endpoint") or spec.get("route") or "").strip()
         if not _ep or not is_valid_route(_ep) or _is_probe_route(str(spec.get("file", "") or ""), _ep):
             from src.iast.orchestrator import DastImpact
-            # 2026-11-01 诊断：这条「静默不发」分支此前不打日志，本轮的 deserialization
             # 17 条 spec 零 attempt 且零日志，无法判断是哪个分支挡的。统一加 [no-send] 标记，
             # 便于 grep（约定：凡是「没发请求就返回」的分支都要带这个标记）。
             logger.warning(
@@ -1532,7 +1479,7 @@ class D1Service:
 
         def _route():
             # 注意：这里必须声明 nonlocal，否则 `_accounts = _boot` 会把 _accounts 变成
-            # _route 的局部变量，走到路由 2 时 UnboundLocalError（实测踩到过）。
+            # _route 的局部变量，走到路由 2 时 UnboundLocalError。
             nonlocal _accounts, _accounts_ready
             if is_business_logic(category):
                 from src.iast.attack_context import needs_dual_accounts
@@ -1542,7 +1489,6 @@ class D1Service:
                         _accounts = _boot
                         _accounts_ready = True
                 if not needs_dual_accounts(category) or _accounts_ready:
-                    # R23 收口 polish：无论账户来自 bootstrap 还是预设，统一回写 accounts_json 供排障观测。
                     self._backfill_accounts_json(spec, _accounts)
                     return self._replay_business_logic(category, spec, target, _accounts)
                 # 双账户不可用（无预设账户且 bootstrap 失败）：业务族无法做差分，
@@ -1554,17 +1500,12 @@ class D1Service:
                 )
                 # 继续走下方 route 2（_replay_attack 带 canary 头）
             # 路由 2：普通漏洞 → 头 canary 供 I1 关联 + 参数位投放 A2 的真实 payload
-            # ── 技术族单账号会话通道（2026-09-13 修复）─────────────────────────────
-            # 事故：登录此前只发生在业务族双账号分支，于是「全站强制认证但漏洞全为技术族」
-            # 的靶场（java-sec-code 的 WebSecurityConfig 为 anyRequest().authenticated()）
             # 重放恒为未认证态，请求被 formLogin 重定向到登录页（HTTP 200 但返回登录页），
             # 业务 sink 从未执行 → iast_state 全量 no-arrival（实测 19 条，其中 17 条
             # verification_status 却已被判 confirmed_exploitable，形成「确认了但没有运行时证据」
             # 的自相矛盾读数）。技术族只需单个会话即可，与业务族的双账号差分无关。
             # 判据：配置了 target/spec.login 且当前无任何会话凭据时才登录，未配置时行为不变。
             _tech_session = dict(auth_context) if isinstance(auth_context, dict) else {}
-            # 2026-11-02 实杀：这里原来只认 `target["login"]` / `spec["login"]`，
-            # 而 workspace settings 的**新写法是 `auth`**（若依就是这么配的）⇒ 条件不成立
             # ⇒ 兜底登录根本没被调用 ⇒ 重放全程未认证。实测 本轮 523 条重放里
             # **476 条 302**（Shiro 重定向到登录页），业务代码一次都没进，
             # 105 条 vertical_privesc 全部 no-iast-evidence。
@@ -1594,8 +1535,6 @@ class D1Service:
                             _tech_session["auth_cookies"] = _acct["auth_cookies"]
                         if _acct.get("auth_headers"):
                             _tech_session["auth_headers"] = _acct["auth_headers"]
-                    # 兜底登录（2026-10-31）：bootstrap 空手而归时直接按配置登录，
-                    # 否则 RuoYi 这类全站 Shiro 的目标重放恒为 302（请求到不了业务代码）。
                     if not (_tech_session.get("auth_cookies") or _tech_session.get("auth_headers")):
                         _fb = _fallback_auth_cookies(target)
                         if _fb:
@@ -1609,9 +1548,7 @@ class D1Service:
                                        "本轮重放仍为未认证态")
             return self._replay_attack(spec, target, _tech_session or auth_context, _accounts)
 
-        # R26：可回滚验证必须覆盖**所有**通道，不只业务族。
         # 非业务族（category 为空的 spec）走 _replay_attack，此前完全不受回滚保护 ——
-        # run 17 实测就在这条通道上把 alice 留在了 ADMIN。故把包装提到 replay() 这个唯一入口。
         from src.iast.attack_context import (RESTORE_AFTER_ENABLED, _RESTORE_AFTER_CATEGORIES,
                                              classify_destructive_operation)
         _cat_d = classify_destructive_operation(spec.get("http_method"), _ep)
@@ -1676,7 +1613,6 @@ class D1Service:
         token_prefix = str(login.get("token_prefix") or "Bearer ")
         cookie_name = str(login.get("cookie_name") or "")
         # P0-3：alg:none 伪造只对该类目真正需要的族生效，绝不大范围开启。
-        # target-mall 同时含 12 条 BOLA / 3 条 race / 7 条 state_machine spec；若把它们的账户也
         # 改写成 role=admin，水平越权/竞态的差分判定会被污染（attacker 不再是普通用户）。
         # 仅 vertical_privesc（垂直越权靠 alg:none 提权）与 signature_bypass（JWT 绕过自身）开启。
         _forge_requested = bool(login.get("forge_alg_none"))
@@ -1687,9 +1623,7 @@ class D1Service:
         })
         forge = _forge_requested and _spec_cat in _FORGE_CATS
         # 登录提交方式：json（默认，application/json body）或 form（application/x-www-form-urlencoded，
-        # 对应 Spring @RequestParam 表单登录，如 target-mall 的 /login）。
         login_ct = str(login.get("content_type") or "json").lower()
-        # CSRF 预取（Spring Security 等表单登录要求提交一次性 token，如 java-sec-code 的 /login）。
         # 配置 schema（login.csrf，可选；未配置时行为与此前完全一致）：
         #   fetch_url  取 token 的页面（相对 service_url 或绝对 URL，缺省同 login.url）
         #   field      提交时的字段名（默认 _csrf）
@@ -1738,7 +1672,6 @@ class D1Service:
             if not uname:
                 continue
             resp = None
-            # R23 收口 polish：登录偶发失败（target-mall 在扫描窗口抖动 / 重启 / 登录端点瞬时不可达）
             # 不应直接判账户不可用。加重试（3 次，指数退避 1/2/4s）吸收瞬时不可用；仍失败才跳过该账户。
             for _attempt in range(3):
                 # CSRF 与 session 绑定，每次尝试都重新预取（重试时旧 token 已失效）
@@ -1778,7 +1711,6 @@ class D1Service:
                 # 网络层 3 次全失败（已告警），跳到下一账户
                 continue
             # token 提取优先级：cookie_name（Set-Cookie）→ 响应体 JSON token_field → 认证头。
-            # cookie 型（如 target-mall 的 mall_token）token 仅落在 Set-Cookie，响应体无 token。
             token = ""
             if cookie_name:
                 # token 来源优先级：resp.cookies（real requests.Response / 带 cookies 的 mock）
@@ -1840,24 +1772,21 @@ class D1Service:
         if not built:
             logger.warning(
                 "[D1.bootstrap] 所有预置账户登录均失败（built 为空）→ 返回 None，相关 spec 降级 no_evidence。"
-                "请核查 target-mall 种子账户在扫描窗口的可用性（服务是否存活 / 凭据是否正确 / 登录端点是否可达）。"
+                "请核查预置账户在扫描窗口的可用性（服务是否存活 / 凭据是否正确 / 登录端点是否可达）。"
             )
             return None
         # 按特权排序：attacker=最低特权（首），victim=最高特权（末）。
         built.sort(key=lambda a: _privilege_rank(a.get("role")))
         out: Dict[str, Any] = {}
         for stance, acct in (("attacker", built[0]), ("victim", built[-1])):
-            # R23-4 修复：白名单必须保留 user_id。此前只放行 auth_headers/auth_cookies/role/username，
             # 把 line 493 刚解出的 user_id 又过滤掉 → replay_bola 的 VICTIM_FROM_POOL 哨兵解析
             # （d1_service.py:1065/1067 读 victim/attacker 的 user_id）恒取 None → 哨兵字面量被当作
             # 资源 id 拼进 URL（如 /order/VICTIM_FROM_POOL/pay）→ 靶场类型绑定 400 → 探针
             # findById/AuthzDecision 钩子永不命中 → BOLA 从「机制确认」退化为 no-iast-evidence
-            # （task-8 bola confirmed 12→3 的真因）。
             out[stance] = {k: v for k, v in acct.items()
                            if k in ("auth_headers", "auth_cookies", "role", "username", "user_id")}
         # P0-3 可见性：把 bootstrap 出的双账户（脱敏，仅 role/username，不落真实 token）回写
         # spec.accounts_json，便于排障时查看「该 spec 实际取到了哪些账户」。仅在 db 已注入时生效。
-        # R23-2 后 business_logic.verify 路径已透传真实 db，故该回写在生产链路必然生效
         # （此前未传 db，回写落在临时库、恒不落盘）。
         self._backfill_accounts_json(spec, out)
         self._persist_bootstrap_accounts(target, spec, out)
@@ -1866,8 +1795,6 @@ class D1Service:
     def _persist_bootstrap_accounts(self, target: Any, spec: Any, out: Dict[str, Any]) -> None:
         """把 bootstrap 出的双账号（含真实会话）回写 dast_accounts，使持久化名册与真实会话一致。
 
-        背景（2026-10-03 live 验证 java-sec-code）：dast_accounts 此前**只由 import_accounts 写入**，
-        bootstrap 只在内存里返回会话、从不落盘。于是 ws4 修好双凭据（attacker=joychou / victim=admin）
         之后，库里留下的仍是上一次 import 的旧行（同 subject=joychou、两条 JSESSIONID 完全相同、
         且是早已失效的死会话），M11 的 dual_account_same_subject 因此**永远报红**——真实已修好的配置
         在闸门上看还是红的，闸门就失去意义。
@@ -1942,9 +1869,7 @@ class D1Service:
                                accounts: Optional[Dict[str, Any]]) -> None:
         """把实际用于重放的账户（脱敏）回写 spec.accounts_json。
 
-        R23 收口 polish：此回写此前只发生在 bootstrap_accounts 内部，导致「账户来自预设
         （target/spec.accounts）而非 bootstrap」的 spec 永远拿不到 accounts_json（恒为默认 '[]'），
-        即便重放已用该账户成功确认（如 run 11 的 12 条 bola confirmed 却 0 条 accounts_json 非空）。
         现把回写抽成独立方法，在 replay 编排器对「任何已就绪账户」统一调用，保证可观测性。
         仅在 db 已注入且 spec 带 id 时生效。
         """
@@ -1973,9 +1898,8 @@ class D1Service:
 
         try:
             from src.iast import business_logic
-            # R23-2：必须透传 self.db。不传时 verify() 内部的 D1Service 会退化为临时库，
             # replay_* 的 victim_identifiers / accounts_json 回填写进临时库后即随进程消失，
-            # 真实 DB 永远为空（§6.13 根因二）。
+            # 真实 DB 永远为空。
             result = business_logic.verify(category, spec, target, accounts=accounts,
                                            gateway=getattr(self, "gateway", None),
                                            db=self.db)
@@ -2006,7 +1930,6 @@ class D1Service:
         impact.business_logic["confirmed"] = confirmed
         return impact
 
-    # §7.2 方向B：canary 类型感知放置（2026-09-07 落地）。非 String 参数（Long/数值/枚举/URL 形态）
     # 注入字面 canary 字符串会被靶场类型绑定拒绝（如 Spring @RequestParam Long productId 绑定失败
     # → 400/500），canary 永远到不了 sink，进而被误判「无证据」。对此类参数改用 typed canary
     # （合法形态 + 可搜索指纹），保留「数据到达 sink」的可达性证据；破坏性 payload（真攻击）照投不误。
@@ -2052,7 +1975,6 @@ class D1Service:
         - URL 语义参数：完整 URL + canary 身份段
         - 其余：原样返回 fallback_marker
 
-        URL 语义分支的依据（2026-09-13 java-sec-code 实测）：/ssrf/ImageIO/sec 等端点
         的入参直接喂给 new URL(url)，裸 canary 会抛 no protocol，DP 层看到的
         no-arrival 其实是应用最外层格式校验拒绝，与路由、探针覆盖均无关。
         """
@@ -2063,7 +1985,7 @@ class D1Service:
             from src.iast.canary import CanaryFactory
             return CanaryFactory.typed_for_param_type(family, "numeric_id")
         if self._is_url_param(param_name, spec):
-            # 注入「靶场自身 host + canary 路径」：既保证应用侧 new URL() 可解析、请求
+            # 注入「靶场自身 host + canary 路径」：既保证应用侧 new URL 可解析、请求
             # 真实发出，又让 canary 身份段出现在 sink 实参文本里供探针现场断言
             # （HookRuntime.resolveCanaryForSink 扫实参 / URL 串）。host 取靶场自身
             # service_url，不向外网发起请求。
@@ -2078,7 +2000,6 @@ class D1Service:
         return fallback_marker
 
     # ----------------------------------------------------------------------
-    # 多形态 canary 补投（覆盖加固缺口二，2026-09-27 落地）
     # 背景：应用侧对输入做 base64 / 双层 base64 / hex 等变换后污点才抵达 sink 时，明文 canary
     # 会被先编码导致 no-arrival 漏判。对策：对 plain 之外的 encoded 形态各补发一次探针重放，
     # 共享同一身份段（run_nonce 绑定），由编排器 find_identity + match_best_of 取最强态。
@@ -2150,14 +2071,14 @@ class D1Service:
                 logger.debug("[D1.multi_form] 补投 %s 形态失败（忽略，不影响主重放）：%s", _fname, _e)
 
     def _replay_attack(self, trigger_spec: Dict[str, Any], target: Dict[str, Any], session: Any = None, accounts: Any = None) -> "DastImpact":
-        """§3.17 D1 重放执行契约：TriggerSpec → 实际 HTTP 请求。
+        """ D1 重放执行契约：TriggerSpec → 实际 HTTP 请求。
 
-        与触发事务编排器调用约定对齐：replay(trigger_spec, target)。文档 §3.17 原签名
+        与触发事务编排器调用约定对齐：replay(trigger_spec, target)。文档  原签名
         `replay(trigger_spec, session, accounts)` 的三参形式，在此收敛为「target 承载
         session(auth_context) / accounts」的两参形式，避免编排器多传参；保留 session /
         accounts 可选形参以兼容文档原签名（未显式传入时从 target / trigger_spec 派生）。
 
-        职责（严格对齐 §3.17）：
+        职责：
         - 请求构造：按 target_endpoint + http_method，把 taint_marker（即 canary）注入
           param_name 的 param_location（query / header / cookie / body / path）。
         - representative_request_params：multi-match 全参数带标、一次回放（4.7.2）。
@@ -2167,12 +2088,11 @@ class D1Service:
         - 输出：HTTP 响应（status / body）作为 DAST 影响证据；multi-match 给每假说的
           独立切片（slices）。
         - auth_context 多步登录 / BOLA 多账户重放：本期占位（仅单 principal 注入重放），
-          属 §3.7 Phase 2 危害确证储备，不在本期注入类链路交付范围。
+          属  Phase 2 危害确证储备，不在本期注入类链路交付范围。
         """
         from src.iast.orchestrator import DastImpact
 
         spec = dict(trigger_spec or {})
-        # R24-D 破坏性操作闸门（技术族腿）：SQLi 一类技术假说若落在破坏性端点上
         # （删除/改密/资金/状态覆写），同样走哨兵 id 归一或跳过，绝不真删靶标数据。
         from src.iast.attack_context import neutralize_destructive_spec
         spec, _dg = neutralize_destructive_spec(spec)
@@ -2199,12 +2119,10 @@ class D1Service:
 
         headers = dict(auth_context.get("auth_headers") or {})
         cookies = dict(auth_context.get("auth_cookies") or {})
-        # ── 会话自愈（2026-11-06，jsc 623/624 实测）────────────────────────────
-        # java-sec-code 的 WebSecurityConfig 是 anyRequest().authenticated()，
         # 未认证重放一律 302 → /login，业务 sink 根本不执行。workspace 4 明明配了
         # `login.credentials`，`_fallback_auth_cookies(target)` 实测也能拿到
         # JSESSIONID + XSRF-TOKEN，但 623/624 的重放仍整片 302（sqli 全部探针
-        # 302、ssrf 部分 spec 首页就是登录页）——根因是 `replay()` 那一层的登录
+        # 302、ssrf 部分 spec 首页就是登录页）——根因是 `replay` 那一层的登录
         # 分支依赖 auth_context 传参形态，编排器实际传入的 session 不满足条件时
         # 整段被跳过，兜底登录一次都没被调用。
         #
@@ -2234,10 +2152,8 @@ class D1Service:
         def _inject(pname: str, ploc: str, pval: str, force_name: bool = False) -> None:
             nonlocal body, path
             ploc = str(ploc or "query").lower()
-            # multipart 一致性守卫（2026-09-22 落地）：spec 的 content_type 是「线格式」的权威
             # 声明。当它声明 multipart/form-data、而 param_location 被登记成 query/body/form 时，
             # 参数会被塞进 query string —— 目标侧 Spring 的 @RequestParam MultipartFile 永远取不到值
-            # （文件字段不在 multipart 体里），sink 自然永不触发。实测 run 31 spec 8773
             # （POST /file/upload/picture，ct=multipart/form-data，param=file，loc=query）0 事件即此因。
             # 判定抽到模块级 _should_use_multipart（纯函数，可单测），此处只消费结论并留审计日志。
             if _should_use_multipart(content_type, endpoint, pname, ploc, method):
@@ -2303,13 +2219,11 @@ class D1Service:
             sca_forge_attack_payloads, spec_attack_payloads,
             first_sleep_payload, parse_sleep_seconds, neutralize_sleep_payload,
             downgrade_destructive_payload, normalize_attack_payload,
-            # 2026-10-02：family_minimal_payload（按族写死的静态兜底弹）已从主路径移除，
             # 改由 _sanitizer_aware_synth 在净化器约束内构造。此处不再导入。
             filter_payloads_by_family,
         )
         _spec_family = str(spec.get("family") or "")
         attack_payloads = spec_attack_payloads(spec)
-        # ── ②-1 族-载荷一致性自检（2026-09-22）：投放前先按族形状筛一遍 ──
         # A2 会跨族串模板（SSRF 位投 shell 命令、CRLF 位投命令注入、反序列化位投类名串），
         # 这些废弹投出去必然打不通，而报告会显示成「探针/靶场问题」，排查方向被带偏。
         # 这里只丢弃不合规载荷并留原因，绝不改动 family / 路由 / spec 本身。
@@ -2324,10 +2238,8 @@ class D1Service:
                     spec.get("http_method", "GET"), spec.get("target_endpoint", ""),
                     len(_rejected), _spec_family, sorted(set(_rejected)),
                 )
-            # 2026-11-04（jsc 619 实测）：A2 的载荷**形态对但目标集不全**时，
             # 族载荷库的弹会被整体挡住 ⇒ 该族少了「真正能打通」的那一发。
             #
-            # 实测（本轮 spec 237866，XXE）：A2 造的是
             #   `...<!ENTITY % xxe SYSTEM "file:///etc/passwd">...`
             # —— 形态完全合法（XXE 族自检放行），但**靶场跑在 Windows**，
             # `/etc/passwd` 根本不存在 ⇒ 外部实体解析失败 ⇒ 应用返回 `xxe except`。
@@ -2360,7 +2272,6 @@ class D1Service:
             # gadget 构造器造真字节（方案 1a）。补位/构造触发自检门抛错（废弹）时按 per-spec 捕获，
             # 标记 degraded —— 绝不把未经验证的 payload 当真弹投出。
             try:
-                # 2026-09-19：透传 self.gateway（此前不传，PayloadForge 内部 gateway 恒 None
                 # → LLM 兜底造弹恒不生效）。是否真的用 LLM 由 PayloadForge 侧在线判定。
                 attack_payloads = sca_forge_attack_payloads(spec, db=self.db, gateway=self.gateway)
             except Exception as exc:
@@ -2372,7 +2283,6 @@ class D1Service:
             if attack_payloads:
                 payload_source = "sca_forge"
         if not attack_payloads:
-            # 2026-10-02（造弹路线重写）：**移除**按族写死的静态兜底弹（family_minimal_payload）。
             # 它不知道对手在拦什么，只能发一发"看起来像"的载荷，历史上正是它让 canary 单独
             # 到达却被算成确认（假阴性）。改为净化感知合成：有 FilterSpec 就在约束内构造并用
             # simulate_filter 确定性验一遍；没有约束就**明确标记 degraded_no_synthesis**，
@@ -2396,7 +2306,6 @@ class D1Service:
                     spec.get("http_method", "GET"), spec.get("target_endpoint", ""), _vr,
                 )
             else:
-                # 2026-11-01：净化感知合成空手时，先问**族载荷库**能不能产出结构正确的弹。
                 # 这一步补的是「A2 造不出 ⇒ 全族 0 确认」的窟窿（本轮 deserialization
                 # 12 条 spec 一次重放都没有）。载荷库只产**真能打通**的结构化载荷
                 # （完整 XML+外部实体 / 解析歧义型 URL 绕过 / 文本型反序列化链），
@@ -2423,12 +2332,10 @@ class D1Service:
                         spec.get("http_method", "GET"), spec.get("target_endpoint", ""),
                         _spec_family, _lib.get("note") or _lib.get("provider"),
                     )
-        # ── 3.3-Z sink 专用形态前置（2026-11-06，jsc 623 实测）──────────────────
         # D1 主判定只认 attack_payloads[0]：下方第 2、3 发补投明确标注
         # 「只做观测记录，不改变主判定」。所以「把库弹追加在后面」对需要
         # 专用形态的 sink 等于没做。
         #
-        # 实测链路（623 spec 238195 /shiro/deserialize）：
         #   A2 空 → sca_forge 产出原始 ysoserial 流 rO0ABX...（encoding=sca_forge）
         #   → attack_payloads 非空 ⇒ 后面「净化感知合成 + 族载荷库」整段被跳过
         #   → 应用返回「RememberMe cookie decrypt error」⇒ 607/617/619/622/623 五轮恒漏。
@@ -2456,12 +2363,10 @@ class D1Service:
             except Exception as _se:  # fail-open：校正失败不影响既有载荷链
                 logger.debug("[D1.replay] sink 专用形态前置失败（忽略）：%s", _se)
         attack_degraded = not attack_payloads
-        # ── 3.4-C 破坏性 payload 降级（2026-09-10）：D1 投放前的最后防线。无论 payload 来自
         # A2 LLM、SCA 弹药库还是靶场 README，DROP/TRUNCATE/无 WHERE 的 DELETE·UPDATE 等破坏性
         # SQL 一律降级为语法错误型探针（未闭合引号），仍证明注入可达，但绝不破坏靶标 DB
         # （真实环境不自愈，只能人工回滚；靶场被毁会污染其后所有轮次的业务确认）。
         # 见 src/iast/attack_context.downgrade_destructive_payload（单一真相源）。
-        # R24-F：先剥掉 A2 误把「参数名=值」整串当 payload 的前缀（#8 SSTI 未确认的真因：
         # 目标收到 `tpl=tpl=[[${...}]]` → 模板按字面渲染 → 永不触发），再做破坏性降级。
         # 顺序不能反：前缀不剥掉时，破坏性 SQL/命令匹配也会被前缀干扰。
         attack_payloads = [
@@ -2471,13 +2376,12 @@ class D1Service:
             downgrade_destructive_payload(p, str(spec.get("family") or ""))
             for p in attack_payloads
         ]
-        # §7.2 方向B 类型感知：退化（无真 payload）时注入的是 canary 探针。若目标参数非 String
+        #  方向B 类型感知：退化（无真 payload）时注入的是 canary 探针。若目标参数非 String
         # （Long/数值），字面 canary 字符串会被类型绑定拒绝 → 改用 typed canary（合法数值形态 + 指纹）。
         # 破坏性 payload（真攻击）照原值投放，不受此影响。
         injected_marker = self._canary_for_param(spec, param_name, encoded_marker, base_url)
-        # 时间盲注承接（2026-09-07）：若 A2 产出了 sleep 型 payload，优先投放它作为主载荷。
         # 时间盲注是「威力大不破坏」的最可确认攻击——即便探针没织到该 DB sink、canary 到不了，
-        # D2 仍能用「时延双阈值门」独立旁证 sink 触达（承接断链①的修复）。这是对主载荷选择的
+        # D2 仍能用「时延双阈值门」独立旁证 sink 触达。这是对主载荷选择的
         # 「增强」（在既有真弹里挑最可确认的一条），不删除任何降级/门禁判定；非 sleep 型时
         # 维持原 attack_payloads[0] 选择，行为不变。
         sleep_payload = first_sleep_payload(attack_payloads) if attack_payloads else None
@@ -2491,7 +2395,6 @@ class D1Service:
         # 处的注释 —— 归一化前合成会把整串 JSON 对象塞进 URL。
         sleep_seconds_hint = parse_sleep_seconds(primary_value)
 
-        # ── JSON 对象型 payload 归一化（R25#30/#31/#25）────────────────────────
         # A2 有时把「整组请求参数」写成一个 JSON 对象字符串（{"id":1,"amount":0.01}、
         # {"role":"admin","isVip":true}）。整串塞进单个参数位是错的，且是双向错：
         #   1) path 场景：URL 变成 /order/{"id": 1, "amount": 0.01}，{id} 占位符随之消失，
@@ -2510,7 +2413,6 @@ class D1Service:
                 return json.dumps(v, ensure_ascii=False)
             return str(v)
 
-        # 2026-11-06（jsc 628）：raw-body sink 的载荷整体就是**合法 JSON 文本**
         # （Fastjson 端点吃 {"name":"..."}），不能当成「A2 把整组请求参数写成一个对象」
         # 去展开归一化 —— 那会把主参数位退回 canary、把结构化弹拆碎。
         _raw_body_sink = needs_raw_body_payload(
@@ -2547,17 +2449,15 @@ class D1Service:
         # 先判后投：用环境事实 db_type 收窄方言，只投一组，内嵌库（H2/HSQLDB/Derby/SQLite）
         # 无便携 sleep 直接不投，不浪费 5 次预算。
         #
-        # **位置约束（2026-10-03 实测回归）**：合成必须排在上面的 JSON 对象归一化之后。
         # 归一化之前合成时，base 是 attack_payloads[0] 原样 —— A2 常把整组请求参数写成
         # 一个 JSON 对象串（{"id":1,"amount":0.01}），拼出来的 URL 直接变成
         # /order/{"id": 1, "amount": 0.01} OR SLEEP(3)-- ，{id} 路径占位符被吞、后续 rep
         # canary 替换不上必然 404，且 JSON 对象展开逻辑再也收不到这个对象。
         # 归一化之后再合成，base 一定是「真正会投放出去的那个单值」。
         _sleep_synthesized = False
-        # 2026-11-01（实测回归）：时间盲注弹只能给 SQL 类族合成。
         # 原条件没有族白名单 ⇒ 反序列化位也会被追加 `' OR SLEEP(3)--`，
         # 把 fastjson 的 JSON 串、snakeyaml 的 YAML 串**结构打坏**：
-        # 目标解析失败 → 请求挂住 → D1 整组超时（实测某轮 D1 卡 14 分钟无新 attempt）。
+        # 目标解析失败 → 请求挂住 → D1 整组超时。
         # 时间盲注的前提是「目标会执行 SQL」，族不对时它连语法都不成立。
         _SLEEP_FAMILIES = {"sql_injection", "sql-injection", "nosql_injection", "nosql-injection",
                            "ldap_injection", "ldap-injection"}
@@ -2594,9 +2494,6 @@ class D1Service:
         # 合成改写了主载荷 → hint 必须重算，否则 D2 时延门拿到的还是旧值的秒数
         sleep_seconds_hint = parse_sleep_seconds(primary_value)
 
-        # ── 值级证据通道投放（2026-10-10，r73 对账根因修复）─────────────────────
-        # 头 canary 只做请求级关联（2026-08-29 决议），真实 payload 不含 canary 身份段 ⇒
-        # sink 实参记录里永远比对不到我方投放数据（r73 实测：400 spec / 2009 条 canary 事件
         # 仅 1 条可比对命中），值级通道 _ch_value_level_sink_arg 被结构性饿死，
         # B6 语义门对 7 个 sink 族全拒 → 动态召回 24.8%。
         # 修复：把 canary 标记追加进主参数值，让「我方数据真的出现在 sink 实参里」成为
@@ -2605,7 +2502,6 @@ class D1Service:
         # 例外：退化模式主值已是 canary；sleep 主载荷不追加（保住时延盲注 SQL 语法）；
         # JSON 对象展开值可能是数值/布尔语义，追加会破坏类型绑定，保持原行为。
         #
-        # 2026-10-11 修正（r74 实证，追加串错了）：线上 `compute_value_hit` 比对用的是
         # **完整 taint_marker**（形如 `s4st41<16hex>PAYLOAD<8hex>`，spec 级确定性生成、
         # 跨任务复用），而事件里的 canary 是**请求级**每次新生成的另一个串（实测 143 条
         # 事件里 0 条与 spec marker 相等）。上一版只追加 find_identity 提取的身份段
@@ -2628,10 +2524,9 @@ class D1Service:
         ).lower()
         # 数值/URL 语义参数不追加：数值位追加 alnum 会让 Spring 类型绑定失败（400/no-arrival，
         # 比不追加更差）；URL 位追加会把 `http://host:8080` 变成 `http://host:8080s4st41…`
-        # 导致 new URL() 解析抛错、SSRF 通道被打死。这两类参数另有 typed canary 形态兜底。
+        # 导致 new URL 解析抛错、SSRF 通道被打死。这两类参数另有 typed canary 形态兜底。
         if (_canary_tag and not attack_degraded and not sleep_payload
                 and _obj_payload is None
-                # 2026-11-06（jsc 628）：raw-body 载荷整体就是合法语法
                 # （`111 * 7` / XML / JSON），末端追加身份段会让它直接编译/解析失败。
                 # 627 的 /vuln1 出站 `7*7s4st41…` 恒 500 即此因；IAST 关联靠
                 # TRACE_HEADER 里的 canary，不需要把它拼进载荷文本。
@@ -2648,9 +2543,7 @@ class D1Service:
                 spec.get("http_method", "GET"), spec.get("target_endpoint", ""),
             )
 
-        # 2026-10-18（r106 实证）：**名注入源** servlet（getHeaderNames 循环 / getParameterNames
         # 等）如果同时收到「固定名头（主值注入）」或 X-SASTAI-Trace，二者也都是非标准头，会把
-        # 我们真正的名注入头挤掉 —— 00251 实测 session 落了 servlet 名（benchmarktest00251）
         # 而非 canary。故名注入源必须**跳过主值注入与 trace 头**，只发名注入。
         _name_source = None
         try:
@@ -2672,7 +2565,6 @@ class D1Service:
                             spec.get("target_endpoint", ""))
             # 阶段 1.1（源码驱动注入点补投）：spec 的 param_name/location 与 servlet 源码
             # 真实取源不一致时（A2 默认猜 query，实际读 header/cookie；或源藏在 helper 类），
-            # 主注入会打空 —— r109 实测 125 条 spec（6.8%）因此落在 S2（到应用未到族 sink），
             # 其中 9 个「弱证据 TP」全属此类。这里按源码推导结果补投 spec 未覆盖的位置。
             # 只补不替：spec 已声明的 (name, location) 不重复注入，主路径行为不变。
             try:
@@ -2693,21 +2585,18 @@ class D1Service:
                 spec.get("http_method", "GET"), spec.get("target_endpoint", ""), _name_source,
             )
 
-        # P-B（2026-10-15）投递确定性·**名注入**：部分 servlet 用的是参数/头的**名字**而非值——
         #   - 00587/00588/01455 等：取「值 == servlet 名」的那个参数的**名字**作 param；
         #   - 00251 等：取首个非标准头的**名字**作 param。
-        # 此前 D1 只把 canary 当「值」投，这些 servlet 永远到不了真 sink（实测 trustbound FN 全为此类）。
+        # 此前 D1 只把 canary 当「值」投，这些 servlet 永远到不了真 sink。
         # canary 唯一，故额外以「名」形式在各位置注入一次即可覆盖；对读「值」的 servlet 无害
         # （它们按固定名取参，多出的参数被忽略）。`<marker>Z` 兜底 `substring(0,len-1)` 截断型。
         #
-        # 2026-10-16（r98 实测修正）：外层原先卡 `is_valid_param_name(taint_marker)`，而 xss 的
         # marker 内嵌 XSS 载荷（形如 `s4st41<16hex>"><svg<8hex>`），该函数恒为 False ⇒
         # 名注入整条被挡死，xss 01426/01427/01428 三个真漏洞用例原生一个都没确认
-        # （mini r98 xss 只有 2/6）。名注入的语义恰是「应用读参数名」，「非标准名」正是
         # 要投放的形态，且 servlet 会把名字原样反射回响应，值级命中（compute_value_hit
         # 比对完整 marker）才成立——实测「名=完整 marker」回显完整 marker 且
         # sink-reached-probe in_val=True；「名=身份段」则完整 marker 不回显、值级必然 miss。
-        # 故 query 名走 force_name 旁路（HTTP 层百分号编码，实测可被 servlet 原样读回）；
+        # 故 query 名走 force_name 旁路；
         # cookie/header 名受 RFC6265/RFC7230 字符集约束，仍守 is_valid_param_name。
         _servlet_name = endpoint.rsplit("/", 1)[-1] if endpoint else param_name
         if _servlet_name and taint_marker:
@@ -2745,9 +2634,8 @@ class D1Service:
         _main_loc = str(spec.get("param_location") or "query").lower()
         for rp in rep:
             rp = dict(rp or {})
-            # 键形兼容（2026-10-12 r81 实证）：存在两套契约 ——
             #   内存态（entry_discovery_service._extract_request_params）：param_name/param_location
-            #   DB 态（trigger_spec_registry 登记的 spec）：name/location/value
+            #   DB 态：name/location/value
             # D1 此前只读 param_name ⇒ 对 DB 态 spec，rname 恒为 "" ⇒ _inject 走到
             # `if not pname: return` 直接空转 ⇒ 「全参数带标一次回放」（4.7.2）从落地起
             # 从未真正带过任何一个参数。同文件 1549 行的 _rep_names 早已用
@@ -2756,7 +2644,6 @@ class D1Service:
             rloc = rp.get("param_location") or rp.get("location") or "query"
             rval = self._encode_for_family(spec, rp.get("taint_marker") or taint_marker)
             rval = self._canary_for_param(spec, rname, rval, base_url)
-            # ── 主参数位不得被 canary 覆盖（2026-11-06，jsc 607~624 五轮 shiro 恒漏终因）──
             # 2323 行的主注入已经把 `primary_value`（真弹）放进同一个 (name, location) 槽位。
             # rep 循环在这里又用 taint_marker 调一次 _inject，同键覆盖 ⇒ **实际出站值变成
             # canary**，而 `replay_attempts.payload` 记的仍是 primary_value。证据链与出站报文
@@ -2772,7 +2659,6 @@ class D1Service:
             # 保持既有基线不动，避免一次改动把全部族的投放值换掉。
             _structured = ("deserialization" in _fam_text
                            or str(payload_source or "").startswith(("sink_specific:", "library:")))
-            # 2026-11-06（jsc 628）：content_type 声明 multipart 时，
             # _should_use_multipart 会把 query/body/form 全部归一到同一个
             # multipart 字段。此时「rloc=query vs 主 loc=form」只是登记漂移，
             # 实际仍是同槽位 —— 不认这一点，rep canary 会把 file_upload 主弹覆盖掉
@@ -2795,31 +2681,24 @@ class D1Service:
             if rname:
                 slices[rname] = {"param_location": str(rloc).lower(), "taint_marker": rval}
 
-        # 2026-10-12（r81 实证，xss 三代 arrivals 恒 0 的真根因）：path 来自 spec 的
-        # target_endpoint，**恒带前导斜杠**（如 /xss-00/BenchmarkTest00030）。urljoin 对
         # 以 "/" 开头的相对 URL 一律按「绝对路径」处理 ⇒ 直接丢弃 base_url 的 context path。
-        # 实测 urljoin("http://127.0.0.1:8444/benchmark/", "/xss-00/BenchmarkTest00030")
-        #   = "http://127.0.0.1:8444/xss-00/BenchmarkTest00030" → 404，
         # 而带前缀的 /benchmark/xss-00/... 是 200 且原样反射。⇒ 重放 100% 打在 404 上，
         # servlet 根本不执行、sink 不触发，arrivals 自然恒 0（事件表里只剩 Tomcat 404 页的
         # Response.setHeader）。同文件 817/850/2368/2385/2455 早已用 .lstrip("/")，仅 spec
         # 驱动的这几处漏了 —— 补齐，与既有写法和 urljoin 语义对齐。
         url = _join_url(base_url, path)
 
-        # §7.1 通道A：canary 走请求头，探针透传回事件 traceId 供 I1 做请求级关联。
-        # 关键（2026-08-29 评审）：头里放的必须是 canary 身份段本身，而不是随机 UUID。
+        #  通道A：canary 走请求头，探针透传回事件 traceId 供 I1 做请求级关联。
         # 这样 I1 关联的是「这次请求的身份」，而不是「payload 的值」——
         # 后续 payload 加绕过、变形、编码、混淆都不会让 I1 丢失监听（这是 canary 融合方案的死穴）。
         from src.iast.attack_context import TRACE_HEADER
         # 名注入源：trace 头本身是非标准 header，会抢走「首个非标准头」名额（见上方 _name_source
         # 注释）；此时不投 trace 头，canary 由「名注入头」进入应用、探针从 sink 实参侧识别，
-        # 请求级关联仍成立（活靶场实测：无 trace 头时 session sink 事件照常带 canary）。
+        # 请求级关联仍成立。
         if taint_marker and not _name_source:
             headers[TRACE_HEADER] = taint_marker
 
-        # 2026-11-02：**过滤器前置 header**（Referer / Origin / X-Requested-With）。
         # 有些应用在 Filter 里校验这些头，缺了就直接 return / 403 —— 参数、编码、方法全对
-        # 也进不到业务代码（jsc 的 ReferFilter 就是这一类，jsonp 族曾整族 no-arrival）。
         # 值由 A1 阶段 `filter_requirements` 从过滤器源码抽出，落在 spec 的
         # `required_headers`；这里只在「请求还没带这个头」时补，绝不覆盖 payload 注入的头。
         try:
@@ -2836,7 +2715,6 @@ class D1Service:
         except Exception as _rhe:  # noqa: BLE001
             logger.debug("[D1.replay] required_headers 注入跳过：%s", _rhe)
 
-        # 出站硬闸门（item 一，2026-09-21）：攻击族（尤其 SSRF）的 payload 可能把回显/目标地址
         # 指向靶场自身的管理端点（/restart、/shutdown、/actuator/shutdown），请求路径本身却是
         # /ssrf 之类、看不出异常 —— 必须在真正投放前扫 URL/params/body，命中即拦，绝不投放。
         from src.iast.attack_context import guard_http_request
@@ -2851,7 +2729,7 @@ class D1Service:
                               attack_payload_used="" if attack_degraded else str(primary_value)[:500],
                               payload_rejections=list(payload_rejections), payload_source=payload_source)
 
-        # 重试 3 次 + 指数退避（§3.17 决议）：瞬态 5xx / 连接异常 / 超时均重试。
+        # 重试 3 次 + 指数退避：瞬态 5xx / 连接异常 / 超时均重试。
         response = None
         retried = 0
         last_err = ""
@@ -2866,8 +2744,7 @@ class D1Service:
         _files: Optional[Dict[str, Any]] = None
         _mp_data: Optional[Dict[str, str]] = None
         if multipart_fields:
-            # 2026-11-06（jsc 627 实测）：文件名固定为字段名 "file" 时，
-            # Paths.get(UPLOADED_FOLDER + getOriginalFilename()) 的实参里没有任何身份段，
+            # Paths.get(UPLOADED_FOLDER + getOriginalFilename) 的实参里没有任何身份段，
             # 探针钩到的 sink 事件无法归属到本 spec —— 626 靠同端点 path_traversal 的
             # 事件偶然确认、627 就丢了，表现为 file_upload 真值点忽明忽暗。
             # 把 taint_marker 的身份段带进文件名（纯字母数字，不含 ../，不改族语义），
@@ -2883,7 +2760,6 @@ class D1Service:
                 _mp_data = {"_csrf": _csrf}
             if isinstance(body, dict) and body:
                 _mp_data = {**(_mp_data or {}), **body}
-        # cookie 值 RFC6265 净化（2026-09-22）：taint_marker 可能内嵌 payload 文本（含双引号/尖括号），
         # 原样放进 Cookie 头会被容器判非法 → Spring 报 Missing cookie → 400 → 控制器不执行 → sink 0 事件。
         # 只替换非法字节，身份段 s4st41<16hex> 保持原样，I1 按身份段关联不受影响。
         if cookies:
@@ -2898,7 +2774,6 @@ class D1Service:
             _dump_final = url
         _dump_outbound(method, url, _dump_final, query, headers, cookies, body,
                        content_type, _files)
-        # 2026-11-06：主重放接 per-request 认证守卫。628 的 60 次登录墙 302 里
         # 非 oracle 臂那部分就出自这里（_send_one 只是辅助发包，不是主重放入口）。
         _main_auth_state = "anonymous"
         for attempt in range(3):
@@ -2937,9 +2812,7 @@ class D1Service:
                 time.sleep(0.5 * (2 ** attempt))  # 0.5 / 1.0 / 2.0 s
         if response is None:
             # 重试 3 次仍失败 → provisional 交 I2 裁定（不自行判 ambiguous），闭环可重试。
-            # 2026-09-22 修正：target_unhealthy 只在**连接级失败**（靶场根本没应答）时置位。
             # 原实现无条件置 True，把「单次请求超时」「重复 5xx」也当成靶场不健康，是长期误标源
-            # （run 26/27/28/30/31 的 target_unhealthy 全部伴生 clean 纪元 + 空停机窗口）。
             # 详见 is_connection_level_failure 的 docstring。
             is_provisional = True
             _conn_down = is_connection_level_failure(last_err)
@@ -2957,7 +2830,6 @@ class D1Service:
 
         text = response.text or ""
 
-        # ── 时间盲注无害基线采集（2026-09-07 承接断链①修复）──
         # 命中 sleep 型主载荷时，对同端点发一次「结构完全相同、但 SLEEP(N)→SLEEP(0)」的对照请求，
         # 量出 baseline_elapsed_ms。D2 用 (elapsed_ms - baseline_elapsed_ms) 与 sleep 秒数做双阈值确认。
         # 经典时间盲注对照：只隔离 sleep 净效果，抗「换平凡值走到不同分支」的结构性噪声。
@@ -3025,7 +2897,6 @@ class D1Service:
             except Exception as exc:
                 logger.debug("[D1.replay] 抗抖动补投失败（忽略，主判定不受影响）：%s", exc)
 
-        # E：方法回退补投（1.2 重放智能化）。r109 逐案取证：**395 条 spec（21.5%）方法错配**
         #   —— sink 只在 doPost、doPut 之类里，而 spec 记 GET；D1 按 spec 方法打过去，
         #   servlet 走的是「只种 cookie / 只转发」那条分支，sink 永不执行，表现为
         #   S2（canary 到应用但未到族 sink）。9 个「弱证据 TP」全部属此类。
@@ -3095,7 +2966,6 @@ class D1Service:
             waf_blocked=self._is_waf_blocked(response.status_code, text, dict(response.headers)),
         )
 
-        # 2026-10-23（观察层落地）：把本次重放的「请求 + 响应 + 拦截信号」结构化落库。
         # 这是 I2 判因、闭环定向重放、净化器知识复用的共同数据源；
         # 此前这些信息只存在于 19MB 报告 JSON 的 dast_impact_evidence 里，跨轮读不到。
         try:
@@ -3124,7 +2994,6 @@ class D1Service:
         except Exception as _ra_exc:
             logger.debug("[D1.replay] 重放尝试落库失败（忽略，不影响主流程）：%s", _ra_exc)
 
-        # 2026-10-23（绕过能力落地·投放端）：A2 现在会产出多个候选（首选 + 绕过变体），
         # 但主路径只投 attack_payloads[0]。这里对第 2、3 个候选各补投一次，只做观测记录
         # （replay_attempts + slices），**不改变主判定** —— 是否算绕过成功交给后续 i2 LLM
         # 结合 read.state 判因，避免在重放层引入新的判定口径。
@@ -3146,7 +3015,6 @@ class D1Service:
                     _p_data, _p_json = _mp_data, None
                 else:
                     _p_data, _p_json = body_data_json(body, content_type)
-                # 2026-11-06：bypass_variant 会落 replay_attempts，629 里 2 条
                 # /sqli/jdbc/vuln 补投撞登录墙 302 且无 auth_state 标记。统一走守卫，
                 # 与主重放共享会话刷新，并把 auth_state 写进 action_json 供对账。
                 _p_resp, _p_auth_state = self._guarded_request(
@@ -3189,7 +3057,6 @@ class D1Service:
             except Exception:
                 pass
 
-        # ===== 族级行为 oracle（2026-10-24，可见率治本）=====
         # 判「有没有产生效果」，而不是判「sink 里有没有 payload」：布尔对差分 / 时延 /
         # 文件内容签名 / 原样反射。全部是黑盒可观测量，**不依赖 IAST 探针** ⇒ 换靶场不失效、
         # 对象型 sink（FileInputStream/MessageDigest）也能定案。
@@ -3220,7 +3087,6 @@ class D1Service:
         except Exception as _oexc:  # noqa: BLE001
             logger.warning("[D1.replay][oracle] 采集异常（不影响主判定）：%s", _oexc)
 
-        # 缺口二（2026-09-27）：多形态 canary 补投（默认关闭，见 _multi_form_enabled）。
         # 仅当目标对输入做编解码、明文 canary 无法直达 sink 时开启；基准靶场不编码输入，保持关闭避免 4 倍重放。
         if self._multi_form_enabled(spec):
             self._fire_multi_form_probes(
@@ -3228,7 +3094,7 @@ class D1Service:
                 str(spec.get("param_location") or "query"),
             )
 
-        # §7.10 Phase 2 危害验证授权开关：默认仅 Phase 1；显式开关 + 白名单 + spec 含 impact_payloads 才打 Phase 2。
+        #  Phase 2 危害验证授权开关：默认仅 Phase 1；显式开关 + 白名单 + spec 含 impact_payloads 才打 Phase 2。
         if self._phase2_allowed(target, spec):
             phase2_results = self._send_phase2(method=method, url=url, headers=headers, cookies=cookies,
                                                 query=query, body=body, content_type=content_type,
@@ -3276,7 +3142,6 @@ class D1Service:
                     f"@{_ts.get('read_endpoint_source') or 'none'}"
                 )
 
-        # P1 对照实验差分采集（2026-10-10 落地）：对 dataflow 族，主重放成功后发一次「裸 canary 无害
         # 控制」对照请求，比对实验与控制的响应错误签名 / 标记回显 / 时延 / 结构相似度，产出 differential
         # 结论。严格 fail-open：任何异常 / 歧义 / 非目标族 / 路径位都不投 differential，绝不零化仅到达 TP。
         try:
@@ -3312,7 +3177,6 @@ class D1Service:
         （canary 是字母数字串，任意注入上下文都 benign，不破坏语法、不执行命令），比较实验与控制的
         响应错误签名 / 标记回显 / 时延 / 结构相似度，调用 evidence_channels.differential_confirm 产出结论。
 
-        关键修正（2026-10-10 复盘 run 248）：OWASP 安全用例会把「我们投进去的参数值」
         （canary 也好、攻击载荷也好）原样回显/转义进响应体 —— 直接用原始 body 算相似度会恒 <0.95，
         导致所有对照都被判成 ambiguous_fail_open、永远不降级。这里在算相似度前把「控制值 _cv」
         与「实验值 primary_value」从两侧响应体里都剥掉，只比较「与参数值无关的结构」：
@@ -3365,7 +3229,6 @@ class D1Service:
             _cel = (time.time() - _t0) * 1000.0
             _ctext = _cresp.text or ""
         except Exception as _cre:
-            # 对照请求失败必须可见：此前吞在 debug，导致 run 248 全量 attempted=0 无任何线索。
             logger.warning(
                 "[D1.replay][P1-diff] 对照请求异常（fail-open 保留现状）：%s | %s %s fam=%s",
                 _cre, method, url, _fam)
@@ -3463,10 +3326,8 @@ class D1Service:
             if not route:
                 continue
             url = urljoin(base + "/", route) if base else ("/" + route)
-            # 靶场自毁防护（2026-09-22 补漏，⑦-2）：补发步骤的路由来自 A2 的 poc_chain /
             # ordered_steps 文本（LLM 产出，不可信），且此前是唯一一处绕过出站硬闸门的
             # 攻击者侧出站调用 —— 文本里若出现 /restart、/actuator/shutdown 之类生命周期端点
-            # 会直接把靶场打死（run 23 塌陷同源）。补上闸门，命中即跳过该步。
             _fg = guard_http_request(method, url)
             if _fg.get("blocked"):
                 logger.error("[destructive-guard] _send_followups 拒绝投放（%s）：%s %s",
@@ -3512,18 +3373,17 @@ class D1Service:
         if not need_b64:
             return marker
         try:
-            # 标准 base64（带填充），与应用 Base64.getDecoder().decode 一致
+            # 标准 base64（带填充），与应用 Base64.getDecoder.decode 一致
             return base64.b64encode(marker.encode("utf-8")).decode("ascii")
         except Exception:
             return marker
 
-    # ------------------------------------------------------------------ BOLA / RACE 运行时验证（§2.2 / §7.9）#
+    # ------------------------------------------------------------------ BOLA / RACE 运行时验证#
     def _send_one(self, method: str, url: str, query: Dict[str, str], headers: Dict[str, str],
                   cookies: Dict[str, str], body: Any, content_type: str,
                   files: Optional[Dict[str, Any]] = None) -> "DastImpact":
         """单次 HTTP 发送 + 瞬态重试（从 replay 抽出的复用件）。返回 DastImpact。
 
-        R24-D：发送前过一遍破坏性闸门（`guard_http_request`，重写式纵深防御）——
         破坏性路由的 id 参数换哨兵，保证任何构造路径都不会把真实资源 id 发出去。
         files：multipart/form-data 文件字段（决策2：认证态 multipart 回放），非空时以
         multipart 编码发送，data/json 不再使用。
@@ -3535,7 +3395,6 @@ class D1Service:
         if _g.get("blocked"):
             # 出站硬闸门（item 一）：命中进程生命周期/自毁端点，绝不投放。返回 error 型 DastImpact
             # → 调用方按"无证据"处理（不会误判 confirmed），同时避免把靶场自身重启/终止、
-            # 使本轮 D2 批次作废（run 24 卡死 phase=d2 的根因）。
             _note = _g.get("note") or {}
             logger.warning("[destructive-guard] _send_one 拒绝投放（%s）：%s %s",
                            _note.get("category"), method, url)
@@ -3555,11 +3414,8 @@ class D1Service:
             _replay_url = str(_prepared.url or url)
         except Exception:
             _replay_url = str(url)
-        # 2026-10-29（sqli 投放定位）：报文 dump 开关。
         # 背景：sqli 三族召回 55~75%，漏报全是 unconfirmed/no-arrival；且「参数名完全匹配」
-        # 的用例（01624 的 getParameterValues("BenchmarkTest01624")）也到不了 sink。
         # 说明丢失点在更底层（编码/双投/转义/doGet→doPost 转发），靠读代码猜不出来——
-        # 这条链已修过 r98/r106/r109 三轮，每次都是「以为修好了实际没打中」。
         # 故提供确定性观测：开 SAST_AI_D1_DUMP_REQ=1 后，每次出站请求落一行 JSONL，
         # 可直接看到 method/最终URL/headers/body 与 query 的真实形态。
         # 默认关闭（零开销），仅定位期开启。
@@ -3648,7 +3504,6 @@ class D1Service:
         传播范围限于请求内；存储型读取侧的参数里根本没有 canary，探针无污点可跟。
         所以读取侧只认**回显比对**——搜我们投进去的那个 UUID 字符串。
 
-        读端点三级定位（用户 2026-10-02 修正一）：
           一级 static —— replay_plan.read_endpoint（A1 静态给，绝大多数走这条，零额外请求）
           二级 llm     —— 静态给不出时由 gateway 读代码补候选（慢但准，只在缺静态时走）
           三级 probe_scan —— 标记反查：GET 端点候选挨个扫（兜底，且保留一个用途：
@@ -3810,7 +3665,7 @@ class D1Service:
 
     def replay_bola(self, trigger_spec: Dict[str, Any], target: Dict[str, Any],
                     accounts: Any = None) -> Dict[str, Any]:
-        """§7.9 BOLA 多身份重放：以攻击者(A)身份请求受害者(B)的资源 id，检查是否越权取回 B 的数据。
+        """ BOLA 多身份重放：以攻击者(A)身份请求受害者(B)的资源 id，检查是否越权取回 B 的数据。
 
         trigger_spec 字段：target_endpoint / http_method / param_name(资源 id 参数) /
         param_location / victim_resource_id(B 的资源 id) / victim_identifiers(命中即证明泄露 B 的数据，
@@ -3828,7 +3683,6 @@ class D1Service:
         base_url = str(target.get("service_url") or "").rstrip("/")
         endpoint = str(spec.get("target_endpoint") or "").lstrip("/")
 
-        # B 门禁（R23 第一刀 A2+B）：重放期把哨兵/空 victim 解析成真实资源 id 与强指纹，并回填 spec。
         # 替换原内联的 VICTIM_FROM_POOL 解析与枚举逻辑，统一口径避免漂移与重复。
         _vres = self._resolve_victim_identity(target, spec, accounts)
         victim_markers = _vres.get("victim_markers") or []
@@ -3843,7 +3697,7 @@ class D1Service:
         cookies = dict(auth.get("auth_cookies") or {})
 
         # 任务4 IAST 校验函数 hook：给攻击请求带上 canary 身份段（走 X-SASTAI-Trace 头，不污染业务参数）。
-        # 探针扫到该身份段后 hasCanaryIdentity()==true，其 AuthzDecisionAdvice 观测到「访问域对象但无
+        # 探针扫到该身份段后 hasCanaryIdentity==true，其 AuthzDecisionAdvice 观测到「访问域对象但无
         # 对象级授权决策」会把 canary 回带进 BOLA_SUSPECT 事件 → 形成授权 hook 语义确认。
         canary = str(spec.get("taint_marker") or "")
         if canary:
@@ -3872,11 +3726,7 @@ class D1Service:
                 path = path.replace("{" + pname + "}", pval).replace(":" + pname, pval)
 
         _inject(param_name, param_loc, str(victim_id))
-        # 2026-10-12（r81 实证，xss 三代 arrivals 恒 0 的真根因）：path 来自 spec 的
-        # target_endpoint，**恒带前导斜杠**（如 /xss-00/BenchmarkTest00030）。urljoin 对
         # 以 "/" 开头的相对 URL 一律按「绝对路径」处理 ⇒ 直接丢弃 base_url 的 context path。
-        # 实测 urljoin("http://127.0.0.1:8444/benchmark/", "/xss-00/BenchmarkTest00030")
-        #   = "http://127.0.0.1:8444/xss-00/BenchmarkTest00030" → 404，
         # 而带前缀的 /benchmark/xss-00/... 是 200 且原样反射。⇒ 重放 100% 打在 404 上，
         # servlet 根本不执行、sink 不触发，arrivals 自然恒 0（事件表里只剩 Tomcat 404 页的
         # Response.setHeader）。同文件 817/850/2368/2385/2455 早已用 .lstrip("/")，仅 spec
@@ -3886,7 +3736,6 @@ class D1Service:
         # A2：可观测副作用差分（攻击前读 victim 状态）—— IDOR 端点多为 redirect/无响应体，
         # 纯 data_leak 腿（victim_identifiers 全空）恒 False，必须靠 before/after 状态差分自证
         # （DAST 原生，不卡探针闸门）。/profile/password 需先把新密码注入攻击请求再读回复登验证。
-        # R26：endpoint 上面已 lstrip("/")，这里必须补回前导斜杠再匹配 ——
         # 否则 "/profile/password" in "profile/password" 恒为 False，
         # 越权改密的新密码永远注入不进攻击请求，登录差分恒为「改前=改后」→ #24 永远不确认。
         _ep_l = "/" + endpoint.lower()
@@ -3923,7 +3772,7 @@ class D1Service:
 
         # 信号③（可观测副作用差分）：IDOR 端点多为 redirect/无响应体，data_leak 恒 False，
         # 故在攻击后读回 victim 状态与攻击前（_before）做差分；状态发生非自身操作导致的异常变化即确认
-        # （DAST 原生，不依赖探针闸门 —— 这正是 RC-C/RC-B 卡死的根因修复）。
+        # 。
         side_effect = False
         if _readback is not None and not (data_leak or hook_confirmed):
             _after = self._read_victim_state(target, spec, accounts, _readback)
@@ -3964,7 +3813,6 @@ class D1Service:
         - /cart/remove → /cart（Thymeleaf HTML，解析 name="id" value="N"）
         - /address/delete、/address/{id} → /address（无列表则逐 id 探测 /address/{n} 首个 ok:true）
         - 其他 path 型 → 去掉 {id}/:id 后的集合端点
-        枚举失败一律回退 "1"（target-mall 中 alice 的资源恰为 id=1，可命中）。
         """
         import re as _re
         _coll = endpoint
@@ -4088,7 +3936,7 @@ class D1Service:
 
     def replay_race(self, trigger_spec: Dict[str, Any], target: Dict[str, Any],
                     concurrency: int = 5, accounts: Any = None) -> Dict[str, Any]:
-        """§3.7 RACE 第二信号 + 设计二②副作用确认：双账户差分 + before/after 可观测状态快照。
+        """ RACE 第二信号 + 设计二②副作用确认：双账户差分 + before/after 可观测状态快照。
 
         设计二②核心：在原有「并发成功数」弱信号之上，新增
         (1) 双账户：用 attacker 账户带登录态并发打敏感端点（无登录态会 401 永远 success=0）；
@@ -4147,18 +3995,13 @@ class D1Service:
         self._apply_endpoint_schema(spec)
         if spec.get("body") is not None:
             body = spec.get("body")
-        # 2026-10-12（r81 实证，xss 三代 arrivals 恒 0 的真根因）：path 来自 spec 的
-        # target_endpoint，**恒带前导斜杠**（如 /xss-00/BenchmarkTest00030）。urljoin 对
         # 以 "/" 开头的相对 URL 一律按「绝对路径」处理 ⇒ 直接丢弃 base_url 的 context path。
-        # 实测 urljoin("http://127.0.0.1:8444/benchmark/", "/xss-00/BenchmarkTest00030")
-        #   = "http://127.0.0.1:8444/xss-00/BenchmarkTest00030" → 404，
         # 而带前缀的 /benchmark/xss-00/... 是 200 且原样反射。⇒ 重放 100% 打在 404 上，
         # servlet 根本不执行、sink 不触发，arrivals 自然恒 0（事件表里只剩 Tomcat 404 页的
         # Response.setHeader）。同文件 817/850/2368/2385/2455 早已用 .lstrip("/")，仅 spec
         # 驱动的这几处漏了 —— 补齐，与既有写法和 urljoin 语义对齐。
         url = _join_url(base_url, path)
         content_type = str(spec.get("content_type") or "")
-        # R23 A4：已知竞态端点走端点专属可观测副作用差分（库存为负/重复领取/余额转负/双重消费）
         _race_ep = str(spec.get("target_endpoint") or "").lower()
         if any(k in _race_ep for k in ("/seckill", "/coupon/claim", "/wallet/withdraw", "/wallet/transfer")):
             _n = max(1, int(concurrency or 1))
@@ -4315,7 +4158,7 @@ class D1Service:
             return {"changed": False, "deltas": {}}
         return {"changed": True, "deltas": deltas}
 
-    # ------------------------------------------------------------------ 业务逻辑漏洞运行时验证（§2.2 全类目）#
+    # ------------------------------------------------------------------ 业务逻辑漏洞运行时验证#
     def _assemble(self, target: Dict[str, Any], spec: Dict[str, Any],
                   extra_injections: Optional[List[tuple]] = None) -> tuple:
         """由 target + trigger_spec 组装一次 HTTP 请求要素，复用 _send_one 发送。
@@ -4363,11 +4206,7 @@ class D1Service:
 
         body = body_holder[0]
         path = path_holder[0]
-        # 2026-10-12（r81 实证，xss 三代 arrivals 恒 0 的真根因）：path 来自 spec 的
-        # target_endpoint，**恒带前导斜杠**（如 /xss-00/BenchmarkTest00030）。urljoin 对
         # 以 "/" 开头的相对 URL 一律按「绝对路径」处理 ⇒ 直接丢弃 base_url 的 context path。
-        # 实测 urljoin("http://127.0.0.1:8444/benchmark/", "/xss-00/BenchmarkTest00030")
-        #   = "http://127.0.0.1:8444/xss-00/BenchmarkTest00030" → 404，
         # 而带前缀的 /benchmark/xss-00/... 是 200 且原样反射。⇒ 重放 100% 打在 404 上，
         # servlet 根本不执行、sink 不触发，arrivals 自然恒 0（事件表里只剩 Tomcat 404 页的
         # Response.setHeader）。同文件 817/850/2368/2385/2455 早已用 .lstrip("/")，仅 spec
@@ -4445,7 +4284,7 @@ class D1Service:
         - accepted: 2xx（请求被接受）
         - auth_missing: 401 且响应带 `WWW-Authenticate` 挑战头——这是服务端「你没登录，来认证」的
           标准鉴权墙（缺凭证），预期行为，不是「攻击被 WAF/过滤器拦截」。路由到双账户重放
-          （attacker/victim 登录态并发），不当 blocked（见净化器判定 Q6）。
+          （attacker/victim 登录态并发），不当 blocked。
         - auth_denied: 403 已登录但无权限；或 401 但**无** WWW-Authenticate（非标准挑战，按被拦截处理）。
         - malformed_request: 400/405/406/415/422（缺必需字段/值或 Content-Type 错误，属请求本身不合法，
           不等于控制存在——此时不应解读为「端点已做拒绝控制」）
@@ -4501,7 +4340,6 @@ class D1Service:
     def _forge_account_token(account: Optional[Dict[str, Any]], role: str = "admin") -> Optional[Dict[str, Any]]:
         """把账户里的 JWT（Bearer 头或 mall_token cookie）改写成 alg=none + role 的伪造令牌。
 
-        供垂直越权 replay 主腿：target-mall 的 JwtUtil.parse 对 alg=none 直接信任 payload 且不验签，
         role claim 被后端直接采用（不查库），故 alg=none+role=admin 是真实可用的攻击载荷，而非占位数据。
         非 JWT（无 '.' 分隔）原样返回 None。
         """
@@ -4561,8 +4399,7 @@ class D1Service:
 
         # spec.victim_identifiers 是登记期/A2 已解析好的受害者强指纹（由 IastService
         # .update_trigger_spec_victim_identifiers 回填，见本文件另一处调用），必须并入。
-        # 此前本函数只读 victim_acct：重放期 accounts 常常只带 attacker（victim 账户未登记），
-        # 于是 victim_markers 恒空 → replay_bola 的 data_leak 腿整条失效。实测（2026-09-14）
+        # 此前本函数只读 victim_acct：重放期 accounts 常常只带 attacker，
         # 响应体里明明含 victim@corp.com，leaked 仍算成 []，confirmed 判 False。
         _acct_values = [
             victim_acct.get(k) for k in ("username", "user_name", "email", "user_id", "userid", "uid")
@@ -4580,7 +4417,7 @@ class D1Service:
         if "/profile/update" in ep:
             # 自提升一律以攻击者为对象，不看 spec 上登记的 victim_resource_id：
             # 那个值常常是受害者(admin)，照它回滚会出现「投放打攻击者、回滚打受害者」的错位，
-            # 把改动留在靶标上（实测踩到：alice 被留在 ADMIN 且 balance 被改）。
+            # 把改动留在靶标上。
             vid = self._self_elevation_uid(
                 base_url, accounts,
                 dict((attacker_acct or {}).get("auth_headers") or {}),
@@ -4604,7 +4441,6 @@ class D1Service:
                         dict((attacker_acct or {}).get("auth_cookies") or {}))
             if not vid and _is_identity:
                 # 身份类参数：直接用账户池 uid（victim 优先，其次 attacker），优于盲投 "1"
-                # （R23-4 设计：非 path 型用池 uid；仅当参数本身是身份维度时才适用，
                 # 资源类参数如 cartItemId/orderId 仍需枚举真实对象 id，见
                 # test_non_path_sentinel_uses_pool_uid 与 test_19_cart_remove_side_effect）。
                 vid = str((victim_acct or {}).get("user_id")
@@ -4641,8 +4477,6 @@ class D1Service:
         return {"victim_resource_id": vid, "victim_markers": victim_markers, "attacker_markers": attacker_markers}
 
     # ---------------- A2：IDOR/bola 可观测副作用差分 ----------------
-    # ── R26：可回滚验证原语（restore_after）──────────────────────────────────
-    # R24 闸门把 credential_mutation / mass_assignment 整条 skip，#24 越权改密与 #25 批量赋值提权
     # 因此结构上不可能 confirmed。这两类的共同点是「把标量字段写到可定位资源上」，故可安全验证：
     # 投放前取基线 → 投放 → 无条件写回基线 → 复读校验；任一步拿不到就不许投放或不得判 confirmed。
     # 端点形态取自靶场 Controller 真实签名（ProfileController.update 的 @RequestParam Map +
@@ -4815,7 +4649,7 @@ class D1Service:
         """
         st: Dict[str, Any] = {"rid": "", "rids": [], "baselines": {}, "canonical": {},
                               "restored": None, "note": "", "baseline": None}
-        # 可重入：verify() 里也有同一层包装（业务族经 _replay_business_logic 进来）。
+        # 可重入：verify 里也有同一层包装（业务族经 _replay_business_logic 进来）。
         # 内层直接复用外层状态，不重复取快照、不重复回滚 —— 否则内层会把「已投放」当成基线。
         _outer = getattr(_RESTORE_TLS, "state", None)
         if _outer is not None:
@@ -4844,7 +4678,6 @@ class D1Service:
                     logger.warning("[R26.restore] 回滚对象解析失败：%s", _exc)
                     primary_rid = ""
         # 次回滚对象：另一侧账户（与 primary 不同的那个 user_id），两侧都兜底还原，
-        # 避免只恢复一侧、把真实被改动的账户留在靶标上（run 20 实测 alice 被留在 ADMIN）。
         secondary_rid = self._restore_secondary_rid(accounts, spec, primary_rid)
         rids = []
         for r in (primary_rid, secondary_rid):
@@ -4876,7 +4709,6 @@ class D1Service:
             yield st
         finally:
             _RESTORE_TLS.state = None
-            # R26 修复：回滚目标恒为规范化基线（带重试），逐 rid 还原，不再写回「本次快照」，
             # 从而单次回滚失败 / 进入前已污染都不会把脏状态固化成新基线。
             results = []
             for rid in rids:
@@ -5006,7 +4838,6 @@ class D1Service:
             return False
         if resp is None or not resp.reached:
             return False
-        # target-mall /login：成功返回 302 重定向到首页（同时下发 mall_token Cookie）；
         # 失败返回 200 重新渲染登录页（含错误提示）。allow_redirects=False 下 302 直接可见。
         if resp.status_code == 302:
             return True
@@ -5022,7 +4853,6 @@ class D1Service:
         双主腿，任一被服务端接受（2xx 且无拒绝词）即 confirmed：
         主腿① 普通攻击者 token：缺失「角色/权限校验」型越权（只要登录即可执行高权操作）；
         主腿② alg=none 伪造 + role=admin：缺失「签名算法校验 / role claim 鉴权」型越权
-          （target-mall JwtUtil.parse 对 alg=none 直接信任 payload 不验签，role 来自 JWT claim 不查库）。
 
         参数值兜底：高权端点常要求真实 uid/orderId，缺省回落到 victim/attacker 的 uid，
         避免 uid= 空值 → 400 误读为「已鉴权拒绝」。
@@ -5104,13 +4934,12 @@ class D1Service:
 
         若服务端返回 2xx 且无拒绝词，说明该操作缺失当前状态前置校验 → confirmed。
 
-        spec.ordered_steps 支持（Point3 补齐）：当提供有序状态转换步骤列表时，按序逐个发送
+        spec.ordered_steps 支持：当提供有序状态转换步骤列表时，按序逐个发送
         （前几步建立基线状态，被标记 illegal 的步骤或最后一步为待验证的非法转换），任一步的
         「非法转换被接受」即缺失状态前置校验。无 ordered_steps 时回落单请求验证。
         """
         spec = dict(trigger_spec or {})
         target = dict(target or {})
-        # R23 A5：/order/{id}/ship 状态机跳步（未付款直接发货）走专用差分
         _sm_ep = str(spec.get("target_endpoint") or "").lower()
         if "/ship" in _sm_ep and "/order/" in _sm_ep:
             return self._replay_state_skip(spec, target, accounts=accounts)
@@ -5167,7 +4996,6 @@ class D1Service:
         # 走专用差分：注入 role=ADMIN 后读回 /api/profile/{uid} 比对 role 是否升高。
         if "/profile/update" in str(spec.get("target_endpoint") or "").lower():
             return self._replay_mass_assignment(spec, target, accounts=accounts)
-        # R23 A3：/order/buy、/order/checkout 的 amount 参数直接采信（金额篡改），走专用差分
         _calc_ep = str(spec.get("target_endpoint") or "").lower()
         if "/order/buy" in _calc_ep or "/order/checkout" in _calc_ep:
             return self._replay_amount_tampering(spec, target, accounts=accounts)
@@ -5211,7 +5039,6 @@ class D1Service:
         accounts = accounts if isinstance(accounts, dict) else {}
         victim = accounts.get("victim") or {}
         attacker = accounts.get("attacker") or victim
-        # R26：自提升打攻击者自己（victim 常已是 ADMIN，role 差分恒无变化 → #25 永不确认）。
         # 与回滚同源，保证「投放对象 == 回滚对象」。
         base_url = str(target.get("service_url") or "").rstrip("/")
         headers = dict((attacker or {}).get("auth_headers") or {})
@@ -5256,7 +5083,6 @@ class D1Service:
                       else "批量赋值未改变 role（已校验或字段不可覆盖）",
         }
 
-    # ---------------- R23 A3/A5/A4/A6：业务漏洞 DAST 原生差分（不卡探针闸门）----------------
 
     @staticmethod
     def _extract_order_id(imp: Any) -> Optional[str]:
@@ -5516,7 +5342,6 @@ class D1Service:
         必须与 replay_race 通用路径（本文件另一处 return）保持键位一致：race_suspected /
         confirmation_source 两个键此前只有通用路径产出，导致调用方在已知竞态端点
         （/seckill、/coupon/claim、/wallet/*）上用 out.get("race_suspected") 恒为 None，
-        把已经确认的竞态静默当成未确认（race 通道 confirmed 0/10 的成因之一，2026-09-14 实测）。
 
         修复：endpoint 侧 side-effect 确认（confirmed）与通用「single_use + 并发多成功」信号
         取 OR —— 端点侧无 side-effect 可观测（或无 /coupon/my 响应）时，仍按设计二② graceful
@@ -5713,7 +5538,6 @@ class D1Service:
         """
         spec = dict(trigger_spec or {})
         target = dict(target or {})
-        # R23 A6：回调签名伪造端点走专用差分（signType=none 绕过 + 弱签名 + canary 金额）
         if "/payment/callback" in str(spec.get("target_endpoint") or "").lower():
             return self.replay_callback_signature_forgery(spec, target, accounts=accounts)
         header_name = str(spec.get("auth_header_name") or spec.get("token_header") or "Authorization").strip()
@@ -5810,7 +5634,7 @@ class D1Service:
 
     @staticmethod
     def _phase2_allowed(target: Dict[str, Any], spec: Dict[str, Any]) -> bool:
-        """§7.10：默认关闭。需 phase2_enabled=True 且目标在白名单 + spec 显式 override。"""
+        """默认关闭。需 phase2_enabled=True 且目标在白名单 + spec 显式 override。"""
         settings = (target.get("settings") or {}) if isinstance(target.get("settings"), dict) else {}
         if not settings.get("phase2_enabled"):
             return False
@@ -5825,7 +5649,7 @@ class D1Service:
 
     def _send_phase2(self, method: str, url: str, headers: Dict[str, str], cookies: Dict[str, str],
                      query: Dict[str, str], body: Any, content_type: str, spec: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """§7.10 Phase 2：用 high_impact_payloads 真打 exploit、看响应是否如预期影响。
+        """ Phase 2：用 high_impact_payloads 真打 exploit、看响应是否如预期影响。
         复用 Phase1 的 auth/路由，仅替换 body 字段值。"""
         results: List[Dict[str, Any]] = []
         for idx, payload in enumerate(spec.get("impact_payloads") or []):
@@ -6259,7 +6083,6 @@ class D1Service:
         _headers = Database.loads(row["auth_headers_json"])
         _cookies = Database.loads(row["auth_cookies_json"])
         acct = {"id": row["id"], "app_id": row["app_id"], "account_id": row["account_id"], "role": row["role"], "tenant": row["tenant"], "subject": row["subject"], "auth_headers": _headers, "auth_cookies": _cookies, "token_ref": row["token_ref"], "metadata": Database.loads(row["metadata_json"]), "created_at": row["created_at"]}
-        # R23-4：从持久化凭据（cookie 型 mall_token / Bearer 头）解出 uid，使 dast_accounts 来源的
         # 账户也能参与 replay_bola 的 VICTIM_FROM_POOL 哨兵解析（否则只能退化为盲投 "1"）。
         # 仅在 JWT payload 真含 uid/sub/user_id 时写入，绝不猜测。
         _tok = ""

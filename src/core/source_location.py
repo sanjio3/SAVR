@@ -3,14 +3,13 @@
 背景
 ----
 A2 的 `param_location` 常默认猜 `query`，而 OWASP servlet 的源可能是 header/cookie/body。
-实测 run 364 约半数 spec 的 `param_location` 与 servlet 实际取源不符 → D1 把 payload
 注到 query，而 servlet 从 header 取 → payload 到不了 sink → 漏报（FN）。
 
 本模块只读源码、确定性判定（剥注释后按真实调用），不看 LLM 猜测：
   request.getHeader("X") / getHeaders("X")      → header
-  request.getParameter("X") / getParameterValues("X") / getParameterMap() → query
-  request.getCookies() + cookie.getName().equals("X") → cookie
-  request.getInputStream() / getReader()          → body
+  request.getParameter("X") / getParameterValues("X") / getParameterMap → query
+  request.getCookies + cookie.getName.equals("X") → cookie
+  request.getInputStream / getReader          → body
 """
 from __future__ import annotations
 
@@ -89,11 +88,7 @@ def is_valid_location(loc: Optional[str]) -> bool:
 
 
 # 名注入（name injection）：部分 servlet 把「参数/头的**名字**」当污点值，而 D1 默认把 canary
-# 注在**值**里 → 这类用例永远到不了真 sink（r106 实测 trustbound 4 个真 TP 全为此类，
-# 如 BenchmarkTest00251 取首个非标准 header 的 name 存 session）。
 # 更隐蔽的是：D1 无条件加的 X-SASTAI-Trace 头本身也是「非标准 header」，会抢走 251 的选中
-# 名额 —— 故名注入源必须**跳过主值注入与 trace 头**，只发名注入（2026-10-18 活靶场验证：
-# 仅发 `marker: BenchmarkTest00251` 头时 session 正确落 `[userid, <marker小写>]`）。
 _NAME_SOURCE_PATTERNS = (
     (re.compile(r'getHeaderNames\s*\(\s*\)'), "header_name"),
     (re.compile(r'getParameterNames\s*\(\s*\)'), "param_name"),

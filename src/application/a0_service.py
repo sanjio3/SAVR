@@ -1,17 +1,17 @@
-"""A0 预处理编排（重构文档 §8.1 职责整合 + §8.4 保证不漏 4 点机制）。
+"""A0 预处理编排。
 
 把原本各自独立的 A0PreprocessService（路径校验）+ R0ReconAgent（信息收集）+ EntryDiscoveryService
 （入口发现）+ P0PlanningAgent（审计计划）整合成一个 A0 编排，统一 A0 三项核心职责：
 
 职责① 直接读路径、校验项目可访问可扫描（A0PreprocessService.validate_workspace_path）。
 职责② 环境识别前置（ExternalTarget 前置探查，见 IastService.check_environment_readiness，可选）。
-职责③ 入口发现 + 框架特化 + IAST 补盲闭环（§8.4）：
+职责③ 入口发现 + 框架特化 + IAST 补盲闭环：
   - 静态多方法融合：EntryDiscoveryService 正则 + AST（已做），此处再融合 R0 框架特化路由去重。
-  - R0 框架特化：R0 识别技术栈/框架 → 传给 entry discovery 做框架感知（§8.4 第2点）。
-  - IAST 补盲回灌：IAST observed_only（观测有、假说无）的入口 → 回灌成规则候选（§8.4 第3点）。
-  - representative_request_params 运行时回采：静态拿不到，留接口标注（§8.4 第4点）。
+  - R0 框架特化：R0 识别技术栈/框架 → 传给 entry discovery 做框架感知。
+  - IAST 补盲回灌：IAST observed_only（观测有、假说无）的入口 → 回灌成规则候选。
+  - representative_request_params 运行时回采：静态拿不到，留接口标注。
 
-注意：R0ReconAgent 自带 _extract_entry_points 与 EntryDiscoveryService 功能重叠（§9.1「择优保留其一」），
+注意：R0ReconAgent 自带 _extract_entry_points 与 EntryDiscoveryService 功能重叠，
 本编排统一用 EntryDiscoveryService 做入口发现（含 request_params 参数采集），R0 仅贡献技术栈/框架/依赖/数据流。
 """
 import logging
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 class A0Service:
-    """A0 预处理编排器（§8.1/§8.4）。"""
+    """A0 预处理编排器。"""
 
     def __init__(
         self,
@@ -88,7 +88,7 @@ class A0Service:
         except Exception as _e:
             logger.warning("[A0] 知识必读加载失败（不阻断）：%s", _e)
 
-        # 职责③ 之 R0 框架特化（§8.4 第2点）：R0 识别技术栈/框架/依赖，喂给 entry discovery
+        # 职责③ 之 R0 框架特化：R0 识别技术栈/框架/依赖，喂给 entry discovery
         framework = ""
         project_info: Optional[Any] = None
         if self.r0_agent_cls is not None:
@@ -112,12 +112,11 @@ class A0Service:
         result["entry_count"] = discovery.get("entry_count", 0)
         result["rule_candidates"] = discovery.get("rule_candidates", [])
 
-        # 注：原 §8.4 第4点「运行时流量回采」（消费 iast_request_params 补齐
-        # representative_request_params）已于 2026-09-01 全链路移除：探针从不发送
+        # 注：原  第4点「运行时流量回采」（消费 iast_request_params 补齐
         # request_observed，该表恒为空，回采分支从未真正产出。入口参数采集现完全由
         # EntryDiscoveryService 的静态提取（_extract_request_params）承担。
 
-        # 职责③ 之 IAST 补盲回灌（§8.4 第3点）：observed_only 入口 → 规则候选
+        # 职责③ 之 IAST 补盲回灌：observed_only 入口 → 规则候选
         if iast_observed_entries:
             result["blindspot_backfill"] = self.backfill_blindspots(iast_observed_entries)
             result["rule_candidates"] = list(result["rule_candidates"]) + result["blindspot_backfill"]
@@ -144,7 +143,7 @@ class A0Service:
         return result
 
     def backfill_blindspots(self, iast_observed_entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """§8.4 第3点：把 IAST observed_only（运行时真实命中但静态没发现）的入口回灌成规则候选。
+        """ 第3点：把 IAST observed_only（运行时真实命中但静态没发现）的入口回灌成规则候选。
 
         iast_observed_entries 每项形如 {"sink_method": "...", "sink_file": "...", "sink_line": N}。
         回灌产物作为 entry_discovery 的规则候选（status=candidate，人工审定），供下一轮静态发现更全。

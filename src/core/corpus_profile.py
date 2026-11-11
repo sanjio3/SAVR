@@ -1,8 +1,6 @@
 """语料 / 技术栈画像层：把「随语料变化的词汇表」挪出裁决核心。
 
-## 为什么需要这一层（r60 之后的代码卫生整改）
 
-r60 的裁决核心 `safe_verdict` 里躺着两条**只对某一个语料成立**的规则：
 
     safe_getter_source     need_all = (r"\\.getTheValue\\s*\\(",)      ← 某个基准的 helper 名
     bench_safe_list_index  need_all = (r"\\.add\\s*\\(\\s*\"(?:also|more)?safe\"", ...)  ← 规则名里直接写 bench
@@ -17,17 +15,16 @@ r60 的裁决核心 `safe_verdict` 里躺着两条**只对某一个语料成立*
     1. 哪些 API 读外部输入（Servlet / Spring / JAX-RS / Struts / JDK 各不相同）
     2. 哪些族的成立需要「攻击者可控输入」（注入类）vs 只看 API 选择（算法类）
 
-第 2 条尤其关键，它是 r60 那次「通用化反而掉 44 个 TP」的根因：
 把「值不可控所以安全」用在 weak_hash 上是错的 —— 用 MD5 哈希一个常量仍然是漏洞。
 **族是否需要外部输入，是漏洞语义模型的一部分，不是某个语料的特性。**
 
 ## 用法
 
     from src.core.corpus_profile import active_profile
-    p = active_profile()
+    p = active_profile
     p.is_input_driven("sql_injection")      # True
     p.is_input_driven("weak_hash")          # False
-    p.external_input_re().search(src)       # 是否有读外部输入的 API
+    p.external_input_re.search(src)       # 是否有读外部输入的 API
 
 切换画像：`SAST_AI_STACK_PROFILE=spring` 或放 `config/stack_profiles/<name>.yaml`。
 缺省 `default` 画像只含**跨框架通用**的词汇，不含任何特定靶场/基准的东西。
@@ -61,7 +58,6 @@ _DEFAULT_EXTERNAL_INPUT: Tuple[str, ...] = (
 # ── 输入驱动族：漏洞成立需要「攻击者可控数据到达 sink」──────────────────
 # 反例（必须排除）：weak_hash / weak_crypto / weak_random / secure_cookie ——
 # 这类漏洞只看「用了什么 API / 算法」，输入是不是常量无所谓。
-# r60 实测：不加这个区分，通用判据会误杀 44 个 TP（TPR 降 3.11pp，超门限）。
 _INPUT_DRIVEN: Tuple[str, ...] = (
     "sql_injection", "sqli", "xss", "path_traversal", "command_execution", "cmdi",
     "code_injection", "ldap_injection", "ldapi", "xpathi", "xpath_injection",
@@ -70,7 +66,7 @@ _INPUT_DRIVEN: Tuple[str, ...] = (
     "http_response_splitting", "crlf", "csrf", "redirect",
 )
 
-# ── API 选择族：漏洞成立与输入取值无关（显式登记，缺省哨兵用）────────────
+# ── API 选择族：漏洞成立与输入取值无关────────────
 _API_CHOICE: Tuple[str, ...] = (
     "weak_hash", "weak_crypto", "weak_random", "secure_cookie",
     "weak_password_storage", "weak_password", "sensitive_data_leak",

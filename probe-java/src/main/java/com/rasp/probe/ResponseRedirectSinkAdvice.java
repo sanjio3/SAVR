@@ -11,11 +11,9 @@ import net.bytebuddy.asm.Advice;
  *   - HttpServletResponse.setHeader(String name, String value)
  *   - HttpServletResponse.addHeader(String name, String value)
  *
- * <p><b>2026-09-22 修正（原实现漏覆盖 CRLF / CORS 类响应头族）</b>：原实现对
  * setHeader/addHeader 加了「仅当 name==Location」的闸门，理由是「避免对所有响应头做无谓断言」。
  * 该闸门把整族「把用户可控值写进非 Location 响应头」的漏洞从 IAST 视野里剔除了，实测两处硬证据：
  *
- *   1. CRLF（java-sec-code <code>/crlf/safecode</code>）：端点实现是
  *      <code>response.addHeader("test1", request.getParameter("test1"))</code>；
  *      用带会话的 curl 回放，响应头确实出现 <code>test1: &lt;注入值&gt;</code>，
  *      但本 advice 因 name != Location 不断言 → 该 spec 永远 0 事件（no-arrival）。

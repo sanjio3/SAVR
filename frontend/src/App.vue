@@ -200,7 +200,6 @@ function connectTasksWs() {
   };
 }
 
-// 重连退避（2026-10-05）：原来是固定 3s，后端一旦真的挂掉（重启 / 沙箱回收 / OOM），
 // 前端就每 3 秒去撞一次门，每次都在 vite 的 /ws 代理上留一条 ECONNRESET，
 // 实测把 stack-frontend.log 刷到 2.4 万行 / 1.7MB，用户看到的现象就是「前端一直在崩」。
 // 改成指数退避（3s → 上限 30s），连接成功即归零：既止住刷屏，也避免后端刚起来时
@@ -275,7 +274,6 @@ const contextLabel = computed(() => {
     const task = allTasks.value.find((t) => t.id === taskId);
     if (task) return workspaceName(task.workspace_id) || `工作区 #${task.workspace_id}`;
   }
-  // 兜底改「全局视图」（2026-09-29）：「全部工作区」会被误读成一个名为「全部工作区」的工作区
   return "全局视图";
 });
 

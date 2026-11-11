@@ -1,6 +1,5 @@
 <script setup lang="ts">
 /**
- * 指标卡（批次 4，2026-09-22）。
  *
  * 背景：`<div class="stat-card"><span class="muted">标签</span><strong>值</strong></div>`
  * 这一形状在 10 个页面里内联出现了近百次。它本身没错，但每个页面各写一遍的结果是：

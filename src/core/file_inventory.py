@@ -48,7 +48,6 @@ DEFAULT_SKIP_DIRS: Set[str] = {
 DEFAULT_SKIP_PREFIXES: Sequence[str] = (
     ".d2-",
     # CodeQL 建库目录（.codeql-db）。建库时 CodeQL 会把源码复制一份进数据库目录，
-    # 若不排除，第二次扫描会把这份副本当成源码再扫一遍——实测 OWASP Benchmark 重扫时
     # SQL 注入 17→34、XXE 8→16、命令注入 8→16 全部精确翻倍，对账结果完全失真。
     ".codeql",
 )

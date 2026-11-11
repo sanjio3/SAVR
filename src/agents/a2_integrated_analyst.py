@@ -1,4 +1,4 @@
-"""A2 集成分析师（2026-10-21 重构）。
+"""A2 集成分析师。
 
 定位：把"审计 CodeQL 结果"和"构造 payload/spec"作为一个整体，一次 LLM 调用完成——
 给(源码 + 该文件的 A1 findings[含 sink 位置/族/净化器候选])，对每条 finding 输出
@@ -30,7 +30,6 @@ from src.agents.a2_output_schema import resolve_format_mode
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# C8 源语收口（2026-10-26）：A2 造不出弹时按族补一个「典型形态」攻击载荷
 # ─────────────────────────────────────────────────────────────────────────────
 # 背景：本轮 stderr 出现十几条
 #   「[A2->TriggerSpec] spec xxx 无真实 attack_payload（family=…）：
@@ -64,7 +63,6 @@ _FAMILY_SYNTH_PAYLOAD: Dict[str, str] = {
     "server_side_template_injection": "${7*7}",
     "ssrf": "http://127.0.0.1:9/sast-probe",
     "xxe": "<!DOCTYPE x [<!ENTITY x SYSTEM \"file:///etc/passwd\">]>&x;",
-    # 2026-11-02 补：这几族原来**不在模板表里**，A2 一留空就永远没有载荷。
     # 实测 本轮 deserialization 18 条 spec 全空、log_injection 11 条只有 1 条有弹。
     # 注意形态必须与族匹配（下面每条都是该族的真实可用形态，不是占位串）：
     #   deserialization → snakeyaml 的 tag 形态（文本通道可投；二进制 gadget 走 ysoserial，默认关）
@@ -121,7 +119,6 @@ def _is_high_risk_family(family: Any) -> bool:
 def synthesize_payload(family: str, spec: Dict[str, Any]) -> Tuple[bool, str]:
     """A2 没造出真 payload 时，按族补载荷。返回 (是否补了, 首个载荷)。
 
-    ## 2026-11-02 实杀：这里原来有两个错，导致「合成了但没人用」
 
     1. **写错位置**：原实现 `spec["payload"] = tpl` 写的是**字符串**，而消费方
        `attack_context.select_attack_payloads` 读的是
@@ -130,7 +127,6 @@ def synthesize_payload(family: str, spec: Dict[str, Any]) -> Tuple[bool, str]:
        实测 本轮 156 条 spec 里只有 25 条有 payload（16%），
        而库里 `payload_synthesized` 标记**一条都没有**——合成等于没发生。
     2. **族覆盖不全**：`_FAMILY_SYNTH_PAYLOAD` 只有 14 个族，
-       **`deserialization` 不在里面**（jsc 里 18 条 deser spec 全空），
        csrf / jsonp / cors / url_redirect / log_injection / jndi 也都缺。
 
     现在的做法：先查族模板，再问**族载荷库**（`payload_library.build_family_payloads`，
@@ -221,7 +217,6 @@ DEFAULT_MODEL = os.environ.get("SAST_AI_LLM_MODEL", "qwen3:8b")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# A2 原生 Ollama 传输层健壮性（2026-11-07，L1b 掉点根因修复）
 # ─────────────────────────────────────────────────────────────────────────────
 # 背景：本轮（L1b）重放 19/24，比历史 632 掉 2 个真值点。逐文件核对后，
 # 掉点文件在 A2 阶段都出现了 socket 读超时。链路是：
@@ -241,7 +236,6 @@ DEFAULT_MODEL = os.environ.get("SAST_AI_LLM_MODEL", "qwen3:8b")
 #   3. 连续多轮重试耗尽即熔断，让整轮快速失败，而不是慢慢产出 95 个空文件；
 #   4. 全链路埋点，闸门能直接读到「本轮超时/重试/熔断次数」。
 #
-# ── 2026-11-08 复核纠正（，本轮实测）────────────────────────────
 # 上面第 2 条把 socket 读超时当成「可重试的传输抖动」，是错的。真根因是
 # `stream:False` + `format:json` grammar 下 qwen3:8b 偶发不产 EOS，而 options
 # 里没有 num_predict ⇒ 生成无限延伸到 num_ctx(8192) 耗尽 ⇒ 服务端一直不返回
@@ -250,7 +244,7 @@ DEFAULT_MODEL = os.environ.get("SAST_AI_LLM_MODEL", "qwen3:8b")
 # 636 实测 3 组超时（00:30/00:35、01:02/01:08、01:14/01:19），重发同一 prompt
 # 全部再次超时，6 次重试零收益，单个卡住文件被拉长到 15 分钟以上，A2 跑 58
 # 分钟只到 48/95，且 exhausted!=0 按 Gate 0 本轮无效。
-# 正确修法（本次落地）：
+# 正确修法：
 #   1. options 增加 num_predict 上限（默认 1024，历史输出 P100=485 的 2 倍余量），
 #      从服务端硬截断生成；真实冒烟 256 上限 5.85s 返回 done_reason=length。
 #   2. socket 读超时判定为「生成超时」，不重试；只对连接类异常做有限重试，
@@ -291,7 +285,7 @@ def llm_num_predict_default() -> int:
 
     历史 A2 输出 P100 = 485 token（本轮/635 共 191 次调用，最大延迟 18.4s），
     1024 留约 2 倍余量，正常输出完全不受影响。用于防止 grammar 约束下模型不产
-    EOS 时无限生成到 num_ctx 耗尽、服务端永不返回（本轮实测根因）。
+    EOS 时无限生成到 num_ctx 耗尽、服务端永不返回。
     """
     return int(_env_float("SAST_AI_A2_LLM_NUM_PREDICT", 1024.0, 128.0, 8192.0))
 
@@ -299,15 +293,12 @@ def llm_num_predict_default() -> int:
 def prompt_token_budget() -> int:
     """单次 prompt 的 token 预算（默认 7000），低于 num_ctx=8192 以给输出留位。
 
-    2026-11-08（，L2 本轮实测）：`_user_prompt` 把整份源码拼进去，没有任何
     token 预算。Ollama 在 `num_ctx=8192` 下超限直接 400：
         request (9486 tokens) exceeds the available context size (8192 tokens)
     26KB 的 HTML 就 9,486 token（HTML/JS/SQL token 密度远高于 Java），于是 10 个
     大文件在调用前就失败、被记成 file_failures，看起来像「LLM 不可用」。
 
-    预算取 7000 的依据：jsc 原靶场 92 个可分析文件用同一 `_user_prompt` 估算，
     最大是 XXE.java 6,361（`len(prompt)//3`），无一超过 6,500 ⇒ 预算 7000 时
-    jsc 的 prompt **逐字节不变**，L1/L3 的历史读数仍是当前代码的有效测量。
     """
     return int(_env_float("SAST_AI_A2_PROMPT_TOKENS", 7000.0, 2000.0, 7900.0))
 
@@ -321,7 +312,6 @@ def _is_context_overflow(exc: BaseException) -> bool:
     """服务端 400 且原因是「request 超 num_ctx」——估算偏差时的兜底信号。
 
     `_est_tokens` 是 len//3 的粗估；HTML/SQL 实测可能到 2.5 字符/token，
-    于是出现「估算 7000 实际 8400」的情况（L2 本轮的 sql/ruoyi.html）。
     这种情况不能直接判文件失败，应当缩小预算重裁。
     """
     if getattr(exc, "code", None) != 400:
@@ -361,7 +351,7 @@ def _trim_code_to_budget(code: str, findings: List[Dict[str, Any]],
                          budget_chars: int) -> str:
     """按「文件头 + 每条疑点行邻域」开窗裁剪源码，保留可判读的最小上下文。
 
-    只在 prompt 估算超预算时调用；不在预算内时 `analyze()` 不会走到这里，
+    只在 prompt 估算超预算时调用；不在预算内时 `analyze` 不会走到这里，
     因此小文件的 prompt 与历史完全一致。
     """
     lines = (code or "").splitlines()
@@ -440,7 +430,7 @@ def is_generation_timeout(exc: BaseException) -> bool:
     """socket 读超时 = 服务端未在阈值内结束生成（非流式 /api/chat 特有语义）。
 
     这类失败重发同一 prompt 不会更快，反而可能与客户端断开后仍在运行的旧请求
-    抢 GPU（本轮实测 6 次重试全部再次超时）。因此单独识别、不重试。
+    抢 GPU。因此单独识别、不重试。
     """
     if isinstance(exc, (socket.timeout, TimeoutError)):
         return True
@@ -468,7 +458,6 @@ def is_retryable_transport_error(exc: BaseException) -> bool:
                                       "broken pipe"))
     return False
 
-# 2026-10-25（20.3.1，decode 优化）：A2 输出契约档位。
 #
 # 实测结论（tools/_wb_ab_trim_contract.py，15 个真实 benchmark 文件 A/B）：
 #   FULL（保留全部审计字段）  100.3s  real 集合与真值基线一致
@@ -510,11 +499,8 @@ def _family_hint(family: str) -> str:
     if "random" in f:
         return "【弱随机判据】用 java.util.Random 生成安全用途=real；SecureRandom=false_positive。"
     if "sql" in f:
-        # 2026-10-23（两次实测校正，务必保留这段措辞）：
-        # ① run 453 的 BenchmarkTest00110：`statement.execute(sql, new String[]{"username","password"})`
         #    里的 String[] 是「返回自增列名」，**不是绑定参数**；该用例安全是因为拼接进 SQL 的 bar
         #    源自常量（`String g = "barbarians_at_the_gate"`），污点流已断，不是"参数化"。
-        # ② run 454 的 BenchmarkTest01002/01003/01004（真 sqli）：SQL 文本是
         #    `"select ... PASSWORD='" + bar + "'"` 拼接，bar 源自 cookie；虽然后面用了
         #    prepareStatement + setString(1,"foo")，但注入发生在 SQL 文本构造阶段 ⇒ 仍是 real。
         #    ⇒ 只看「有没有 prepareStatement / 有没有 setString」会误杀，必须看 SQL 文本怎么拼。
@@ -536,12 +522,10 @@ def _family_hint(family: str) -> str:
 def _output_contract(include_vuln_type: bool = False) -> str:
     """A2 的 JSON 输出契约（按 SAST_AI_A2_CONTRACT 档位切换）。
 
-    档位（2026-10-25 A/B 实测结论，见模块顶部注释）：
       full（默认）= 旧契约，判定质量基线。
       safe        = 只砍 content_type（恒为空串，零影响）+ reason 限长 60 字。
       lean        = 激进裁剪，**已否决**（掉 TP），仅保留用于复现实验。
 
-    ``include_vuln_type``（2026-10-30，java-sec-code 实测）：**只在文件没有 A1 锚点时**要求
     模型输出族名。根因：A2 契约原本不含「漏洞类型」，族只能从 A1 finding 继承；A1（CodeQL）
     没有对应规则的文件（Velocity SSTI / QLExpress / CORS / JSONP 等）就只能落成 `type=unknown`，
     下游既无法分族也无法做族级门禁。Benchmark 每条 finding 都有 A1 族，故该字段默认不加——
@@ -575,7 +559,7 @@ def _output_contract(include_vuln_type: bool = False) -> str:
             "}"
         )
     if SAST_AI_A2_CONTRACT == "safe":
-        # 只砍 content_type（实测恒为空串，零影响）；snippet 与两个长文本**全部保留**
+        # 只砍 content_type；snippet 与两个长文本**全部保留**
         # （它们影响 strength 判定，见上方教训）。
         return (
             "{\n"
@@ -636,7 +620,6 @@ def _user_prompt(code: str, filename: str, findings: List[Dict[str, Any]],
     flist = "\n".join(lines) if lines else "  (未给出具体 sink 行，请你从源码中定位可疑点)"
     hints = "\n".join(sorted({h for h in (_family_hint(f.get("family", "")) for f in findings) if h}))
     if not hints:
-        # 2026-10-24：文件没有 A1 告警（family 为 "?" 或空）时，按族给的判据全都不生效，
         # 模型只能自由发挥——实测会把参数化的 sqli（01002）判成 false_positive。
         # 这里退化为「全族判据」都给它，等于把专家 checklist 摆在面前，而不是凭感觉。
         _fams = ("sql_injection", "xss", "path_traversal", "command_execution",
@@ -644,7 +627,6 @@ def _user_prompt(code: str, filename: str, findings: List[Dict[str, Any]],
         hints = "\n".join(dict.fromkeys(h for h in (_family_hint(x) for x in _fams) if h))
     hint_block = ("判据提示(按族)：\n" + hints + "\n") if hints else ""
     extra = ("\n跨文件相关片段(污点源/净化器等)：\n" + extra_context + "\n") if extra_context else ""
-    # 2026-10-25（plan §19.1 / 20.4.1，状态外置）：历史探索摘要（pending/ineffective 动作名）
     # 由 replay_intents 表生成后注入。默认空串 → 不追加任何提示，对常规路径零影响。
     intent_block = (
         "\n【历史探索摘要（状态外置，仅供参考，勿重复已试无效打法）】\n" + intent_hints + "\n"
@@ -659,7 +641,6 @@ def _user_prompt(code: str, filename: str, findings: List[Dict[str, Any]],
             "注意：即使你判定为 false_positive，也请尽量给出 spec.route 与 spec.param_name"
             "（payload 可留空），我们会登记一条 canary 探针做运行时复核。\n"
         )
-    # 2026-10-30：无 A1 锚点的文件要求模型同时给出族名（否则下游只能落 type=unknown）。
     _need_vt = not findings
     _vt_help = (
         "vuln_type 只能从下面这份族清单里选一个（原样输出英文键名）：\n"
@@ -706,7 +687,6 @@ def _user_prompt(code: str, filename: str, findings: List[Dict[str, Any]],
 def _extract_json(text: str):
     """从模型输出里抽出**最外层**的 JSON 值（对象或数组）。
 
-    2026-10-24（format=json 适配）：旧实现用正则 `\\[[\\s\\S]*\\]` 找数组，遇到
     format=json 的单对象输出会先命中**内层**的 bypass_payloads 数组（`["a","b"]`），
     解析出一堆字符串 ⇒ 契约校验失败 ⇒ 误判 parse_error。改为：
     1) 去掉 markdown 代码围栏后先整体 json.loads；
@@ -770,7 +750,6 @@ def _parse_json_array(text: str) -> List[Dict[str, Any]]:
 def _validate_specs(specs) -> str:
     """校验 A2 输出契约。返回问题描述（空串=通过）。
 
-    2026-10-24（契约加固）：此前只做 `_parse_json_array` 抽 JSON，抽不到就 parse_error、
     抽到了也不校验字段——8B 模型经常把 verdict 填反（01002 案例：verdict=false_positive
     但 reason 与 spec 都说有注入），只能靠调用侧打补丁。这里把契约前移到模型侧：
     校验失败 → 带错误回灌重试一次，从源头减少脏输出。
@@ -817,12 +796,10 @@ def ollama_chat(messages: List[Dict[str, str]], model: str = DEFAULT_MODEL,
                 timeout: Optional[float] = None, format_mode: str = "json") -> str:
     if timeout is None:
         timeout = llm_timeout_default()
-    # 2026-10-22（关键性能修复）：此前请求体没带 think，qwen3:8b 默认开思维链，
     # 单文件实测 25~78s（think 全用在推理上、最后还被剥掉）。显式 think=false 后
     # 同样输入 2.0~2.6s（**10~30 倍**），输出长度一致（146 字符）。config.yaml 的
     # ollama.think=false 早已写明「关思考命中 4/4、开思考 0~3/4」，本模块之前没接。
     _think = str(os.environ.get("SAST_AI_LLM_THINK", "0")).strip().lower() in ("1", "true", "yes")
-    # 2026-10-23（A2 方差治理）：run 446/452/453 的 A2 判 real 数为 79/110/89，波动 ±3 个 TP 用例
     # （453 的 01002/01003/01004 就是本轮被判 false_positive 直接整例漏掉）。
     # 采样温度降到 0 + 固定 seed，把「同一份代码两次跑结论不同」的概率压到最低。
     # 需要 A/B 对照时可用 SAST_AI_LLM_TEMPERATURE 覆盖。
@@ -833,20 +810,16 @@ def ollama_chat(messages: List[Dict[str, str]], model: str = DEFAULT_MODEL,
     _body = {
         "model": model, "messages": messages, "stream": False,
         "think": _think,
-        # 2026-10-23：显式 keep_alive，避免服务端默认 Forever 把 qwen3:8b 永久钉在显存/内存里。
         # 实测（/api/ps）曾出现 expires_at=2319 的永久驻留：A2 结束后模型不卸载，
         # 下一片 A1 的 CodeQL（~4GB heap）与它抢 Commit/VRAM，导致 CodeQL 变慢甚至 OOM。
         # 取 2m：同片内 A2 连续调用间隔远小于 2 分钟（保持热），跨阶段则自动释放。
         "keep_alive": os.environ.get("SAST_AI_LLM_KEEP_ALIVE", "2m"),
-        # 2026-11-08：给生成长度加硬上限，见本文件顶部复核纠正说明。
         "options": {"temperature": _temp, "num_ctx": 8192, "seed": 42,
                     "num_predict": llm_num_predict_default()},
     }
-    # 2026-10-24（契约加固）：强制 JSON 输出（Ollama format=json 走语法约束解码，
     # 从源头消除「散文包 JSON / 少括号」导致的 parse_error）。
     # SAST_AI_LLM_FORMAT_JSON=0 可关闭（A/B 对照用）。注意：只在开启时才写该字段，
     # 传 null 会被服务端拒绝。
-    # 2026-10-25（plan §20.3.3 约束解码）：format_mode=schema 时改用 A2 专用 JSON Schema
     # （llama.cpp grammar 约束），从语法层保证输出合规 ⇒ 消灭「格式幻觉 → 回退重试」
     # 这条最贵的浪费。默认仍是 json（历史行为不变）。
     _fmt = resolve_format_mode(format_mode)
@@ -908,7 +881,6 @@ def ollama_chat(messages: List[Dict[str, str]], model: str = DEFAULT_MODEL,
             "[integrated-a2][transport] 生成被 num_predict 截断（eval_count=%s），输出可能不完整",
             d.get("eval_count"))
     wall = time.time() - t0
-    # 2026-10-25（20.3.4 埋点）：Ollama 原生端点不给 usage，但给
     # prompt_eval_count / eval_count / prompt_eval_duration / eval_duration。
     # 这四个数是 prefill/decode 成本的真值来源——没有它们，20.3 的任何优化都是猜。
     # 之前这里只取 message.content，把计数全丢了 ⇒ 无法回答「prefill 占多少」。
@@ -922,7 +894,6 @@ def ollama_chat(messages: List[Dict[str, str]], model: str = DEFAULT_MODEL,
     _LOG_STATS.append(_stats)
     _dump_llm_stats(_stats)
     _content = (d.get("message") or {}).get("content", "")
-    # 2026-10-28（P2-1）：补 model_runs 台账。A2 集成分析师走本函数直连 Ollama、不经
     # ModelGateway ⇒ model_runs 自 10-21 起断更，按 task 查 LLM 调用数恒为 0。
     # 复用 ModelRunRepository.record，task_id 由 SAST_AI_CURRENT_TASK_ID 自动归因。
     # fail-open：埋点失败绝不影响主流程。
@@ -997,10 +968,8 @@ def contract_stats() -> Dict[str, Any]:
         # C7 召回兜底：高危族全否触发的复核次数 / 复核后拿到 real 的次数
         "highrisk_retried": int(_CONTRACT_STATS.get("highrisk_retried") or 0),
         "highrisk_recovered": int(_CONTRACT_STATS.get("highrisk_recovered") or 0),
-        # 2026-11-08：prompt 超 num_ctx 被开窗裁剪的文件数。只可观测，
         # 不作硬条件（裁剪后仍走完整 A2 分析，不是跳过文件）。
         "code_trimmed": int(_CONTRACT_STATS.get("code_trimmed") or 0),
-        # 2026-11-07：传输层稳定性读数。发布闸门要求 transport.exhausted == 0，
         # 否则说明本轮有文件因 LLM 不可用被跳过，重放数字不可信。
         "transport": transport_stats(),
     }
@@ -1013,11 +982,9 @@ class IntegratedAnalyst:
                  model: str = DEFAULT_MODEL, timeout: Optional[float] = None,
                  format_mode: str = ""):
         self._model = model
-        # 2026-11-07：180s 硬编码是 L1b 掉点的直接原因。默认改由
         # SAST_AI_A2_LLM_TIMEOUT 控制（默认 300，与 a2_ai_agent 对齐）；
         # 调用方显式传值仍优先，保持既有测试/调用兼容。
         self._timeout = float(timeout) if timeout is not None else llm_timeout_default()
-        # 2026-10-25（plan §20.3.3）：format_mode 三档 json/schema/off。
         # schema = 用 A2 专用 JSON Schema 做 grammar 约束解码（消灭回退重试）。
         _fm = resolve_format_mode(format_mode or os.environ.get("SAST_AI_LLM_FORMAT", "json"))
         self._format_mode = _fm
@@ -1036,8 +1003,6 @@ class IntegratedAnalyst:
         if not findings:
             findings = [{"line": 0, "family": "?", "note": "请通读源码定位可疑 sink"}]
         _t_start = time.time()
-        # 2026-11-08：prompt 超 num_ctx 会被 Ollama 400 直接拒掉，历史上被记成
-        # file_failures。预算内（jsc 全部文件）走原路径，prompt 逐字节不变。
         _budget = prompt_token_budget()
         prompt, _used_code = _fit_prompt(code, filename, findings, extra_context,
                                          intent_hints, _budget)
@@ -1052,7 +1017,7 @@ class IntegratedAnalyst:
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": prompt},
         ]
-        # 估算偏乐观时（实测 HTML/SQL 可到 2.5 字符/token），服务端会 400。
+        # 估算偏乐观时，服务端会 400。
         # 收到明确的「request 超出 num_ctx」就砍半预算重裁，最多两次，别让一个文件
         # 白白记成 file_failure。
         for _try in range(3):
@@ -1076,7 +1041,6 @@ class IntegratedAnalyst:
                 logger.warning(
                     "[integrated-a2] %s 服务端判超上下文，预算降到 %d 重裁 %d→%d 字符",
                     filename, _budget, len(code), len(_used_code))
-        # 2026-10-27（P2 方差归因）：A2 阶段此前无逐文件耗时/输出规模埋点，
         # 1632~3885s 的方差无法归因（429 仅 1~4 次/小时，非主因）。
         # 这里记录「单文件耗时 + 输出字符数 + 输入规模」，供后续按轮次聚合分析：
         # 若耗时随输出字符线性增长 ⇒ decode 主导（符合已知 30~36 tok/s）；
@@ -1093,7 +1057,6 @@ class IntegratedAnalyst:
         if not _problem:
             _CONTRACT_STATS["first_pass"] = int(_CONTRACT_STATS.get("first_pass") or 0) + 1
         if _problem:
-            # 契约加固（2026-10-24）：校验失败不直接放弃，把错误回灌让模型自纠一次。
             # 只重试一次——重试成本是单文件 2 倍，不能无限重试拖垮整片。
             logger.info("[integrated-a2] 输出契约校验失败（%s），带错误回灌重试一次", _problem[:120])
             repair = msgs + [
@@ -1148,8 +1111,7 @@ class IntegratedAnalyst:
                         _fam = str(_f.get("family") or "")
                         break
             if not _fam:
-                # 2026-11-03 实杀：**这条兜底缺失导致整块合成静默失效**。
-                # `exploit_spec` 契约里没有 `family` 字段（实测全是 None），
+                # `exploit_spec` 契约里没有 `family` 字段，
                 # 按 line 回查 findings 也常对不上 ⇒ `_fam` 为空 ⇒ synthesize_payload
                 # 立刻 return False ⇒ 165 条 spec 里只有 24 条有载荷（15%），
                 # deserialization 0/18、csrf 0/11 全空。
@@ -1169,12 +1131,9 @@ class IntegratedAnalyst:
                 int(_CONTRACT_STATS.get("synthesized_payloads") or 0) + _synth_n)
             logger.info("[integrated-a2] C8 源语收口：为 %d 条 real spec 合成族典型载荷", _synth_n)
 
-        # ── C7 召回兜底（2026-10-26）：高危族全否 ⇒ 确定性再问一次 ──────────────
-        # 背景：run 472 丢了 1 条真 TP（BenchmarkTest01003，真值 sqli=true）。追查发现
         #   471 里它也是 A2 判出来的（findings.sources=['A2']），A1/CodeQL 从未检出；
         #   472 这次 A2 把它判成了非漏洞 ⇒ 整条链路上它就没了。
         #   即：这条 TP 的存亡**完全取决于 LLM 单次判定**，而 A2 的判定方差是已知的
-        #   （本文件既有注释：run 446/452/453 判 real 数 79/110/89，波动 ±3）。
         #
         # 为什么是「确定性触发」而不是「按概率卡阈值」：
         #   20.2.2 校准结论禁止按概率/严重度开闸门（那类闸门会误杀 TP）。这里的触发条件是
@@ -1246,7 +1205,7 @@ class IntegratedAnalyst:
         """两段式（Jev 理念第一阶段）：先原语判别，高置信判否的 finding 早停，不生成 spec。
 
         返回 (specs, stats)：
-          specs  与 analyze() 同结构，顺序与原 findings 对齐（早停项为
+          specs  与 analyze 同结构，顺序与原 findings 对齐（早停项为
                  {"line":..,"verdict":"false_positive","reason":"primitives 高置信判否...",
                   "spec":None,"primitives":{...}}）；
           stats  {"total":N,"early_stopped":M,"generated":K,"by_reason":{...}} 供审计。

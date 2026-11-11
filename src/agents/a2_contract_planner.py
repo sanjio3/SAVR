@@ -23,7 +23,6 @@ from src.core.path_norm import match_path_key
 
 logger = logging.getLogger(__name__)
 
-# POC 契约生成长度上限（token）。2026-09-14 更换 agnes-3.0-flash（更快，16-41 token/s）后，
 # 单份契约实测约 110 token（小样例 3.7s），真实契约约 1100 token。原 4096 上限会让旧模型
 # 单条最长约 290s；现下调到 1024：足够覆盖真实契约输出，同时把最坏生成时间压到约 60s 内，
 # 与 a2_ai_agent.LLM_READ_TIMEOUT（默认 60）匹配。可用 SASTAI_A2_PLANNER_MAX_TOKENS 覆盖。
@@ -54,7 +53,6 @@ class A2ContractPlanner:
         planned: List[ScanResult] = []
         by_file = (a1_evidence_index or {}).get("by_file", {}) or {}
         aggregate = (a1_evidence_index or {}).get("aggregate", {}) or {}
-        # 2026-09-16（#40 修正）：a2_poc 进度改为**全局累计**。原把 on_progress 直接透传给
         # _plan_vulns_concurrent，其 total 是「单个 result（文件）内的漏洞数」，每处理完一个文件
         # done/total 就重置 → 前端读数在 3/3、1/2 之间跳变，与 stage_results 的全局 0/179 自相矛盾。
         _total_all = sum(len(getattr(r, "vulnerabilities", []) or []) for r in results)
@@ -78,7 +76,7 @@ class A2ContractPlanner:
             # 每个漏洞的 plan_vulnerability 仅读写各自 vuln 对象，llm_client 只读、
             # 每次调用独立 requests.post（无共享可变状态）→ 可安全并发，消除逐漏洞串行 LLM 瓶颈。
             # §路径归一修复：同 a2/service.scan_files —— by_file 的 key 是 A1 侧路径形态
-            # （绝对路径），result.file 是 A2 侧（相对路径），直接 .get() 恒 miss，
+            # （绝对路径），result.file 是 A2 侧（相对路径），直接 .get 恒 miss，
             # 导致 POC 规划阶段同样拿不到 per-file 的 A1 证据，只能吃 aggregate。
             evi = match_path_key(getattr(result, "file", "") or "", by_file, aggregate)
             planned_vulns = self._plan_vulns_concurrent(vulns, evi, code_root=code_root, code_index=code_index, on_progress=_on_progress_global)
@@ -105,7 +103,6 @@ class A2ContractPlanner:
                     except Exception:
                         pass
             return _out
-        # #② a2_poc 并行化（2026-09-26 落地）：A2 PoC 生成早已走 ThreadPoolExecutor，
         # 原默认 10 / 硬上限 16 偏保守。改为 env 可调：SASTAI_A2_PLANNER_WORKERS 默认 16、
         # SASTAI_A2_PLANNER_MAX_WORKERS 默认 32（受 Ollama NUM_PARALLEL 与 Windows 虚拟提交上限约束，
         # 实际并发由 Ollama 排队，超发不报错只排队）。**全族保留 PoC**——不跳过静态已确认族的 PoC。
@@ -136,7 +133,6 @@ class A2ContractPlanner:
                         getattr(vulns[idx], "type", ""), _e,
                     )
                     out[idx] = vulns[idx]
-                # 2026-09-16（待请示 6 项 #5）：每完成一条漏洞 POC 规划发心跳，前端可见
                 # a2_poc 真实进度（本轮 33.9 分钟）。on_progress 默认 None，调用吞异常。
                 _done += 1
                 if on_progress is not None:
@@ -232,7 +228,6 @@ class A2ContractPlanner:
             _entry["parameter_location"] = str(_res.get("param_location") or _entry.get("param_location") or "query")
             _entry["resolved_by"] = str(_res.get("param_name_source") or "source")
         enriched_spec = attach_contract_execution_metadata(enriched_spec)
-        # 反序列化族 poc_chain 兜底（2026-09-28 落地，第三层配套）：
         # LLM 产链时经常漏掉 ObjectInputStream 节点、或把 sink 写成业务方法名，
         # 导致 I1 逐节点比对无节点可匹配，链路判据形同虚设（该族 canary 通道又结构性失效，
         # 结果是「能报不能证」）。族命中且链缺失/不完整时，用确定性模板补齐。
@@ -428,7 +423,6 @@ class A2ContractPlanner:
     def _parse_llm_poc_json(text: str) -> Optional[Dict]:
         if not text:
             return None
-        # 2026-09-19（P0-2）：统一走 llm_output 多级降级链（字符串感知配平 / 截断修复 /
         # 数组抢救），替代原本的括号配平写法——原本不感知字符串内的括号，且截断即整段丢弃。
         # 这里期望拿到单个对象（一个 exploit_spec），故 expect="object"。
         try:
@@ -442,8 +436,7 @@ class A2ContractPlanner:
                 diag.strategy, diag.truncated, diag.repaired, diag.error, (text or "")[:200],
             )
             return None
-        # 模式守卫（2026-09-19）：只判 `isinstance(dict)` 不够。返回文本里若含未转义引号，
-        # 片段定位可能只框到内层子对象（实测 {"is_exploitable":..,"confidence":..,"rationale":..}），
+        # 片段定位可能只框到内层子对象，
         # 那也是个合法 dict → 会被当成「LLM 生成的 POC」接受，但归一化后 payload 全空，
         # 上层却打日志说「采用 LLM 生成 POC」——LLM 产出被静默丢弃。
         # 故要求至少命中一个 POC schema 键，否则显式判失败、走规则式兜底并留证。
@@ -537,7 +530,6 @@ class A2ContractPlanner:
 
     def _backfill_proof_tier(self, vuln: Vulnerability, exploit_spec: Dict) -> Tuple[str, Dict]:
         incoming_proof = normalize_chain_proof(getattr(vuln, "chain_proof", None) or empty_chain_proof())
-        # 2026-09-18（A2 方案二）：聚合吸收成员不参与 chain_proven 派生。
         # proof_tier=chain_proven 会被 report_manager.is_mainline_d2_item 直接放进 D2 主链，
         # 与上面的 _score_candidate 硬闸配套，保证补行的 D2 语义只有「不验证」一种。
         if getattr(vuln, "is_absorbed", False):
@@ -595,7 +587,6 @@ class A2ContractPlanner:
 
     def _score_candidate(self, vuln: Vulnerability, exploit_spec: Dict) -> Tuple[int, bool, str]:
         proof_tier = str(getattr(vuln, "proof_tier", "broad_static") or "broad_static")
-        # 硬门禁（2026-09-18，A2 方案二）：聚合吸收成员补行只用于恢复覆盖率统计与关联桥，
         # 它本身没有独立的可达入口证明 —— 其证据已并入所属聚合 finding。若放它进 D2，
         # 会与 canonical 争同一 canonical_group_key 的重放名额（d2_verification 按该键建
         # trigger_spec），既浪费墙钟时间又可能覆盖 canonical 的验证结论。故直接拦在门外。
@@ -1088,10 +1079,8 @@ class A2ContractPlanner:
             entry["route"] = nearest_entry_route
         # 从 A2 静态证据里恢复参数名，避免 plan_pocs 后 parameter_name 为空导致
         # TriggerSpec 登记被 auto_register 跳过（D1 无靶可打）。
-        # Q3：不再用 guess_parameter_name 正则猜测；优先采用 A1 静态证据给出的源参数名
         # （proof_summary.nearest_source_name），否则留空，由 A2→TriggerSpec 登记阶段结合
         # entry_discovery 真实路由与源码注解精确解析，避免注入到应用不读取的位置。
-        # 注：原「探针实观测请求面（iast_request_params）」一档已于 2026-09-01 移除
         # （探针从不发送 request_observed，该档恒为空）。
         if payload.get("payload_family") in {
             "template-injection", "command-execution", "ssrf", "sql-injection",

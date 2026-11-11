@@ -48,22 +48,19 @@ class ScanTaskCreate(BaseModel):
     model_profile: str = "default"
     prompt_version: str = "terminal-first-v1"
     # auto = 跑所有可用扫描器（osv-scanner/trivy/grype）并做跨工具交叉验证；
-    # 单工具时 cross_validated 恒 False，交叉验证形同虚设（Q1）。
+    # 单工具时 cross_validated 恒 False，交叉验证形同虚设。
     sca_tool: str = "auto"
     sca_severity_threshold: str = "LOW"
     sca_ignore_unfixed: bool = False
-    # 2026-09-20：LLM 扫描强度覆盖（**仅作用于本任务**）。
     # 作用域是「提交单个扫描任务时覆盖全局默认」，因为平台是多任务并发的，
     # 改全局配置会影响同时在跑的其它任务。留空 = 完全用服务端 config.yaml 的默认值。
     # 允许键见 src/cli/benchmark_cli.py::_apply_llm_overrides（未知键忽略并记日志）。
     llm_overrides: Dict[str, Any] = Field(default_factory=dict)
-    # 2026-10-03（分片作用域）：全集靶场（如 OWASP Benchmark v1.2 的 2740 用例）按片扫描的分片清单路径。
     # 必须在此显式声明：BaseModel 会把未声明的入参键静默丢弃（extra=ignore），
     # 结果就是 options.shard_file 恒空、扫描退化为全量，且**没有任何报错**。
     shard_file: str = ""
-    # 2026-11-06：任务级环境开关必须在此显式声明。Pydantic 默认 extra=ignore，
-    # 未声明的键会在 model_dump() 时被静默丢弃 —— REST 提交的 run_env 因此全部丢失
-    # （实测 本轮/ 630 的 options_json.run_env 都是 null），后果是 D1 请求 dump
+    # 未声明的键会在 model_dump 时被静默丢弃 —— REST 提交的 run_env 因此全部丢失
+    # 后果是 D1 请求 dump
     # 不落盘、ysoserial / Shiro key 等按次能力开关整轮失效，而 628 走本地直提通道
     # 直接写库所以带着五项 run_env。同一个坑此前已在 shard_file 上踩过一次。
     run_env: Dict[str, Any] = Field(default_factory=dict)
@@ -103,7 +100,6 @@ class FindingResponse(BaseModel):
     title: str
     raw: Dict[str, Any]
     created_at: str
-    # 2026-09-15 item 3：SCA 命名空间从 finding_type 剥离。组件名/编号独立成列，
     # SCA 行可据此展示组件与编号（finding_type 仅留族名 "sca"）。非 SCA 行恒为空串。
     sca_component: str = ""
     sca_advisory_id: str = ""

@@ -10,7 +10,6 @@ public final class SecurityEvent {
     private final String sink;
     private final String payload;
     private final Map<String, Object> context;
-    // 2026-09-15 item 5：sink 现场补充方法级身份与完整调用栈，
     // 后端据此回填 iast_events.sink_method / stack_trace（此前恒空，归因精度不足）。
     private final String sinkMethod;
     private final String stackTrace;

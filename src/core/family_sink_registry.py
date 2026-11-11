@@ -1,11 +1,10 @@
-"""族 ⇄ sink 证据注册表（，2026-09-29 落地）。
+"""族 ⇄ sink 证据注册表。
 
 用途：用运行时探针捕获到的 sink 反查族名，纠正上游（A2 LLM 自由命名 / A1 规则映射）的
 定族错误，并给出「族-证据一致性校验」的观测面。
 
-实证依据（run 32 全量 205 用例，族 × sink 交叉统计）：
   - 平台族名与 OWASP 真值族名一致率仅 64.6%（124/192 用例）。错不在归一层
-    （normalize_family 实测健全），而在**上游定族**：21 条 hash/crypto/weakrand 被 LLM
+    ，而在**上游定族**：21 条 hash/crypto/weakrand 被 LLM
     错叫成 sensitive_data_exposure，9 条被叫成 weak_password_storage，15 条 xpathi /
     ldapi / trustbound 被套成 path_traversal。
   - 但 sink 不能无脑当判据：Counter 显示 ``Cookie.setHttpOnly`` 横跨 20+ 族、
@@ -58,10 +57,8 @@ FAMILY_EXCLUSIVE_SINKS: Dict[str, Tuple[str, ...]] = {
         ".addBatch",
         ".createStatement",
     ),
-    # jndi 协议组（P2，2026-09-29）：jndi_injection / rmi / ldap_injection / ldapi
     # 共用同一套 naming sink 元组——探针侧 InitialContext.lookup / DirContext.search
     # 事件对这四族是同构证据。此前 A2 产出族名是 jndi_injection / rmi，而表里只有
-    # ldap_injection 条目，sink_hits_for 未知族返回空 → 校验被跳过（run 38 实证）。
     "jndi_injection": (
         "javax.naming.directory.DirContext.search",
         "javax.naming.InitialContext.lookup",
@@ -73,7 +70,6 @@ FAMILY_EXCLUSIVE_SINKS: Dict[str, Tuple[str, ...]] = {
         "javax.xml.xpath.XPathExpression.evaluate",
     ),
     # 刻意不收 ``javax.servlet.http.Cookie.setSecure/setHttpOnly``：它们确实是 secure_cookie
-    # 族的真 sink，但 run 32 实测横跨 20+ 族（BenchmarkTest 每个用例都写 cookie），
     # 收进来会把 weak_password_storage / sensitive_data_exposure 这类泛化族统统改判成
     # secure_cookie，误杀面大于收益。宁可漏改，不可错改。
 }
@@ -93,7 +89,6 @@ def _norm(v: Any) -> str:
     return str(v or "").strip().lower()
 
 
-# —— 族归组（P2，2026-09-29）——
 # jndi 协议族共用同一套 naming sink 证据：family_sink_registry 是唯一归组入口，
 # attack_context._payload_check_group 反向 import 本函数，禁止各自另立映射。
 FAMILY_GROUP: Dict[str, str] = {
@@ -127,7 +122,7 @@ def sink_hits_for(family: str, sinks: Sequence[str]) -> List[str]:
             continue
         for n in lowered:
             # 两侧都小写后比对：探针上报的是 JVM 原始大小写（MessageDigest），
-            # 白名单按可读形式登记，直接比对会全表落空（首版实测 bug）。
+            # 白名单按可读形式登记，直接比对会全表落空。
             if ss.startswith(n) or n in ss:
                 if ss not in out:
                     out.append(ss)
@@ -206,10 +201,8 @@ def reassign_family_by_sink_evidence(
     return resolved, detail
 
 
-# —— 反向改判（P2，2026-09-29）——
 # rmi/jndi_injection 若无任何 naming sink 运行时实证、且确认结论仅来自业务差分
 # （iast_state=business-logic-confirmed、无 OOB），大概率是上游把垂直越权/未授权访问
-# 误定族成 rmi——run 38 实证：rmi@/jwt/createToken 实为 JWT 刷新接口无鉴权（垂直越权），
 # 却被定族成 rmi 并凭业务差分翻 confirmed。这类条目改判 broken_access_control。
 JNDI_PROTOCOL_FAMILIES = frozenset({"rmi", "jndi_injection"})
 

@@ -1,6 +1,5 @@
 """下载第三方二进制工具（开源准备：第三方二进制不入库）。
 
-背景（2026-10-27）：仓库曾把 nuclei/ffuf/feroxbuster/ysoserial 共 225MB 直接入库，
 既撑大仓库又涉及再分发合规。现改为「按需下载」：
 
     python scripts/fetch_tools.py --dest D:/SAVR-tools
@@ -46,7 +45,7 @@ TOOLS = {
 
 # Bundle archives are unpacked as a directory tree instead of a single binary.
 # CodeQL ships its CLI together with the query packs, so the tree must be kept;
-# tool_paths.find_codeql() looks for <dest>/codeql/codeql afterwards.
+# tool_paths.find_codeql looks for <dest>/codeql/codeql afterwards.
 def _codeql_platform() -> str:
     if os.name == "nt":
         return "win64"

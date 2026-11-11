@@ -4,7 +4,6 @@
 
 ## 为什么需要这个模块
 
-2026-10-31 复盘 本轮
 - specs 从 109 静默变成 97，只能靠两个数字倒推是「孤儿清理」删的；
 - Fastjson / ClassDataLoader 的 framework finding 在报告装配时被吞，只能靠
   「findings 里没有、spec 里有、报告里没有」三处对比才定位到方向。

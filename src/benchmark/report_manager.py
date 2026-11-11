@@ -22,7 +22,6 @@ from src.core.normalize import normalize_family, normalize_severity, normalize_t
 
 logger = logging.getLogger(__name__)
 
-# ── E12（2026-10-26）：CWE 对齐输出（只做输出口径，不参与判定）────────────────
 # case 级映射需要外部真值 CSV（SAST_AI_CWE_MAP 指向 expectedresults-*.csv）；
 # 没配置就退化为族级映射。缓存避免每条漏洞都读一次文件。
 _CWE_CASE_MAP_CACHE: Dict[str, dict] = {}
@@ -144,7 +143,6 @@ def is_mainline_d2_item(vuln: Dict) -> bool:
     return str(vuln.get('proof_tier', 'broad_static') or 'broad_static') == 'chain_proven' and is_contract_ready_item(vuln)
 
 
-# §③ 未执行标记（2026-09-22，闭环 D2_NOT_SCHEDULED）：报告层会为未获 D2 验证的 finding 写入
 # 「显式未验证原因」状态（not_scheduled / no_verification_record）。这两个状态的意思是
 # 「没跑 / 跑了但结果丢了」，**不是「跑过」**。凡是拿「verification_decision 非空」当「已执行」
 # 判据的地方（is_executed_d2_item → count_dynamic_stats.confirmed_count / aggregation 的
@@ -313,7 +311,6 @@ class ReportManager:
         exploitable = 'Yes' if is_confirmed_exploitable(vuln) else vuln.get('exploitable', 'Unknown')
         poc_verified = bool(vuln.get('poc_verified')) and is_confirmed_exploitable(vuln)
         verification_state = verification_status(vuln)
-        # §③ 未验证原因上抬（2026-09-22）：报告层为未获 D2 验证的 finding 写了显式原因
         # （verification_decision.verification_status + scheduling_reason）。这里把它带进用户可见的
         # 裁决摘要 note，避免「为什么没验证」只存在于结构化字段里、而在 final/note 上读不到。
         _vd_raw = vuln.get('verification_decision') or {}
@@ -526,10 +523,9 @@ class ReportManager:
         chain_id = str(vuln.get('chain_id') or vuln.get('canonical_group_key') or '').strip()
         vuln['original_type'] = original_type
         vuln['display_family'] = family
-        # 2026-09-18（E2 评审）：族名自洽校验。
         # original_type 记 LLM 原始类型、family 是系统归一结果，两者不同本属正常
         # （如 xxe → JNDI Injection 是有意纠正）；但若归一让一个注入 / 重定向类原话落到
-        # 完全无关的族（实测 id=4840：original_type="SSRF/开放重定向" 而归一后 family=csrf），
+        # 完全无关的族，
         # 那就是归一规则出错，必须暴露出来而不是静默吞掉。只标记，不改族名——族名取舍
         # 涉及召回口径，须先请示。
         _mismatch = self._family_mismatch(original_type, family)
@@ -564,7 +560,7 @@ class ReportManager:
     }
 
     def _family_mismatch(self, original_type: str, family: str) -> str:
-        """族名自洽校验（2026-09-18，E2）：返回不自洽描述，自洽则返回空串。
+        """族名自洽校验：返回不自洽描述，自洽则返回空串。
 
         判据：把 original_type 单独归一，结果与最终 family 不同、且不在有意纠正白名单内，
         即判为不自洽（返回 "原归一 -> 最终族"）。只标记不修改。
@@ -822,7 +818,6 @@ class ReportManager:
         return score
 
     def _aggregate_canonical_findings(self, vulnerabilities: List[Dict]) -> List[Dict]:
-        # 2026-09-18（A2 方案二）：聚合吸收成员补行必须排除出分组。
         # 补行刻意沿用所属聚合组的 canonical_group_key（下游靠它做关联与展示折叠），
         # 而 _build_canonical_group_key 对已存在的 key 直接返回原值 —— 若不在此处摘出，
         # 补行会被重新并入同一组、再被 ranked[1:] 吸收进 supporting_nodes，
@@ -857,7 +852,6 @@ class ReportManager:
             canonical['canonical_group_key'] = group_key
             canonical['chain_id'] = canonical.get('chain_id') or group_key
             canonical['is_canonical'] = True
-            # 2026-11-01（P3）：把被吸收成员的 vhash 记在 canonical 行上。
             # 聚合只保留 ranked[0]，其余进 supporting_nodes；而 findings 表只落 canonical 行，
             # 于是被吸收成员的 spec 因「vhash 在 findings 里查不到」被 reconcile_orphan_specs
             # 当孤儿硬删（本轮删了 16 条，含 Fastjson L23 / Deserialize L50 / Rce L113——
@@ -1003,7 +997,6 @@ class ReportManager:
 
             canonical['step_errors'] = evidence_item.get('step_errors', canonical.get('step_errors', []))
 
-            # R23-1：canonical 取自 ranked[0]，可能恰好是不带 A1 证据的同族副本；此处取组内
             # 「首个非空」a1_evidence 兜底，避免证据在报告聚合阶段被静默丢掉（单副本分支
             # 走 dict(items[0]) 天然保留，无需处理）。
             if not canonical.get('a1_evidence'):
@@ -1014,7 +1007,6 @@ class ReportManager:
 
             aggregated.append(canonical)
 
-        # 2026-09-18（A2 方案二）：补行原样回填。它们不参与分组/吸收，也不参与 canonical 的
         # supporting_nodes 派生，仅作为「独立 findings 行」存在 —— 目的单一：
         # 让 file_path 维度统计与 iast_events 关联桥能看到这些被吸收的节点自己所在的文件。
         # 消费侧门禁：is_absorbed=True 不参与 D2 候选（a2_contract_planner 硬闸 + is_mainline_d2_item）。
@@ -1065,7 +1057,6 @@ class ReportManager:
         # 只把已确证态归因到孪生 finding，不跨文件、不跨族误归因（避免假阳性）。
         return ReportManager._verification_fallback_match(vuln, verification)
 
-    # §孪生兜底行邻近阈值（2026-09-22）：同一漏洞的 A1/A2 两个身份常报在不同行
     # （/spel/vuln2 是 33 与 37、/jwt/createToken 是 31 与 38），精确键与既有 Δ≤3 都吃不下。
     _FALLBACK_LINE_TOLERANCE = 10
 
@@ -1075,8 +1066,6 @@ class ReportManager:
 
         衔接 A1 canonical 与 A2 假说对同一条漏洞给出的不同身份标签。
 
-        2026-09-22 扩展（14 条 enqueued_but_no_verification_record 的真因）：
-        run 37 实测 D2 **确实执行并产出记录**（如 /jwt/createToken 有 confirmed_exploitable 记录），
         但记录携带的是另一端身份 —— A1 源，其 vulnerability_hash_v2 可能是 hex
         （746982d7…）也可能是 cgk 形态（"jwt硬编码或弱密钥:src\\...\\jwt.java:38"）；
         而 finding 是 A2 源（Jwt.java:31 / vertical_privesc）。五个精确键全 miss，
@@ -1086,17 +1075,14 @@ class ReportManager:
         - 行号从上述 cgk 形态或 verification.line 取，容忍 Δ≤_FALLBACK_LINE_TOLERANCE；
         - 两端族标签不同（jwt硬编码或弱密钥 vs vertical_privesc）时以行邻近放行。
 
-        2026-09-22 二次扩展（run 38 残留 4 条）：部分 verification 记录**只带 endpoint，不带
         file/sink_line**（如 /url/vuln/contains 的 confirmed 记录 sink_file=None），basename 兜底
         无从下手。而 finding 侧 `exploit_spec.entry.route` 就是端点。故补端点级兜底：
         端点相等即视为同一漏洞。**限多段端点**（'/' 出现 ≥2 次）以排除类级基路径
         （/ssrf、/cors、/jwt 这类单段基路径由 ② 类级路由改动单独治理，不在此误收）。
         """
         # §端点级兜底（多段端点才认，避免类级基路径误收）
-        # 键名坑（2026-09-22 实测）：本函数吃的是 **D2 原始 verification 字典**，它没有顶层
         # `endpoint` —— 端点在 `trigger_spec_detail.endpoint` 下（顶层 `endpoint` 只存在于
         # `_d2_verification_detail` 抽出的 verifications_detail 投影里）。首版只读顶层键 →
-        # 恒为空 → 端点兜底从未生效（run 39 实测残留仍 4 条，与 run 38 一致）。两处都读。
         _ep_v = str(
             verification.get('endpoint')
             or (verification.get('trigger_spec_detail') or {}).get('endpoint')
@@ -1117,7 +1103,6 @@ class ReportManager:
                 '泄露': 'info_disclosure', '泄漏': 'info_disclosure',
                 '赋值': 'mass_assignment',
                 '越权': 'idor',
-                # 2026-09-22 扩：jwt / 重定向 / 白名单 / spel / crlf / 命令执行 / ssrf / 提权
                 'jwt': 'jwt', '弱密钥': 'jwt', '硬编码': 'jwt',
                 '重定向': 'url_redirect',
                 '白名单': 'url_whitelist',
@@ -1252,9 +1237,7 @@ class ReportManager:
             'low': 1,
             'unknown': 0,
         }
-        # §带裁决优先（2026-09-22，⑦-3）：候选里混着「同文件另一条、但根本没裁决」的记录
         # （孪生兜底放宽后尤其常见），若按精确键优先选中它，finding 会被写成
-        # 「有 execution_evidence 却无 verification_decision」的空壳 —— 实测 Rce.java:90、
         # SocketHookImpl.java:112/137 这 3 条 chain_proven 就是这么丢的（已归
         # A21_CONTRACT_FAILURE，实为折叠取错记录）。已通过 _verification_matches 的候选
         # 都是同一漏洞的可信身份，故「带裁决」理应压过「键更精确但无裁决」。
@@ -1656,7 +1639,6 @@ class ReportManager:
                         'canonical_group_key': getattr(vuln, 'canonical_group_key', ''),
                         'chain_id': getattr(vuln, 'chain_id', '') or getattr(vuln, 'canonical_group_key', ''),
                         'is_canonical': getattr(vuln, 'is_canonical', False),
-                        # 2026-09-18（A2 方案二）：聚合吸收成员补行标记。
                         # is_absorbed=True 的行只用于恢复「按 file_path 的覆盖率统计」与
                         # iast_events 关联桥，不参与 D2 候选（见 a2_contract_planner 硬闸），
                         # 前端列表按该标记折叠展示，避免与所属聚合 finding 重复。
@@ -1674,7 +1656,6 @@ class ReportManager:
                         'contract_gaps': list(getattr(vuln, 'contract_gaps', []) or []),
                         'a21_selected': getattr(vuln, 'a21_selected', None),
                         'a21_reason': getattr(vuln, 'a21_reason', ''),
-                        # E12（2026-10-26）：CWE 对齐输出。**只做输出口径**（不参与任何判定），
                         # 让报告可跨靶场通用。case 级映射需外部真值 CSV（SAST_AI_CWE_MAP 指向
                         # expectedresults-*.csv），没配就只给族级映射。
                         'cwe': _cwe_of_entry(result.file, vuln.type,
@@ -1693,7 +1674,6 @@ class ReportManager:
                         # finding 与 D2 验证产物按 vuln_hash 严格绑定（而非仅依赖 chain_id / file:line 模糊匹配）。
                         # 校验↔finding 关联失败时，旧匹配键仍可兜底，故此处只增不强。
                         'vulnerability_hash_v2': vulnerability_hash_v2(canonicalize_vuln_for_hash(vuln)),
-                        # R23-1（a1_evidence 落库时序）：报告层必须原样携带 A1 证据，否则收尾
                         # replace_for_task 的 INSERT 无从取值，A1 证据只能靠「注册期注册器用
                         # 全局 vhash UPDATE」滞后写进上一轮的行（详见 trigger_spec_registry
                         # auto_register_from_a2 的时序注释）。此处随报告 payload 一并下发，
@@ -1752,7 +1732,6 @@ class ReportManager:
         # 添加 D2 统一验证链路结果和 POC
         verifications = d2_verifications.get('verifications', [])
         pocs = d2_verifications.get('pocs', [])
-        # §③ 调度留痕索引（2026-09-22，闭环 D2_NOT_SCHEDULED）：run_d2_verify 现会把门禁未入队的
         # 条目逐条落原因（stage_results.d2.scheduling）。这里按 (file,type,line) 建索引，供下面的
         # 未匹配分支写出「显式未验证原因」，替代此前一律空的 verification_decision。
         _d2_sched_skip = {
@@ -1795,7 +1774,7 @@ class ReportManager:
                 vuln['raw_output'] = v.get('raw_output')
                 vuln['step_errors'] = v.get('step_errors', [])
                 vuln['verified_bundle'] = v.get('verified_bundle', {})
-                # §D2 裁决回填（报告层缺口修复）：把统一 verify() 产物的五态裁决与运行时证据透传到
+                # §D2 裁决回填：把统一 verify 产物的五态裁决与运行时证据透传到
                 # 每条 finding，使前端无需交叉引用 stage_results.d2.verifications_detail 也能看到
                 # confirmed_attributable / sink-reached / canary 身份段。历史版本只填了 exploitable /
                 # verification_decision，导致已确证的漏洞在前端仍显 Unknown/None。
@@ -1808,9 +1787,9 @@ class ReportManager:
                 vuln['d2_verdict'] = v.get('d2_verdict') or {}
                 vuln['next_action'] = v.get('next_action') or {}
 
-                # §字段同步（point ① 修复）：D2 裁决产物的「确认」真相只存在于
+                # §字段同步：D2 裁决产物的「确认」真相只存在于
                 # final_state / d2_verdict.harmful / verification_decision.verification_status /
-                # iast_evidence.iast_authz_confirmed，而 VerificationResult.to_dict() 从不输出顶层
+                # iast_evidence.iast_authz_confirmed，而 VerificationResult.to_dict 从不输出顶层
                 # confirmed / test_status，导致报告层与前端「验证状态」长期读到 False / NOT_TESTED，
                 # 把「已确认可利用」渲染成「未验证=非漏洞」（task3 实测 54 条全 False/NOT_TESTED 但 10 条
                 # d2_verdict.harmful=True）。此处用已合并的裁决字段反向回填顶层 confirmed / test_status /
@@ -1838,7 +1817,7 @@ class ReportManager:
                 )
                 vuln['exploitable'] = 'Yes' if _confirmed else (vuln.get('exploitable') or 'No')
 
-                # §P2：把通道 A 的 target_endpoint（统一 verify() 透传到 trigger_spec_detail.endpoint）
+                # §P2：把通道 A 的 target_endpoint（统一 verify 透传到 trigger_spec_detail.endpoint）
                 # 回写通道 B 的 exploit_spec.entry.route。业务/越权类因 resolve_trigger_endpoint 是 sink
                 # 驱动、无 sink→route 恒空，导致大批 a21_selected 真漏洞 entry.route 为空、被门禁错杀、
                 # 进不了 D2 主线（召回率漏斗第二层根因）。回写保底：仅当通道 B 的 entry.route 为空且通道
@@ -1856,10 +1835,8 @@ class ReportManager:
                             _spec = dict(_spec)
                             _spec['entry'] = _entry
                             vuln['exploit_spec'] = _spec
-                # §⑦-3 补（2026-09-22）：匹配到了 verification、但该记录**本身没有裁决**
                 # （无 verification_status 也无 final_state）时，vuln 会被写成空壳 decision，
                 # 与「压根没匹配到」不可区分，违反「未测必须显式记 runtime 原因，不得留 unknown」。
-                # 实测 SocketHookImpl.java:112/137（run 38/39 两轮稳定复现）：D2 以
                 # trigger_spec=None 跑了 verify（trace 记 spec_found=0），产物无裁决。
                 # 此处补显式记因，与 else 分支同口径。
                 if not str((vuln.get('verification_decision') or {}).get('verification_status') or ''):
@@ -1887,7 +1864,6 @@ class ReportManager:
                 vuln['contract_completeness'] = vuln.get('contract_completeness') or exploit_spec_completeness(vuln['exploit_spec'])
                 vuln['failure_classification'] = {}
                 vuln['execution_evidence'] = {}
-                # §③ 显式记未验证原因（2026-09-22，闭环 D2_NOT_SCHEDULED）：需求约定「未测必须
                 # 显式记 runtime 原因，不得留 unknown」。此前无匹配 verification 时一律写
                 # verification_decision={}，报告里成为既无证据、也无原因的沉默空壳，
                 # d2_zero_audit 只能猜「疑似未入队」。现按调度留痕落明确状态：
@@ -1959,11 +1935,10 @@ class ReportManager:
             # Q1 呈现层：每条 finding 带显式验证状态，供前端「验证状态」独立列绑定
             # （confirmed=已确认 / detected_unverified=已检出未验证 / disproven=动态证伪 / static_pending=静态待确认）
             vuln['verification_state'] = ReportManager.compute_verification_state(vuln)
-            # #3（Q1 修复）：A2 判定「真漏洞-HTTP入口可触发」但 D2 运行时未产出动态实证时，
+            # #3：A2 判定「真漏洞-HTTP入口可触发」但 D2 运行时未产出动态实证时，
             # 渲染「已检出未验证」而非「未验证=非漏洞」，避免 D2 的「未验证」覆盖 A2 真漏洞结论
-            # （task7 实测：REPORTING_OR_PIPELINE_MISMATCH 23 条即此症状——「我不知道」被渲染成「不是漏洞」）。
+            # 。
             # verification_decision 为空即「无 D2 实证」；此时 d2_status 置非空（unverified）而非留 NULL。
-            # §③（2026-09-22）：报告层现在也会给「未获 D2 验证」的 finding 写入显式原因状态
             # （not_scheduled / no_verification_record）。这类 decision 非空但同样代表「无 D2 实证」，
             # 故判据从「decision 是否为空」改为「是否有真正的 D2 实证」，避免这些 finding 丢掉
             # 「已检出未验证」的渲染、退回成 A2 的 ✅ 真漏洞结论。
@@ -1984,7 +1959,7 @@ class ReportManager:
         executed_mainline_verifications = [v for v in mainline_verifications if is_executed_d2_item(v)]
         excluded_fallback_verifications = [v for v in verifications if is_excluded_d2_fallback_item(v)]
 
-        # §统一链路口径（修复「命中=0」根因）：D2 运行时指标直接取自流水线 D2 统一校验产物
+        # §统一链路口径：D2 运行时指标直接取自流水线 D2 统一校验产物
         # （run_d2_verify 返回 + _aggregate_d2_verdict 聚合），不再依赖 is_mainline_d2_item 对
         # verifications 的过滤。历史口径下 verifications 不带 proof_tier / contract_completeness，
         # is_mainline_d2_item 恒为 False → mainline_verifications 恒空 → raw_d2_stats.exploitable_count
@@ -2011,7 +1986,6 @@ class ReportManager:
             'impact_count': _d2m['impact_count'],
         }
 
-        # 阶段漏斗（2026-10-31）：报告装配是「候选消失」的高发区——
         # 本轮里 framework 的 deserialization 命中就是在这一步没的（同文件 csrf 却进得去）。
         # 这里记录 (输入条数, 去重后, 聚合后) 三点，下一轮定位断点时不用再靠三处数字倒推。
         _in_total = 0
@@ -2056,7 +2030,6 @@ class ReportManager:
         # canonical 视角同样以权威 D2 指标为准（exploitable / poc / confirmed 不再被 mainline 过滤清零），
         # 仅保留 count_dynamic_stats 作为一致性兜底（两者应相等）。
         _cd = count_dynamic_stats(all_vulns)
-        # D2（2026-10-10）：移除 `or` 兜底——`_d2m` 与 `_cd` 是两个独立口径的 D2 指标，
         # 用 `or` 静默回退会掩盖两者不一致（如 _d2m 计 0 而 _cd 计非 0，本应是口径冲突，
         # 却被兜底成 _cd 值，掩盖了统计缺陷）。改为以权威口径 _d2m 为准，并显式记录 metric_conflicts。
         canonical_d2_stats = {
@@ -2075,9 +2048,7 @@ class ReportManager:
         proof_stats = count_proof_tiers(all_vulns)
         zero_audit = summarize_d2_zero_audit(all_vulns)
 
-        # 2026-11-03（r17b 验证）：报告定稿前按最终 decision 重算一次验证状态。
         # verification_state 在 1961 行按当时的 decision 算好；之后 confirm-gate 回补等 post-pass
-        # 仍会改写 decision，导致两者脱节（jsc 609 实测 1 条 SpEL：state=disproven 但
         # verification_decision.verification_status=confirmed_exploitable）。重算幂等。
         for _v in all_vulns:
             if isinstance(_v, dict):
@@ -2129,7 +2100,6 @@ class ReportManager:
                 'canonical_exploitable_count': canonical_d2_stats['exploitable_count'],
                 'canonical_poc_count': canonical_d2_stats['poc_count'],
                 'canonical_verified_poc_count': canonical_d2_stats['verified_poc_count'],
-                # D2（2026-10-10）：口径冲突显式暴露——_d2m 与 count_dynamic_stats 两独立口径
                 # 对 confirmed / poc 计数不一致时如实记录，绝不静默 `or` 兜底掩盖。
                 'metric_conflicts': metric_conflicts,
                 'docker_used': d2_verifications.get('docker_used', False),
@@ -2250,7 +2220,6 @@ class ReportManager:
         zero = summary.get('d2_zero_audit', {}) or {}
         # 矛盾措辞修复：仅当本轮确实 0 确认（verified_poc_count==0）时才输出「D2=0 归因」，
         # 避免与上方「已通过动态执行确认可利用的漏洞：N 个」并存产生自相矛盾。DB 为真相源，
-        # task-2 实测 13 个 D2 确认 POC，故真实报告只显示确认数，不显示 0 归因。
         if zero.get('summary') and not summary.get('verified_poc_count', 0):
             a(f"- D2=0 归因：{zero.get('summary')}")
         if summary.get('docker_used'):
@@ -2527,8 +2496,6 @@ class ReportManager:
     def _md_sca_section(L: list, sca: Dict) -> None:
         a = L.append
         a(f"- 状态：{sca.get('status', '-')}")
-        # 2026-09-24：SCA 工具全部失败时，0 漏洞与「真干净」不可区分，必须显式告警，
-        # 否则会被误当成健康基线（run 47 即此坑）。
         _health = sca.get('sca_health')
         if _health == 'all_tools_failed':
             a(f"- 警告：SCA 全部工具执行失败（{', '.join(str(t) for t in (sca.get('tools_failed') or []))}），"

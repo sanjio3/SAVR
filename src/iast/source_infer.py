@@ -1,6 +1,5 @@
 """源码驱动的注入点推导（阶段 1.1：重放智能化）。
 
-背景（r109 逐案取证）
 --------------------
 把 1833 条 spec 按证据链分桶后，125 条（6.8%）落在 S2 —— canary **送达到了应用**
 （有探针事件）但**没到该族 sink**。逐案比对「spec 记录的注入点」与「servlet 源码真实的
@@ -9,8 +8,6 @@
 1. **源位置错**：spec 记 query，servlet 实际读 header / cookie（A2 默认猜 query）；
 2. **源藏在 helper 类**：servlet 里根本没有 getParameter/getHeader 字样，取源转发到
    `org.owasp.benchmark.helpers.SeparateClassRequest.getTheParameter(...)` 之类的工具类
-   （如 BenchmarkTest00996/00100 那段 cookie 源）。只在 servlet 本文件里做正则匹配会
-   「无显式取源」而误判为无法判定，而这批恰好是 r109 里 9 个「弱证据 TP」的主体。
 
 本模块只读源码、确定性推导（与 `src/core/source_location.py` 同一风格，不调 LLM），
 输出**全部**候选注入点（而不是单个 location），供 D1 在 spec 覆盖不到时补投。
@@ -88,7 +85,7 @@ def _points_from_code(code: str, case_name: Optional[str] = None) -> List[Inject
     for m in re.finditer(r"getHeader\s*\(\s*([A-Za-z_][A-Za-z0-9_]{0,60})\s*\)", code):
         add(m.group(1), "header", m.group(0), 0.6)
 
-    # ② query：getParameter("X") / getParameterValues("X") / getParameterMap()
+    # ② query：getParameter("X") / getParameterValues("X") / getParameterMap
     for m in re.finditer(r'getParameter(?:Values|Map)?\s*\(\s*"([^"]{1,80})"', code):
         add(m.group(1), "query", m.group(0), 0.95)
     for m in re.finditer(r"getParameter\s*\(\s*([A-Za-z_][A-Za-z0-9_]{0,60})\s*\)", code):
@@ -96,7 +93,7 @@ def _points_from_code(code: str, case_name: Optional[str] = None) -> List[Inject
     if esc and re.search(rf'getParameter\s*\(\s*"{esc}"', code):
         add(esc, "query", f'getParameter("{esc}")', 0.99)
 
-    # ③ cookie：getCookies() + getName().equals("X")
+    # ③ cookie：getCookies + getName.equals("X")
     cookies_block = bool(re.search(r"getCookies\s*\(", code))
     if cookies_block:
         for m in re.finditer(r'getName\s*\(\s*\)\s*\.equals\s*\(\s*"([^"]{1,80})"', code):
@@ -108,7 +105,7 @@ def _points_from_code(code: str, case_name: Optional[str] = None) -> List[Inject
         if cookies_block and not any(p.location == "cookie" for p in out) and case_name:
             add(case_name, "cookie", "getCookies() + 无字面量名", 0.5)
 
-    # ④ body：getInputStream() / getReader()
+    # ④ body：getInputStream / getReader
     if re.search(r"getInputStream\s*\(|getReader\s*\(", code):
         add("", "body", "getInputStream/getReader", 0.85)
 
@@ -141,7 +138,6 @@ def _helper_points(code: str, project_root: Optional[str],
                                 evidence=f"{cls}.{meth} → {p.evidence}",
                                 confidence=round(p.confidence * 0.9, 3))
             out.append(p2)
-        # 字面量实参（如 getTheParameter(request, "BenchmarkTest00996"）本身就是参数名
         for lit in re.finditer(rf"{re.escape(cls)}\.{re.escape(meth)}\s*\([^)]*?\"([^\"]{{1,80}})\"", args):
             if any(p.location == "query" for p in pts) or not pts:
                 out.append(InjectionPoint(name=lit.group(1), location="query",
@@ -252,7 +248,6 @@ def _discover_roots() -> List[str]:
     背景：trigger_specs.expected_sink_file 存的是**相对路径**
     （``src/main/java/org/owasp/benchmark/testcode/X.java``），而真实源码在工作区的
     ``target_path``（workspaces 表，runtime 才知道）。不解析 ⇒ 读不到源码 ⇒
-    注入点推导与方法回退全部静默失效（r110 实测：9 个弱证据 TP 无一改善）。
     """
     global _DISCOVERED_ROOTS
     if _DISCOVERED_ROOTS is not None:
@@ -320,8 +315,6 @@ def resolve_source_path(rel_path: Optional[str], code_root: Optional[str] = None
                     continue
             if hit:
                 break
-        # 2026-10-19（r111 weakrand 实证）：A2 有时只落**裸文件名**
-        # （expected_sink_file="BenchmarkTest00094.java"，无任何目录分量），
         # 上面的拼接全部落空 ⇒ 静态安全实现判据读不到源码。用一次性
         # basename 索引（每个源码根只 walk 一次，结果缓存）兜底。
         if not hit and "/" not in raw:
@@ -442,7 +435,6 @@ def derive_method_augmentations(spec: Dict[str, Any],
                                 code: Optional[str] = None) -> List[str]:
     """spec 声明的 http_method 不含 sink，而另一个 doXxx 含 sink → 返回应补投的方法。
 
-    r109 逐案取证：**395 条 spec（21.5%）属方法错配** —— 典型如 BenchmarkTest00996
     把读 cookie + prepareCall 全放在 doPost，而 spec 记 GET；D1 只发 GET → servlet 只种
     cookie 就转发，sink 永不执行，表现为 S2（到应用未到族 sink）。该类用例占 9 个
     「弱证据 TP」的全部。

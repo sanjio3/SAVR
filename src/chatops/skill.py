@@ -1,6 +1,6 @@
 """ChatOps SCA skill (G11).
 
-Turns a parsed query into the structured answer the 第四版 §2.15 spec asks for:
+Turns a parsed query into the structured answer the 第四版  spec asks for:
 - 是否使用（该组件在资产库中是否存在）
 - 项目列表（命中的 workspace/source_file）
 - 是否命中漏洞版本（advisory 版本区间匹配）

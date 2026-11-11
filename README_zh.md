@@ -146,7 +146,7 @@ Spring Boot 应用、解析探针 jar 路径、从数据库取 token、拼好 JV
 注册一个指向靶场的工作区、挂上探针，通过 API 或界面提交任务。调试用的 CLI 入口是：
 
 ```bash
-python -m src.cli.scan_task_runner --task-id 1 --target /path/to/target/src \
+python -m src.cli.scan_task_runner --task-id <id> --target /path/to/target/src \
   --output-dir output/run1 --no-sca
 ```
 
@@ -156,7 +156,7 @@ python -m src.cli.scan_task_runner --task-id 1 --target /path/to/target/src \
 在把一轮指向外部靶场之前，先确认探针会话与 token 确实对得上。对不上时，摄取接口会返回 HTTP 200 且 `accepted=0`，很容易被误读成成功：
 
 ```bash
-python tools/probe_preflight.py --workspace-id 4 --http
+python tools/probe_preflight.py --workspace-id <id> --http
 ```
 
 `ready=true` 表示会话行存在、心跳新鲜，且带 `X-Agent-Token` 的握手被接受并返回了非空 `session_id` 且无 `errors`。这个检查不写任何事件，也不刷新心跳，所以它不会把已经死掉的心跳弄成活着的。
@@ -175,13 +175,7 @@ python tools/probe_preflight.py --workspace-id 4 --http
 
 不要提交 `.env`、`config.yaml` 或任何数据库。
 
-环境变量沿用项目早期名称的 `SAST_AI_` 前缀。这个前缀属于运行契约的一部分——基线 6 项 `run_env` 里有两项就是用这个前缀拼的——因此刻意保持不变，以维持向后兼容。
-
-### 决定一轮是否有效的键
-
-- `SAST_AI_STAGE_CACHE=0`：可计量的一轮必须显式关闭阶段缓存。代码默认是 `1`，否则缓存的 A1/A2 输出会掩盖轮次间的差异。
-- `SAST_AI_CLOSED_LOOP=0`：除非你特意要 I2 反馈闭环，否则保持关闭。它没有实测增益，而且会给确认路径加上一层 LLM 依赖。
-- `SAST_AI_BENCHMARK_PRIOR=1`：保持路由布局先验开启。关掉它才是那个「召回有多少依赖路由名」的实验。
+环境变量沿用项目早期名称的 `SAST_AI_` 前缀。这个前缀属于运行契约的一部分，刻意保持不变以维持向后兼容。
 
 ---
 

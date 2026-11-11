@@ -91,7 +91,7 @@ class SCAPipelineService:
             return self._scan_auto(project_path, output_dir, severity_threshold, ignore_unfixed)
         # 单工具路径同样要做交叉验证标记与 fixed 版本核查。此前只有 auto 走富集，
         # 而任务/API 默认 sca_tool='osv-scanner'（单工具），导致 cross_validated /
-        # not_affected / confidence 永不落库，前端 SCA 面板无从展示（Q1 根因）。
+        # not_affected / confidence 永不落库，前端 SCA 面板无从展示。
             result = get_adapter(self.tool).run(project_path, output_dir, severity_threshold=severity_threshold, ignore_unfixed=ignore_unfixed)
         result["findings"] = explode_findings_by_cve(result.get("findings") or [])
         return self._apply_enrichment(result)
@@ -101,7 +101,7 @@ class SCAPipelineService:
         """对任意工具产出的 findings 补齐交叉验证 / 版本比对标记与计数。
 
         单工具时 cross_validated 恒 False（定义要求 ≥2 个不同工具），但 not_affected
-        （实际版本 ≥ fixed 版本 = 已修复/疑似误报）在单工具下依然成立且可判定。
+        在单工具下依然成立且可判定。
         """
         findings = list(result.get("findings") or [])
         if not findings:
@@ -148,7 +148,7 @@ class SCAPipelineService:
                 self._merge_finding(finding, name, merged, order)
         findings = [merged[key] for key in order]
         # 交叉验证：同组件跨工具（osv/trivy/grype）都报同一 advisory 才标 high confidence；
-        # fixed 版本核查：实际版本已 ≥ fixed 版本则标 not_affected（疑似已修复/误报）。
+        # fixed 版本核查：实际版本已 ≥ fixed 版本则标 not_affected。
         return self._apply_enrichment(
             {
                 "status": "completed" if ran_any else "skipped",

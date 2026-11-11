@@ -73,7 +73,6 @@ class FindingRecord:
     title: str
     raw: Dict[str, Any]
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
-    # 2026-09-15 item 3：SCA 命名空间从 finding_type 剥离。组件名/编号拆到独立列，
     # finding_type 仅留族名 "sca"。老行（迁移前）这两列默认空串，读路径须容错缺列。
     sca_component: str = ""
     sca_advisory_id: str = ""

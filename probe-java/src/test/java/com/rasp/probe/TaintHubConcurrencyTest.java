@@ -16,8 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 回归测试：污点容器锁序反转导致的全站假死。
  *
- * <p>事故（2026-09-13，java-sec-code 靶场 run 27）：探针自身对 {@code java.lang.String} /
- * {@code java.io.File} 的插桩，会在 WeakHashMap 计算 {@code key.hashCode()} 期间被同步触发，
+ * {@code java.io.File} 的插桩，会在 WeakHashMap 计算 {@code key.hashCode} 期间被同步触发，
  * 重入 {@link TaintHub#markFrom}/{@link TaintHub#markHigh}。修复前 HIGH 与 LOW 各自持一把
  * {@code Collections.synchronizedMap} 监视器，于是：
  * <ul>
@@ -38,8 +37,8 @@ class TaintHubConcurrencyTest {
     private static final int ITERATIONS = 200;
 
     /**
-     * 模拟「哈希计算期间触发探针回调」的键：WeakHashMap 在 {@code hashCode()} 里回探针。
-     * 这正是被插桩的 {@code String.hashCode()/toLowerCase()} 在真实场景下造成的重入。
+     * 模拟「哈希计算期间触发探针回调」的键：WeakHashMap 在 {@code hashCode} 里回探针。
+     * 这正是被插桩的 {@code String.hashCode/toLowerCase} 在真实场景下造成的重入。
      */
     private static final class ReentrantKey {
         private final int id;

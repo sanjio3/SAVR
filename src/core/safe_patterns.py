@@ -1,6 +1,5 @@
-"""安全实现负向模式（2026-09-26 F4 后精确率整改②）。
+"""安全实现负向模式。
 
-背景：OWASP benchmark 的 99 个 FP 全部是「同一危险 API 的安全实现」（安全编码、
 参数化查询、SecureRandom、强哈希等）。平台此前只认「调用了危险 API」就报，
 不识别该调用是否实际安全 → 精确率贴着真值占比 ≈53%（近掷硬币）。
 
@@ -27,9 +26,7 @@ logger = logging.getLogger(__name__)
 
 # 方法窗口半径：以 sink 行为中心上下各取 N 行作为安全特征扫描窗口。
 #
-# 2026-09-26 由 60 收敛到 15（实测，见 scripts/_sim_safe_patterns.py）：
 # benchmark 用例文件普遍 <100 行，±60 等于「整文件判定」——一旦 sink 行号偏移到
-# 注解/方法签名上（实测 BenchmarkTest00100 落在 @WebServlet 行、01552 落在 @Override 行），
 # 窗口就会把文件别处的 PreparedStatement / SecureRandom 当成安全实现，误杀真漏洞。
 # 窗口半径敏感性实测（掉 TP 用例数 / 掉 FP 用例数）：
 #   6→0/1   10→0/3   15→0/4   20→0/5   30→1/8   60→3/11
@@ -37,7 +34,7 @@ logger = logging.getLogger(__name__)
 _WINDOW = int(os.environ.get("SAST_AI_SAFE_PATTERN_WINDOW", "15") or 15)
 
 # 每族安全特征规则：(规则名, 必须全部命中的正则组, 必须全部不命中的负向正则组)
-# need_all=() 表示单特征即可；deny_all=() 表示无负向要求。
+# need_all= 表示单特征即可；deny_all= 表示无负向要求。
 _SAFE_RULES: Dict[str, Tuple[Tuple[str, Tuple[str, ...], Tuple[str, ...]], ...]] = {
     "sql_injection": (
         ("prepared_statement_bound", (r"PreparedStatement", r"\.set(?:String|Int|Long|Double|Float|Date|Object|Boolean|Byte|Short|BigDecimal|Timestamp)\s*\("), ()),
@@ -88,7 +85,6 @@ def build_file_index(files: Any) -> Dict[str, List[str]]:
     """用 A1 入参 files（绝对路径）建 basename → 绝对路径列表 索引。
 
     用途：CodeQL 告警的 file 来自 SARIF，是**相对项目根**的路径（如
-    "src/main/java/.../BenchmarkTest00317.java"），A1 运行时 cwd 又不是项目根，
     直接 open(相对路径) 必然 OSError → _read_window 返回空 → fail-open 不抑制。
     实测这正是 safe_patterns 长期「看着生效、实际零抑制」的根因之一。
     """
@@ -166,8 +162,6 @@ def safe_implementation_hit(family: str, file_path: str = "", line: Optional[int
 
     返回命中的规则名（表示应抑制），未命中/无证据/未登记族返回 None。
 
-    2026-09-26 修复「证据源」——原实现是 **snippet 优先**：只要 snippet 非空就永远
-    不读源文件。而 A2 回填的 snippet 常是残缺片段（实测 BenchmarkTest00317 只有
     `String bar = thing.doSomething(param);`），既不含 SecureRandom 也不含 Random，
     于是规则既不能命中也不能否认 → 静默放行。叠加 file_path 是相对路径读不到窗口，
     实测 A1 出口抑制数恒为 0（规则表与接线都在，但从未生效）。

@@ -1,4 +1,4 @@
-"""I2 判因：把「LLM 当安全人员用」落到闭环里（2026-10-24，plan §13.2 第 3 步）。
+"""I2 判因：把「LLM 当安全人员用」落到闭环里。
 
 ## 为什么需要它
 此前的判因是关键词规则表（`src/iast/replay_intel.py` 的 `decide_next_action`）：
@@ -196,10 +196,9 @@ def _validate(decision: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     except (TypeError, ValueError):
         conf = 0.0
     conf = min(max(conf, 0.0), 1.0)
-    # 2026-10-25 放宽：只有 change_payload 才必须给具体 payload（那是它的语义）。
     # 其余动作（换位置/换编码/换方法/加头/延长窗口）本来就不需要新弹，
     # 早期对它们也强制 payload ⇒ 有价值的判因被判"不合格"、两次后降级成 adjust_window，
-    # 等于把「LLM 明确说该换 cookie 位置」这类最有用的信息丢掉（实测日志多次出现）。
+    # 等于把「LLM 明确说该换 cookie 位置」这类最有用的信息丢掉。
     if action == "change_payload" and not payload.strip():
         return None
     return {"verdict": verdict, "action": action, "payload": payload[:2000],
@@ -261,7 +260,6 @@ def payload_vhash_set(db: Any, task_id: int) -> set:
 
     为什么需要：真实闭环里 95% 以上的反馈被规则分流进 runtime_observation
     （reason 是「canary 未观测到」），hypothesis_defect 桶几乎总是空的 ⇒ 只挂在那桶上的
-    LLM 判因事实上从不被调用（run 468 实测：闭环 no_action 直接退出，i2 记录为空）。
     真正值得判的是「有弹但打不通」的那一小撮（468 实测 148 条未确认里 23 条带 payload，
     其中 sql_injection 21 条）——是弹的问题还是打法的问题，这正是判因该回答的。
     """
@@ -292,10 +290,8 @@ def apply_reclassification(routed: Dict[str, List[Dict[str, Any]]],
     """把 LLM 判因结果应用到 routed 桶（纯函数，可单测）。
 
     只移动「判出的 failure_class 与源桶不同」的条目；**未被重分类的条目必须留在原桶**——
-    2026-10-25 实测过一个真 bug：早期写法按「不在旧桶」过滤，而旧桶就是原列表本身，
     结果把整桶清空，a2_actionable 拿不到任何反馈，闭环误判「无可执行反馈」直接空转。
 
-    source_classes 支持多源（2026-10-25 扩展）：候选既来自 hypothesis_defect，也来自
     runtime_observation 里「有弹但打不通」的条目。对后者有一条额外纪律：
     **approach_problem 不移动**（打法问题该由重放侧改位置/编码，不该触发 A2 重跑），
     只标注 llm_action 供 replay 调整消费。
@@ -343,11 +339,9 @@ def attach_llm_directives(routed: Dict[str, List[Dict[str, Any]]],
 
     为什么必须走 reason：A2 二次分析消费的是 feedback_to_a2 的 reason 文本，
     挂在自定义字段上的 llm_action 它读不到（与 i2_feedback.attach_directives 同一个
-    「最后一公里」问题）。实测（2026-10-25，462 真实数据 8 条）：8B 判因几乎不判
     false_positive，所以「重新分桶」收益有限；真正有价值的是它给出的动作建议
     （换弹 / 换位置 / 换方法 / 延长窗口）——必须让 A2 看见。
 
-    多源（2026-10-25）：runtime_observation 里「有弹但打不通」的条目也要拿到建议，
     尤其 approach_problem 留在该桶时，靠这条 reason 让重放侧/下一轮知道该怎么改。
 
     give_up 不追加：那是「别再试了」，不该变成一条改进要求。
@@ -392,7 +386,6 @@ def decide(packet: ObservationPacket, gateway: Any = None,
 #
 # 规则判定（source=rule）有硬证据，结论可信：
 #   oracle 正向 ⇒ confirmed 可信；oracle 主动净化 ⇒ false_positive 可信。
-# LLM 判定（source=llm）2026-10-25 实测收紧（run 468，8 条真实样本）：
 #   confirmed 判出 5/10 条「运行时证据表明漏洞成立」，但对应 spec 的 oracle 全是
 #   inconclusive/boolean_same（零直接证据）⇒ 采信会把未打通的白送进 A2 重跑烧时间；
 #   false_positive 同理不可采信（黑盒无否定能力）。
@@ -405,7 +398,7 @@ _RULE_VERDICT_TO_CLASS = {
     "approach_problem": "hypothesis_defect",
 }
 _LLM_VERDICT_TO_CLASS = {
-    "confirmed": "",            # 不采信（无证据也会判成立，实测错判率高）
+    "confirmed": "",
     "false_positive": "",       # 不采信（黑盒无否定能力）
     "payload_problem": "hypothesis_defect",   # 该换弹 ⇒ 回灌 A2
     "approach_problem": "hypothesis_defect",  # 该换打法 ⇒ 回灌 A2（runtime 桶里则留原地）

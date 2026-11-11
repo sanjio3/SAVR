@@ -51,7 +51,6 @@ final class LocalEventLogger {
     private static final int RANK_HIGH = 3;
     private static final int RANK_ERROR = 4;
 
-    // 2026-09-16（待请示 6 项 #4）：本地日志按大小轮转，避免 sec-agent.log 无限增长撑爆磁盘。
     // 单文件上限 64MB，保留 3 份备份（sec-agent.log.1/.2/.3）。超出即在写入前轮转。
     private static final long MAX_FILE_BYTES = 64L * 1024 * 1024;
     private static final int MAX_BACKUPS = 3;
@@ -217,7 +216,6 @@ final class LocalEventLogger {
             return;
         }
         synchronized (lock) {
-            // 2026-09-16（待请示 6 项 #4）：写入前若即将超限则先轮转，避免单文件无限膨胀。
             try {
                 if (Files.exists(target) && Files.size(target) + text.length() > MAX_FILE_BYTES) {
                     rotate();
@@ -235,7 +233,6 @@ final class LocalEventLogger {
         }
     }
 
-    // 2026-09-16（待请示 6 项 #4）：大小轮转。sec-agent.log → .1 → .2 → .3（覆盖最旧），
     // 全程 best-effort，失败绝不抛入热路径。
     private void rotate() {
         Path current = this.file;
@@ -247,7 +244,6 @@ final class LocalEventLogger {
             return;
         }
         try {
-            // 2026-09-16 修正（轮转回归测试抓出的 off-by-one）：起点必须是 MAX_BACKUPS 而不是
             // MAX_BACKUPS-1。否则 .2→.3 这一步永不执行，实际只留 2 份备份，且第 2 代内容被
             // 第 1 代直接覆盖（静默丢一代历史）。i=MAX_BACKUPS 时 src=.2 → dst=.3，
             // REPLACE_EXISTING 天然覆盖最旧一份，无需额外 delete。

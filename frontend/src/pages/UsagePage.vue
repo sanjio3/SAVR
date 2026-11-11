@@ -317,7 +317,6 @@ const llm = computed(() => data.value?.llm ?? null);
 /**
  * 成本估算是否有依据。
  *
- * 2026-09-22 走查发现：``annual_cost = avg_scan_cost × predicted_scans``，而 ``avg_scan_cost``
  * 是 ``scan_cost`` 记录里 ``cost_usd`` 的均值 —— 当前库中 ``scan_record_count = 0``，
  * 于是年度成本/区间/均次成本三张卡片整齐显示 ``$0.0000``。
  * 把「没有成本记录」渲染成「0 元」会被读成「不要钱」，与「单价未上报就显示未计费、

@@ -10,7 +10,7 @@ import net.bytebuddy.asm.Advice;
  * tainted after `new String(decoded)`.
  *
  * <p>NOTE: {@code @OnMethodExit} here deliberately has NO {@code onThrowable}/{@code
- * suppress} — ByteBuddy cannot wrap a constructor's super() call in a try/catch, so
+ * suppress} — ByteBuddy cannot wrap a constructor's super call in a try/catch, so
  * suppress-based advice on a constructor throws "Cannot catch exception during
  * constructor call" and fail-opens the whole String transform.
  */

@@ -1,10 +1,8 @@
 """身份指纹强度判定（唯一真相源）。
 
-背景（R23-4 事故）：业务族差分重放用「响应体是否包含受害者标识」判定数据泄露
 （d1_service.replay_bola 的 victim_markers），该标识同时来自登记期派生
 （trigger_spec_registry._account_identifiers）与运行期账户属性。
 
-账户属性里 username / email 是强指纹，而 JWT 里的 uid 常常是单位数（target-mall 为
 admin=1 / alice=2 / bob=3）。把 "3" 当作泄露指纹时，几乎任何 JSON 响应体（金额、id、
 时间戳）都含有数字 3 → data_leak 恒为真 → 批量假确认。故凡进入「响应体子串匹配」的
 标识必须通过本模块的强度判定；哨兵解析等「构造请求」的用途不受此限。

@@ -1,7 +1,7 @@
-"""孤儿扫描任务回收（P0-1 根因修复）。
+"""孤儿扫描任务回收。
 
 问题：``ScanTaskRunner._run_task`` 在子进程内跑 ``scan_task_runner``，子进程退出后由父进程
-（service_server）的轮询线程检测 ``process.poll()`` / ``task_result.json`` 并触发 ``task_completed``。
+（service_server）的轮询线程检测 ``process.poll`` / ``task_result.json`` 并触发 ``task_completed``。
 若后端在扫描中途重启，新后端没有该 task 的 watcher 线程，线程既不会读 ``scan_progress.json``
 也不会检测退出，task 永久 ``running``，尽管 ``task_result.json`` 早已生成、findings/reports 始终为空。
 
@@ -10,7 +10,6 @@
 仅当存在 ``task_result.json`` 才回收——该文件只在扫描结束时写入，故存在即表示子进程已结束。
 对「仍 running 但无 task_result.json」的真·卡死（watcher 丢失且无结果）只告警、不自动改写状态。
 
-2026-09-28 补（run 24 事故）：启动自检**只在后端重启时跑一次**，而 run 24 的 watcher 是在
 后端活着的时候死的（future 异常被 ThreadPoolExecutor 静默吞），启动自检永远等不到下一次重启，
 于是 task 永久 running/d2、findings=0。为此本模块新增：
 
@@ -55,8 +54,7 @@ def _read_json(path: Path) -> Optional[Dict[str, Any]]:
 def _resolve_finished_at(result_file: Path, payload: Dict[str, Any]) -> Optional[str]:
     """推断任务的真实结束时刻，而不是「本次回收的时刻」。
 
-    回收往往远晚于扫描结束（run 21 实测 18:47 结束、22:53 才被回收），若直接写
-    datetime.utcnow()，finished_at 会偏移到回收时刻，前端「耗时 / 完成时间」展示失真。
+    datetime.utcnow，finished_at 会偏移到回收时刻，前端「耗时 / 完成时间」展示失真。
     优先取报告自带的 generated_at；缺失时退回 task_result.json 的落盘 mtime ——
     该文件只在扫描结束时写入，故其 mtime 即真实结束时刻。
     """
@@ -89,11 +87,10 @@ def _completion_payload(payload: Dict[str, Any], result_file: Optional[Path] = N
         "prepared_runtime": payload.get("prepared_runtime", {}),
         "stage_results": payload.get("stage_results", {}),
         "hitl": payload.get("hitl", {}),
-        # 2026-10-26（20.3.4 埋点补漏）：正常路径 task_runner 已透传 phase_times（其 580 行），
         # 但回收路径此前漏了这一项 ⇒ 直接跑 runner（_wb_submit_local）时任务由本函数收尾，
         # 阶段耗时在 task_result.json 里有、落库后却是空。两路径必须同形。
         "phase_times": payload.get("phase_times", {}) or {},
-        # 真实结束时刻。回收场景必须显式带上，否则 task_service 回退成 utcnow()（= 回收时刻）。
+        # 真实结束时刻。回收场景必须显式带上，否则 task_service 回退成 utcnow（= 回收时刻）。
         "finished_at": _resolve_finished_at(result_file, payload) if result_file else None,
     }
 
@@ -147,7 +144,6 @@ def reconcile_orphaned_tasks(task_service, task_repository, dry_run: bool = Fals
 
 
 # ---------------------------------------------------------------------------
-# 运行期增量 reconcile（run 24 半截状态根治）
 # ---------------------------------------------------------------------------
 
 def _live_scan_runner_task_ids() -> Optional[Set[int]]:
@@ -428,7 +424,6 @@ def start_periodic_reconciler(task_service, task_repository, interval: Optional[
         _RECONCILER_THREAD = threading.Thread(target=_loop, name="task-reconciler", daemon=True)
         _RECONCILER_THREAD.start()
         # 用 warning 而非 info：后端日志级别把项目 INFO 过滤掉了，而「reconciler 到底起没起」
-        # 正是出事故时最想确认的一件事，必须可见（run 24 排查时这条的缺失让定位多花很久）。
         logger.warning("[reconcile] 周期性 reconcile 已启动，间隔 %ss", _gap)
         return _RECONCILER_THREAD
 

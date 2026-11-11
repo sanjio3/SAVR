@@ -1,4 +1,4 @@
-"""A1 规则扫描（§8.1 / §9.1：注入类统一走外接 CodeQL + AI 语义整合）。
+"""A1 规则扫描。
 
 注入类（SQLi / 命令注入 / XSS / SSRF / 反序列化 等）：由 CodeQL 做数据流分析，
 ``A1CodeQLSemanticAgent`` 做 AI 语义整合。自写 yaml 正则引擎（原 A1RuleAgent）已删除，
@@ -6,7 +6,7 @@
 
 业务逻辑类（越权 / 状态机 / 计算逻辑 / 认证会话 / 滥用 DoS）：由
 ``A1BusinessLogicAIAgent`` 做 AI 语义识别（主链路），自写启发式分析器仅作离线兜底；
-CodeQL 仅提供辅助结构验证。详见 analyze_business_logic()。
+CodeQL 仅提供辅助结构验证。详见 analyze_business_logic。
 """
 import logging
 import os
@@ -25,7 +25,6 @@ from src.core.models import ScanResult, Vulnerability
 from src.pipeline.a1.manifest import A1_MANIFEST
 from src.pipeline.stage_contract import StageService
 
-# 配置统一（2026-10-20）：CodeQL 的 bin_path / enabled 收进 config/codeql.yaml，
 # 由 src.core.config_registry 统一读取。self.config 中的 a1_use_codeql / codeql.bin_path
 # 作为显式覆盖（编排层下发的运行时决策），未给出时回退到配置文件。
 try:
@@ -108,7 +107,6 @@ def _hypo_to_vulnerability(h: Dict[str, Any]) -> Vulnerability:
         "http_method": str(h.get("http_method") or ""),
         "vulnerable_param": param,
     })
-    # R23-3(a)（§6.13）：A1 是业务族 findings 的一级生产者（Q1 之后），此前它在 exploit_spec 上
     # 什么都不写 —— 只有 bind_static_routes 命中的才会被塞一个「仅 entry 的裸 spec」，经
     # normalize_exploit_spec 补全后 payload.payload_family 恒为空。后果：登记层
     # （trigger_spec_registry:620）读不到族名只好回落 _norm_family，D1 也就拿不到族化的重放路由；
@@ -283,13 +281,11 @@ class A1PipelineService(StageService):
                 "ok" if codeql_results else "build_failed_or_empty")
             self._last_scan_meta["codeql_languages"] = per_lang
             if not codeql_results:
-                # 2026-10-20（用户质询）：不得静默回退——CodeQL 已启用却零结果必须显式告警，
                 # 否则「构建失败」被误读成「确实无漏洞」，TP/FP 口径失去可信基础。
                 logger.error(
                     "[A1][codeql] CodeQL 已启用但零结果（build_failed_or_empty，languages=%s）→ "
                     "降级 heuristic；**本次结果为启发式规则匹配，非语义数据流分析**", per_lang)
 
-        # ---- 启发式五类规则通道（并集融合，2026-09-25 起不再互斥替换）----
         # 原逻辑「CodeQL 有结果就整段跳过 heuristic」会在 CodeQL 覆盖不满时静默丢掉
         # crypto/weakrand/securecookie/trustbound 等五类保底召回（占 benchmark 样本 41.5%）。
         # 现改为两通道都跑，结果取并集：重叠命中按 (type, sink, 行±3) 去重，保留 CodeQL 条目
@@ -311,7 +307,6 @@ class A1PipelineService(StageService):
             self._last_scan_meta["engine"] = (
                 "heuristic-fallback" if _codeql_ready else "heuristic-only"
             )
-            # 2026-10-20（用户质询）：显式标注引擎模式，避免「heuristic 结果被当成语义分析结果」。
             # 默认禁用 CodeQL 时也必须告警一次，让人知道本次是规则匹配而非跨过程数据流。
             if not _codeql_ready:
                 logger.warning(
@@ -319,7 +314,6 @@ class A1PipelineService(StageService):
                     "heuristic-only 模式；**结果为启发式规则匹配，非跨过程语义分析**",
                     codeql_enabled, self._codeql.is_available())
 
-        # ---- §4.3（2026-09-20 修复）：active Skill 规则（rule_expression 通道）强制互补 ----
         # CodeQL 主链路成功时，确定性 heuristic 兜底被整段跳过（上方 if not results 分支不进），
         # 而 curated skill（如 CVE-2022-22978 这类配置型/模式型漏洞）CodeQL 默认查询集不覆盖，
         # 会被静默漏检。故无论 CodeQL 是否启用/成功，active skill 规则都须独立扫描并并入结果，
@@ -330,14 +324,11 @@ class A1PipelineService(StageService):
             self._last_scan_meta["skill_channel_used"] = True
             self._last_scan_meta["skill_channel_count"] = len(skill_vulns)
 
-        # ---- 安全实现负向模式（2026-09-26 F4 后精确率整改②）----
-        # OWASP benchmark 的 FP 全是「同一危险 API 的安全实现」。命中已知安全特征
         # （PreparedStatement 绑定 / ESAPI 编码 / SecureRandom / SHA-256+ / 双 Cookie 属性等）
         # 的 finding 在 A1 出口直接抑制，不再流向 A2/候选/确认链路。fail-open：无证据不抑制。
         try:
             from src.core.safe_patterns import build_file_index, filter_scan_results
-            # 2026-09-26：必须传文件索引。CodeQL 告警 file 是 SARIF 相对路径，
-            # 不解析成绝对路径则窗口读不到 → 抑制规则静默失效（实测抑制数恒为 0）。
+            # 不解析成绝对路径则窗口读不到 → 抑制规则静默失效。
             results, suppressed = filter_scan_results(results, file_index=build_file_index(files))
             if suppressed:
                 self._last_scan_meta["safe_pattern_suppressed"] = len(suppressed)
@@ -369,7 +360,7 @@ class A1PipelineService(StageService):
 
     @staticmethod
     def _scan_active_skill_rules(files: List[Dict]) -> List[Vulnerability]:
-        """§4.3（2026-09-20）：强制互补通道——只跑 active Skill 规则表达式（rule_expression）。
+        """强制互补通道——只跑 active Skill 规则表达式（rule_expression）。
 
         与 CodeQL / 全量 heuristic 兜底解耦：即便后者已产出结果，curated skill 仍须独立扫描，
         避免配置型/模式型漏洞（如 CVE-2022-22978）被漏检。失败 fail-open，绝不阻断主扫描。
@@ -405,7 +396,6 @@ class A1PipelineService(StageService):
         """
         by_file: Dict[str, ScanResult] = {r.file: r for r in codeql_results}
         added = 0
-        # 2026-11-01（P2）：去重键从 `(type, sink, 行±3)` 改成 `(canonical_family, 行±3)`。
         # 原因：两个引擎的 `type` 根本不是一套命名——CodeQL 出 `cross-site scripting` /
         # `template-injection`，启发式出 `xss` / `ssti`，`type` 不等 ⇒ 去重失效
         # （本轮实测：同 (文件,行) 多条的组 49 个，其中 28 组族名不同，
@@ -484,9 +474,7 @@ class A1PipelineService(StageService):
 
         命中则返回该根目录（CodeQL 可在此构建数据库）；未命中则回退公共目录本身。
 
-        2026-10-20：``files.path`` 可能是相对路径（``src\\main\\java\\...``），必须用
         ``code_root`` 拼成绝对路径，否则 CodeQL create_database 在错误目录执行。
-        r114 cmdi-1 实测：A1 只花 49.58s 就 fallback，CodeQL 根本没跑起来。
         """
         paths = [f.get("path") for f in files if f.get("path")]
         if not paths:
@@ -509,7 +497,6 @@ class A1PipelineService(StageService):
             common = common.parent
         # 向上回溯至多 6 层寻找构建文件
         cur = common
-        # 2026-10-20：6 层不够（BenchmarkTest 到 BenchmarkJava-master 需 7 层），放宽到 10。
         for _ in range(10):
             if any((cur / marker).exists() for marker in _BUILD_FILE_MARKERS):
                 return str(cur)
@@ -566,7 +553,6 @@ class A1PipelineService(StageService):
         if not got:
             # 兜底：列文件重建临时工程（适用于无构建文件的纯语言，如单文件 python/go）
             #
-            # 2026-11-01 修正：**有构建文件的 Java 项目不能走这条**。
             # 临时工程没有 pom.xml，`mvn -B compile` 必然失败，而失败信息会覆盖掉
             # 真实原因（本轮实测：真实根上 create 成功、analyze 未跑，
             # 却只看到临时工程里 "mvn compile failed"，排查方向被带偏）。
@@ -588,7 +574,6 @@ class A1PipelineService(StageService):
                     shutil.rmtree(tmp, ignore_errors=True)
         per_lang[language] = "ok" if got else "empty"
         if not got:
-            # 把 CodeQL 的失败原因透传到 _last_scan_meta，供报告/复盘直接看到
             # 「是构建失败、分析失败，还是真的没告警」。
             try:
                 _reason = str(getattr(self._semantic, "_last_codeql_reason", "") or "")
@@ -660,7 +645,7 @@ class A1PipelineService(StageService):
         return _analyze_bola(files)
 
     def analyze_business_logic(self, files: List[Dict]) -> List[Dict[str, object]]:
-        """§2.2 业务逻辑策略分析（全类目）：AI Agent 语义识别为主链路。
+        """ 业务逻辑策略分析（全类目）：AI Agent 语义识别为主链路。
 
         主链路 = ``A1BusinessLogicAIAgent``（LLM 语义识别）；无 LLM 时降级为自写启发式分析器
         （离线兜底，非主链路）。CodeQL 在该链路中仅做辅助结构验证。
@@ -669,11 +654,11 @@ class A1PipelineService(StageService):
         return A1BusinessLogicAIAgent(self.config).analyze_sources(files)
 
     def analyze_business_structure(self, files: List[Dict]) -> List[Dict[str, object]]:
-        """Q1（2026-09-10）：业务族「结构特征」**确定性**检测（不调 LLM）。
+        """Q1：业务族「结构特征」**确定性**检测（不调 LLM）。
 
         这是消除「业务逻辑类 findings 只能靠 LLM 产出」单点故障的关键一环：
         ``analyze_business_logic`` 走 LLM、``analyze_business_structure`` 走纯静态规则
-        （基于 Q2 静态路由索引）。LLM 整体不可用时，业务族仍有一批确定性候选产出。
+        。LLM 整体不可用时，业务族仍有一批确定性候选产出。
 
         开关：``a1_business_structure``（默认开；关掉即退回纯 LLM 口径，便于 A/B 对照）。
         """
@@ -744,7 +729,6 @@ class A1PipelineService(StageService):
         logger.info("[A1] 业务逻辑类并入 A1 findings：%d 条假说（BOLA/越权/状态机/计算逻辑/认证会话/滥用DoS）", added)
         return new_results
 
-    # ---------------- Q2（2026-09-10）：A1 阶段静态路由前置绑定 ----------------
     def bind_static_routes(
         self, a1_results: List[ScanResult], files: List[Dict]
     ) -> List[ScanResult]:
@@ -811,7 +795,6 @@ class A1PipelineService(StageService):
                     # 顺手清掉「源码路径当路由」的污染：离线 BOLA 分析器的 entry_point 形如
                     # ``.../OrderService.java:118``，会被 _hypo_to_vulnerability 一并写进
                     # a1_evidence.target_endpoint。该字段是 resolve_endpoint_full 的一等候选，
-                    # 留着会让下游拿源码路径当 HTTP 路由（task-4 实锤：spec 550/551 的
                     # target_endpoint 就是 orderservice.java:118/131）。entry_point 本身
                     # （代码定位语义）保持不变，只清 HTTP 端点字段。
                     if _SOURCE_PATH_ENDPOINT_RE.search(str(ev.get("target_endpoint") or "")):
@@ -838,9 +821,8 @@ class A1PipelineService(StageService):
                 try:
                     spec = getattr(v, "exploit_spec", None)
                     if not isinstance(spec, dict) or not spec:
-                        # R23-3：用规范空的 exploit_spec 而非裸 dict。裸 dict 只有 entry 一个键，
                         # 经 normalize_exploit_spec 补全后所有语义字段为空，且掩盖了「该 finding
-                        # 从未经过 A2 造弹」这一事实，是 §6.13 payload_family 大面积为空的成因之一。
+                        # 从未经过 A2 造弹」这一事实，是  payload_family 大面积为空的成因之一。
                         try:
                             from src.core.exploit_spec import empty_exploit_spec as _empty_spec
                             spec = _empty_spec()

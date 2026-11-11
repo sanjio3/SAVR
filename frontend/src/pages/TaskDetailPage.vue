@@ -12,7 +12,7 @@
         </div>
       </div>
 
-      <!-- A4（2026-09-18，方案二）：运行期顶部计数器改口径。
+      <!--
            根因：findings 表由任务收尾的 replace_for_task 统一重写（replace 语义），运行期间本任务
            在该表零行，而下方统计读的正是 store.findings —— 顶部计数器在整轮运行里恒为 0，
            与同页阶段卡片（SCA 348 / A1 90 / A2 157 / D2 已证可利用）自相矛盾。
@@ -44,7 +44,7 @@
         <div class="stat-card">
           <span class="muted">应用层漏洞</span>
           <strong class="num">{{ appLayerCount }}</strong>
-          <!-- 2026-09-18（A2 方案二）：聚合吸收成员已有独立 findings 行（用于覆盖率统计与关联桥），
+          <!--
                但它们是所属聚合发现的构成节点、不是独立漏洞，故不计入「应用层漏洞」，
                在此单独披露条数，避免同一 sink 被双计。 -->
           <span v-if="absorbedFindings.length" class="muted stat-note">
@@ -69,8 +69,7 @@
         </div>
       </div>
 
-      <!-- D4：占比条。五个数字卡等宽，比例关系全靠减法看不出来，这里补上可视化。
-           SCA 常常是缺口的大头（实测 java-sec-code：348/579 = 60%），不显式画出来容易被误读。 -->
+      <!-- 占比条：五个数字卡等宽，补上比例可视化，避免只靠减法看分布。 -->
       <div v-if="!isTaskRunning && totalFindings > 0" class="stack gap-xs" style="margin-top: 14px">
         <div class="share-bar" role="img" :aria-label="`应用层漏洞 ${appLayerCount} 条，SCA 组件漏洞 ${scaFindings.length} 条`">
           <div class="share-seg app" :style="{ width: appSharePct + '%' }" :title="`应用层漏洞 ${appLayerCount} 条（${appSharePct}%）`" />
@@ -98,10 +97,9 @@
     </div>
 
     <section v-if="selectedTab === 'Overview'" class="stack">
-      <!-- 批次 2（2026-09-22）：横向流程条 → 纵向步骤流。
+      <!--
            原横向条把 10 个阶段压成一排等宽格子，窄屏必须缩写，且每格一个实心色圆点；
            现在一步一行：方向与阅读方向一致，阶段码由小圆环承担、名称只剩裸名（修掉「A1 A1 …」）。
-           批次 4（2026-09-22）：结构抽到 components/StepFlow.vue，本页只负责把阶段映射成展示项。
            组件侧 emit 的是 string（它不该知道本项目的阶段键联合类型），故在此收窄回 TaskStageKey。 -->
       <StepFlow :items="stepItems" @select="(key) => selectStage(key as TaskStageKey)" />
 
@@ -307,7 +305,7 @@
                 <tr v-for="finding in overviewStageRows" :key="`${activeStageValue.key}-${finding.id}`">
                   <td>
                     <span v-if="isBusinessLogic(finding)" class="badge badge-info" :title="`${businessLogicLabel(finding)}：作为 A1 一级 family findings，与技术漏洞共用同一条 D 阶段验证链路`">{{ businessLogicLabel(finding) }}</span>
-                    <!-- 2026-09-18（A2 方案二）：被聚合吸收的成员补行。其证据已并入所属聚合 finding，
+                    <!--
                          此处仅保留自身的文件/行，用于覆盖率统计与 IAST 关联桥。 -->
                     <span
                       v-if="isAbsorbedFinding(finding)"
@@ -618,7 +616,7 @@
       </section>
     </section>
 
-    <!-- 2026-09-17（待请示批准）：单 task 运行时运维视图。
+    <!--
          用户诉求是「直观对应 task 的总结看板，替代纯文字不直观的报告」，故用状态卡 +
          端口徽章 + 事件流呈现，而不是把 /runtime 的字段平铺成文字。 -->
     <section v-else-if="selectedTab === 'Ops'" class="stack">
@@ -1020,7 +1018,6 @@ const store = useWorkspaceStore();
 const iastStore = useIastStore();
 const selectedStageKey = ref<TaskStageKey>("preprocess");
 const selectedResultStage = ref<"a1" | "a2" | "d2">("a1");
-// 回退（2026-09-22）：tab 改为纯本地状态，不再与 URL 路径段同步。
 // 理由：URL 路径段驱动的 tab 在纠偏重定向、书签、浏览器后退时容易丢失/错乱，
 // 且 HITL 等内容不应依赖 URL 才能显示。tab 本质是「当前看哪一屏」的视图状态，留在组件内更稳。
 // 深链/分享需求由其余页面入口承担，不强求 tab 进 URL。
@@ -1049,7 +1046,6 @@ function tabLabel(t: string): string {
   return m[t] || t;
 }
 
-// 单 task 运行时运维快照（2026-09-17 落地）：进程锁 / 进度心跳与卡死判定 / 端口可达性 /
 // 最近事件流 / AI 调用。数据来自 GET /api/scan-tasks/{id}/runtime（后端 src/api/routers/tasks.py）。
 // 与全局 /ops（跨任务运营度量）互补：这里只回答「这一个任务现在跑得怎么样」。
 const runtime = ref<Record<string, any> | null>(null);
@@ -1111,7 +1107,6 @@ const breadcrumbItems = computed(() => {
 const activeStageValue = computed(() => stages.value.find((item) => item.key === selectedStageKey.value) || activeStage(store.selectedTask));
 
 /**
- * 批次 4（2026-09-22）：把阶段数组映射成 StepFlow 的纯展示项。
  *
  * 为什么在这里映射而不是让组件自己算：进度比例依赖后端裁剪语义（items 被裁到 8 条时
  * 不能拿 items 算 done），耗时依赖 formatDuration 与本页的 started_at/finished_at 约定
@@ -1151,7 +1146,6 @@ const d2Verify = computed(() => {
 function stageHint(key: string): string {
   return STAGE_HINTS[key as TaskStageKey] || "";
 }
-// severityTone 已收敛到 @/domain/task-view（批次 4，2026-09-22）
 function stageSnapshotNums(s: { started_at?: string; finished_at?: string; metrics?: Record<string, unknown> }): string {
   const parts: string[] = [];
   const dur = formatDuration(s.started_at, s.finished_at);
@@ -1189,7 +1183,6 @@ function stageTaskItems(s: StageLike): { name?: string; status?: string; detail?
   return ((s as any)?.tasks?.items || []) as { name?: string; status?: string; detail?: string }[];
 }
 
-// ---- 2.2 监控化（2026-09-19 落地）------------------------------------------------
 
 /** 流程节点徽标用的任务进度。后端 items 被裁剪到 8 条，裁剪时不能拿 items 算比例。 */
 function stageTaskProgress(s: StageLike): { done: number; total: number; showRatio: boolean } {
@@ -1311,8 +1304,6 @@ function buildUnifiedStages(task: typeof store.selectedTask) {
         }
       } else {
         // i2
-        // 2026-09-28：闭环异常必须在阶段卡上标红。此前后端 status 恒为 completed，
-        // 闭环崩溃在界面上完全不可见（run 25 事故：异常被 benchmark_cli 的 except 吞掉，
         // 第二轮 D2 重验与 spec 回灌静默丢失，现象却显示为「闭环跑完、无需动作」）。
         // 后端已把 stage_results.i2.status 置 failed 并写入 closed_loop.error，这里兜底读取。
         const i2Stage = (task?.summary?.stage_results as Record<string, any> | undefined)?.i2 as
@@ -1341,7 +1332,6 @@ function buildUnifiedStages(task: typeof store.selectedTask) {
         started_at: p.started_at || "",
         finished_at: p.finished_at || "",
         active: (task?.summary?.current_stage || task?.phase) === key,
-        // 2026-09-17：阶段 -> 具体任务清单（后端 pipeline_view 产出，替代空壳卡片）。
         tasks: p.tasks || { total: 0, items: [] },
       };
     }
@@ -1355,7 +1345,6 @@ function buildUnifiedStages(task: typeof store.selectedTask) {
       started_at: p.started_at || "",
       finished_at: p.finished_at || "",
       active: (task?.summary?.current_stage || task?.phase) === key,
-      // 2026-09-17：阶段 -> 具体任务清单（后端 pipeline_view 产出，替代空壳卡片）。
       tasks: p.tasks || { total: 0, items: [] },
     };
   });
@@ -1478,7 +1467,6 @@ const canSuspend = computed(() => {
   return status !== "running" && status !== "suspended";
 });
 const scaFindings = computed(() => store.findings.filter((finding) => isScaFinding(finding)));
-// 2026-09-18（A2 方案二）：聚合吸收成员补行。它们有独立 findings 行（供覆盖率统计与关联桥），
 // 但不是独立漏洞 —— 证据已并入所属聚合 finding，故不计入「应用层漏洞」、默认也不在列表中重复展示。
 const absorbedFindings = computed(() => store.findings.filter((finding) => isAbsorbedFinding(finding)));
 // A4（方案二）：运行期判定。status=running 时顶部切分轴计数口径（findings 表此时恒空）。
@@ -1512,17 +1500,14 @@ const appSharePct = computed(() => {
   if (!totalFindings.value) return 100;
   return Math.round((appLayerCount.value / totalFindings.value) * 100);
 });
-// P2-4（2026-09-13）：SCA 组件漏洞默认不混入应用层 findings 列表（总数口径同步改为
 // canonical，见 benchmark_cli 汇总）。此处提供开关，默认关闭。
 const showScaFindings = ref(false);
-// 2026-09-18（A2 方案二）：聚合吸收成员默认折叠，与 SCA 开关同一交互范式。
 const showAbsorbedFindings = ref(false);
 function isScaFinding(finding: { raw?: Record<string, unknown> | null; finding_type?: string }): boolean {
   const raw = (finding.raw || {}) as Record<string, unknown>;
   const text = String(raw.display_family || finding.finding_type || raw.type || "").toLowerCase();
   return text.includes("sca") || Boolean(raw.sca) || String(raw.source || "").toLowerCase() === "sca";
 }
-// 2026-09-18（A2 方案二）：聚合吸收成员判定。
 // 后端在聚合时为被吸收节点补一行，raw.is_absorbed=true 且 raw.absorbed_by_group_key 指向所属
 // 聚合组（见 a2_intelligent_agent._merge_chain_vulnerabilities）。兼容落盘的布尔/字符串两种形态。
 function isAbsorbedFinding(finding: { raw?: Record<string, unknown> | null }): boolean {
@@ -1566,7 +1551,6 @@ const sortedFindings = computed(() =>
   [...store.findings]
     // P2-4：默认隐藏 SCA 组件漏洞（应用层 canonical 口径），开关打开时才显示。
     .filter((finding) => showScaFindings.value || !isScaFinding(finding))
-    // 2026-09-18（A2 方案二）：默认隐藏聚合吸收成员，避免与所属聚合 finding 重复展示；
     // 开关打开时显示，并在行内标注归属的聚合组。
     .filter((finding) => showAbsorbedFindings.value || !isAbsorbedFinding(finding))
     .sort((left, right) => {
@@ -1785,7 +1769,6 @@ function humanizeKey(key: string) {
 }
 
 /**
- * D6（2026-09-19）：未映射键的兜底——下划线拆词 + 驼峰拆词，逐词首字母大写。
  * 后端指标键混用 snake_case 与 camelCase（如 model_profile / modelProfile），
  * 此前只按下划线切分，camelCase 键会原样连排成一坨读不出来；
  * 已在映射表里的键走上面的 Title Case，与映射表风格对齐。
@@ -2102,14 +2085,12 @@ const BUSINESS_LOGIC_MEMBERSHIP = new Set<string>([
   "mass-assignment", "批量赋值", "property-injection",
   "auth-session", "auth", "认证", "jwt", "jwt-forgery", "jwt-token-forgery",
   "jwt-token-manipulation", "jwt安全漏洞", "authentication-bypass", "auth-bypass", "authorization-bypass",
-  // 2026-09-17（待请示 §1.1 方案 A）：移除 "csrf"。csrf 是技术族，非业务差分族；
   // 后端 exploit_spec._BUSINESS_LOGIC_FAMILY_ALIASES 已同步删除 "csrf":"abuse_dos"，
   // derive_flow_type("csrf") 现返 "injection"。此镜像必须与后端保持一致。
   "abuse", "dos", "重放攻击", "replay-attack", "refund-abuse", "business-logic-abuse",
   "business-logic", "business-logic-bypass",
   "signature_bypass", "signature", "jwt_forgery", "jwt-forgery", "alg_none", "alg-none",
   "rsa_confusion", "sig_none", "signature-verification-bypass",
-  // —— 2026-09-02 别名表缺口补全（与后端 exploit_spec.py 同步）——
   "业务逻辑", "退款滥用", "垂直越权-(privilege-escalation)",
   "business-logic-manipulation", "unauthorized-access", "concurrent-race-condition",
   "signature-bypass", "signature-forgery",
@@ -2243,7 +2224,6 @@ function pocChainSummary(finding: Finding): string[] {
   return chain.map((node: any) => String(node?.node || node?.role || node?.signature || "")).filter(Boolean);
 }
 
-// §③ D2 未验证原因（2026-09-22）：报告层会为未获 D2 验证的 finding 写入显式原因状态
 // （not_scheduled=未进 D2 执行队列；no_verification_record=已入队却无验证记录，属上游结果丢失）。
 // 这两个状态是「未验证」，措辞必须避免任何可被读成「确认」的字样。
 const D2_UNVERIFIED_STATUS_LABEL: Record<string, string> = {

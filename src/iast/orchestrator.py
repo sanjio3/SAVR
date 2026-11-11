@@ -1,4 +1,4 @@
-"""触发事务编排器（重构文档 3.12 / 3.12.x / 7.6）。
+"""触发事务编排器。
 
 归属独立模块 src/iast/orchestrator.py，不塞进 d2 service。负责协调三件事：
 1. DAST 发触发请求（通过注入的 dast_operator）；
@@ -37,7 +37,7 @@ from src.iast.canary import CanaryMatcher, CanaryStates, is_sink_reached, STATE_
 from src.iast.chain_conformance import verify_chain_conformance
 from src.iast.sanitizer_trace import is_sanitizer_present
 
-# ---- IastVerdict.state（§3.12.x）----
+# ---- IastVerdict.state----
 STATE_SINK_REACHED = "sink-reached"
 # 设计一①：探针在 sink 现场（经 TaintStore 解析出 canary 位于 sink 实参）显式断言的 SINK_REACHED。
 # 与被动兜底 sink-reached（Python 在 payload 里扫到 canary）区分：探针断言 = 攻击者可控数据确证抵达危险函数，
@@ -46,14 +46,12 @@ STATE_SINK_REACHED_PROBE = "sink-reached-probe"
 STATE_ARRIVAL_SANITIZED = "arrival-sanitized"
 STATE_NO_ARRIVAL = "no-arrival"
 
-# #④ 防卡死（2026-09-26 落地）：单条重放墙钟超时兜底。
 # 原 orchestrator 对 dast_operator.replay / replay_multi 的调用无任何墙钟上限，
-# 一旦底层 HTTP 线程死锁（双 runner 并发踩踏单靶场实测触发），整组循环与 i2_rerun 永久冻结。
+# 一旦底层 HTTP 线程死锁，整组循环与 i2_rerun 永久冻结。
 # 用守护线程 + join(timeout) 给每条重放加硬上限；超时返回哨兵，调用方转为 timeout 标记的 DastImpact，
 # 不让单条阻塞拖垮整轮。阈值由 SAST_AI_D1_REPLAY_TIMEOUT 调（默认 120s，远大于单条 HTTP 10s 超时）。
 _REPLAY_TIMEOUT_SENTINEL = object()
 
-# 2026-10-12（r84/r85 实证）：探针捕获缓冲被新请求覆写，快速连发的重放事件永久丢失。
 # SAST_AI_D1_REPLAY_PACE_MS：逐条重放之间的强制间隔（毫秒，默认 0=不限速）。
 # 基准靶场建议 ≥4000 并配合 SAST_AI_D1_INIT_WORKERS=1 / SAST_AI_D1_MAX_WORKERS=1。
 _D1_REPLAY_PACE_MS = float(os.environ.get("SAST_AI_D1_REPLAY_PACE_MS", "0") or 0)
@@ -107,8 +105,6 @@ _ARRIVAL_STATES = frozenset({
 class WindowConfig:
     """3.12 窗口参数（均可配置）。
 
-    2026-10-18 速度治理：原策略是「只要批内还有假说没到 sink，就把 t_max 等满，
-    再等 6×5s=30s 回填」，实测每个事务最坏 90s；而 r108 实测 D2 阶段占总墙钟 78%
     （11.6min/15.1min），是扫描慢的绝对主因。
 
     三项改动（全部可用 env 覆盖，便于 A/B 回退）：
@@ -157,7 +153,7 @@ class WindowConfig:
 
 @dataclass
 class IastVerdict:
-    """单假说可达性裁定（§3.12.x IastVerdict）。"""
+    """单假说可达性裁定。"""
     state: str = STATE_NO_ARRIVAL
     matched_event_ids: List[int] = field(default_factory=list)
     confidence: str = "low"
@@ -167,11 +163,9 @@ class IastVerdict:
     chain_conformance: Dict[str, Any] = field(default_factory=dict)  # I1 逐节点链路符合性（§A2 poc 链）
     matched_event_detail: Dict[str, Any] = field(default_factory=dict)  # stash 命中的完整探针事件（含 stack_trace）供链路符合性
     matched_sink_file: str = ""  # 命中事件的 sink_file（JVM 类名.方法），④ sink 身份校验用
-    # 值级证据（2026-10-10）：我方投放数据**真的出现在 sink 实参值里**的事实记录。
     # 与 canary_match 的区别：canary_match 是探针的 trace 级断言（实测 4943/4943 全为 1，
     # 而记录值里真能看到 canary 的只有 129 条 2.6%），值级是**比对出来的**，不是断言出来的。
     value_hit: Dict[str, Any] = field(default_factory=dict)
-    # L3 语义层异常证据（2026-10-10 B2）：探针在 sink 现场抛出的异常类名。
     # 它是「危险操作真的执行并抛错」的一手事实（如 SQL 注入触发 java.sql.SQLException、
     # 命令注入触发 java.io.IOException），跨过了「污点是否抵达」的不确定性；
     # 与 canary 断言 / 值级命中正交，是独立的 definitive 阳性候选。
@@ -195,7 +189,7 @@ class IastVerdict:
 
 @dataclass
 class DastImpact:
-    """D1 重放原始材料（§3.12.x raw_dast_impact），留给 d2_judge 做危害裁定，编排器不解释。"""
+    """D1 重放原始材料，留给 d2_judge 做危害裁定，编排器不解释。"""
     reached: bool = False
     status_code: Optional[int] = None
     body: str = ""
@@ -203,13 +197,11 @@ class DastImpact:
     error: str = ""
     retried: int = 0
     provisional: bool = False        # D1 重试 3 次仍失败 → provisional 交 I2 裁定
-    blocked: bool = False            # §3.14 复探未就绪 → 阻断发流量（不发 replay）
+    blocked: bool = False
     slices: Dict[str, Any] = field(default_factory=dict)  # multi-match 每假说独立切片（仅 per-param 切片，不放元数据）
-    # ---- 2026-08-29 真实攻击元数据：让 I2 能区分「真打过」与「只探过」----
     attack_degraded: bool = False    # True=本次仅 canary 探针（A2 未产出真 payload），不构成攻击证据
     attack_payload_used: str = ""    # 实际投放的攻击 payload（degraded 时为空）
     business_logic: Dict[str, Any] = field(default_factory=dict)  # 业务差分重放原始结果
-    # 多 spec 聚合语义（2026-08-29）：attack_degraded 表示「全部降级」（一条都没真打），
     # attack_degraded_any 表示「至少一条降级」（部分没真打）。两者并存才能让 D2 区分
     # 「完全没打过」与「打过但混了弱证据」——只留一个布尔会把这两种截然不同的证据强度混为一谈。
     attack_degraded_any: bool = False
@@ -231,11 +223,9 @@ class DastImpact:
     # A1 静态识别到的模板引擎（velocity/freemarker/thymeleaf/pebble/spel/ognl/mvel）。
     # SSTI 结果点比对按桶派发求值对：不同引擎语法不同，混用一组表达式会同时漏报与误报。
     ssti_engines: List[str] = field(default_factory=list)
-    # ---- 靶场健康度（2026-09-07 落地）：区分「靶场不健康（可重试）」与「无证据（永久非漏洞）」----
     # True 表示本条 D1 重放因靶场 5xx/连接异常/超时/环境探针未就绪而未能取得有效响应——
     # 这不等同于「漏洞不存在」，下游应标记为 target-unhealthy（可重试），而非 no_evidence（永久非漏洞）。
     target_unhealthy: bool = False
-    # ---- 时间盲注承接（2026-09-07 落地）：给 D2 时延双阈值确认门提供旁证 ----
     # elapsed_ms：投放攻击 payload 的主请求耗时（毫秒）。任何重放都会填（非 sleep 型也记，便于诊断）。
     # baseline_elapsed_ms：命中 sleep 型 payload 时对同端点发一次无害基线请求的耗时（毫秒）；
     #   无基线（path 位无法安全重建等）时保持 0.0，D2 退回绝对阈值判定。
@@ -244,12 +234,9 @@ class DastImpact:
     elapsed_ms: float = 0.0
     baseline_elapsed_ms: float = 0.0
     sleep_seconds_hint: float = 0.0
-    # ---- 响应头（2026-09-10 落地）：业务差分重放需从 302 Location 提取新建资源 id（如 /order/{id}）----
     headers: Dict[str, str] = field(default_factory=dict)
-    # ---- R24-D 破坏性操作闸门（2026-09-10 落地）：本条重放是否被闸门干预（哨兵 id / 跳过）----
     # 非空时下游须按弱证据处理（absent_id：越权判据保留但零持久化变更；skip：未投放）。
     destructive_guard: Dict[str, Any] = field(default_factory=dict)
-    # ---- 族-载荷一致性自检（2026-09-22 落地，评审 ②-1）----
     # 投放前被判为「废弹」而被丢弃的载荷及原因（形如 "ssrf_payload_with_shell_metachar"）。
     # 非空表示本次重放**没有**投放 A2 产出的真弹（降级为 canary 或最小兜底弹），下游须按弱证据处理，
     # 且不得把它记成「探针/靶场打不通」——根因在上游载荷形状，不在运行时。
@@ -257,7 +244,6 @@ class DastImpact:
     # 本次投放的载荷来源：a2（A2 产出）/ sca_forge（弹药库补位）/ minimal_fallback（族最小可用弹）
     # / none（无弹，纯 canary）。供对账区分「没弹」与「弹形状错」。
     payload_source: str = "none"
-    # ---- WAF/拦截器/参数截断区分（2026-09-27 落地，评审缺口三）----
     # True 表示本条重放响应明确指示「请求在抵达漏洞点之前被安全基础设施（WAF / 应用拦截器 /
     # 参数截断过滤器）阻断」——它不代表「漏洞不存在」，而是「本次未能有效验证」，应重试或人工确认。
     # 与 target_unhealthy（靶场 5xx/连接异常，可重试）并列 rank 0，但语义不同：
@@ -265,16 +251,13 @@ class DastImpact:
     #   - waf_blocked：靶场健康，但请求被安全策略拦截。
     # 两者都不应被误判为 no_evidence（永久非漏洞，确认口径的分母）。
     waf_blocked: bool = False
-    # ---- D1 per-request 认证守卫（2026-11-06）----
     # 主重放 / oracle 探测臂的实际认证态：
     # anonymous / authenticated / reauthed / reauth_failed。
     # 落 raw_dast_impact 供泛化验证剔除「登录墙 302」这类执行层干扰。
     auth_state: str = ""
-    # ---- P1 对照实验差分（2026-10-10 落地）：无害控制 vs 有害实验的可观测差分结论 ----
     # 由 D1 在 _replay_attack 内对 dataflow 族采集填充；{"attempted","harmful","reason"}。
     # 严格 fail-open：未尝试/歧义时为 attempted=False（闸门口保留现状，绝不零化仅到达 TP）。
     differential: Dict[str, Any] = field(default_factory=dict)
-    # ---- 族级行为 oracle（2026-10-24 落地，可见率治本）----
     # 只看 HTTP 响应/时序（布尔对差分 / 时延 / 文件内容签名 / 原样反射），不依赖 IAST 探针。
     # 结构：{family, verdict(exploitable|not_exploitable|inconclusive), signal, confidence,
     #        reason, arms:[{arm,payload,status,body_len,elapsed_ms,error,note}]}。
@@ -317,9 +300,7 @@ class DastImpact:
 
 
 # ---------------------------------------------------------------------------
-# 自适应并发 + 熔断自动复位（2026-09-07 落地）
 #
-# 事故背景：原实现对所有 spec 固定 `ThreadPoolExecutor(max_workers=min(_n, 12))`，
 # 12 路并发压垮承压弱的靶场（典型如 H2 内存库在并发重放下丢失表 → 500），进而把
 # 「靶场不健康」误判成「漏洞无证据」，召回率虚低。
 #
@@ -334,7 +315,6 @@ class DastImpact:
 def _looks_like_target_down(msg: str) -> bool:
     """把异常/错误文本判定为「靶场不健康」信号。
 
-    2026-09-22 收紧（target_unhealthy 误标根因链的一环）：原 markers 里有裸的 ``"500"`` /
     ``"501"`` … 与 ``"探针"`` / ``"environment"`` 这类**子串匹配**，误判面极大 ——
     任何含 "500" 的文本（端口号 5000、请求体里的数字、混淆后的 payload、请求 id）都会命中，
     而 ``"探针"`` 更是把「探针相关提示」当成「靶场不健康」。
@@ -368,7 +348,7 @@ def _looks_like_target_down(msg: str) -> bool:
 def _is_target_unhealthy_impact(imp: "DastImpact") -> bool:
     """DastImpact 是否代表「靶场不健康」（区别于 spec 级阻断 / 真实无证据）。
 
-    该谓词的**唯一消费方**是 ``_AdaptiveConcurrencyGate.record()``（降并发 / 熔断复位），
+    该谓词的**唯一消费方**是 ``_AdaptiveConcurrencyGate.record``（降并发 / 熔断复位），
     不是下游的 no_evidence ↔ target_unhealthy 裁定 —— 后者读的是
     ``dast_impact_evidence["target_unhealthy"]`` 标志本身（见 adjudicator.py:495），
     并且还有 ``target_epoch`` 的纪元交叉校验兜底。所以这里的判定只需服务于「该不该退让」。
@@ -379,8 +359,6 @@ def _is_target_unhealthy_impact(imp: "DastImpact") -> bool:
          注意 orchestrator.py 未就绪分支产出的 ``blocked=True, target_unhealthy=True``
          （见下方 ``if blocked_reason:`` 处）**不会**流经本谓词，故不存在冲突。
       2. 生产者显式标记 ``target_unhealthy``：d1_service 已按「连接级失败才置位」的
-         收紧口径写入（2026-09-22），这是比在本层猜错误文本更强的证据，直接采信。
-      3. 兜底自判：5xx 状态码（承压丢表，见 2026-09-07 熔断落地说明）或连接级错误文本。
     """
     if imp is None:
         return False
@@ -476,7 +454,7 @@ class _AdaptiveConcurrencyGate:
 
 @dataclass
 class TransactionResult:
-    """run_transaction 出参（§3.12.x TransactionResult）。"""
+    """run_transaction 出参。"""
     transaction_id: str = ""
     per_hypothesis: Dict[str, IastVerdict] = field(default_factory=dict)
     multi_match_summary: Dict[str, Any] = field(default_factory=dict)
@@ -499,7 +477,6 @@ class TransactionState:
     status: str = STATUS_OPEN
     verdicts: Dict[str, IastVerdict] = field(default_factory=dict)
     dast_impact: Optional[DastImpact] = None
-    # 按假说的影响证据（2026-09-27 落地，批量合并事务的前置）：
     # tx.dast_impact 是**事务级聚合**（_aggregate_dast 里 reached = 批内所有重放取 OR），
     # 一个事务合并多个漏洞的假说后，全部成员都会吃到同一个 reached —— 自己没打通的
     # 漏洞也会被判有害（抬 FP）。这里按假说登记「该假说所属 endpoint 组」的影响证据，
@@ -507,18 +484,14 @@ class TransactionState:
     # 同端点内多参数仍是 OR，与「单漏洞多 spec」的既有语义一致。
     dast_impact_by_hypothesis: Dict[str, DastImpact] = field(default_factory=dict)
     backfill_eligible: bool = True
-    start_watermark: int = 0  # 本事务启动前的 iast_events 最大 id，用于剔除历史遗留事件（§3.12 事件隔离）
-    # （2026-09-29 落地）：本事务 I1 采集窗口上限覆盖。默认 None 用全局 WindowConfig.t_max；
+    start_watermark: int = 0
     # 当本事务含 extend_wait_window 覆盖的 spec 时，放宽到 t_max × EXTEND_FACTOR，专治
-    # 「探针事件因 HTTP 缓冲 / 后端摄取延迟迟到」导致的 no-arrival（与 §3.12 放宽到 60s 同源思路，
+    # 「探针事件因 HTTP 缓冲 / 后端摄取延迟迟到」导致的 no-arrival（与  放宽到 60s 同源思路，
     # 但仅对显式标记的难达 spec 放宽，不放大全量窗口）。
     window_t_max: Optional[float] = None
-    # 2026-10-04 落地（I1 窗口起算点修正）：本事务**最后一次真正发出重放**的时刻。
     # 重放是提交到线程池排队执行的，一批几百条 spec 的重放往往要几分钟才跑完；而窗口原先
     # 从 created_at（= 发流量**之前**）起算 t_max=60s，于是排在队尾的重放还没发出，采集窗口
     # 就已经关闭 → 事件回来时没人接 → 判 no-arrival，而事件明明落进了 iast_events。
-    # 实测事故：run 88 有 47 条 no-arrival，其中 **39 条**在 iast_events 里能查到
-    # sink-reached-probe 事件（run 89 同口径 11/19）；run 46 该比例为 0/2。
     # 窗口必须以「最后一批重放发出」为锚，否则并发度越高、丢证据越多。
     last_dispatch_at: float = 0.0
     # 假说 id → 是否由「收口迟到证据回收」升级而来（对账时用于把回收量单独摘出来，
@@ -541,7 +514,7 @@ def _map_canary_state(canary_state: str) -> Dict[str, Any]:
 
 
 def _replay_overrides_of(spec: Dict[str, Any]) -> List[str]:
-    """从 spec 解析重放侧覆盖动作（，2026-09-29 落地）。
+    """从 spec 解析重放侧覆盖动作。
 
     优先读 caller 直接放上的 ``replay_overrides`` 列表；缺失时从 ``raw_json.replay_adjust.actions``
     兜底解析（raw_json 可能是字符串或 dict）。涵盖 inject_all_params / extend_wait_window /
@@ -657,14 +630,11 @@ _CHAR_ARRAY_BODY_RE = re.compile(r"\[([^\[\]]{4,})\]")
 def deserialize_char_arrays(text: str) -> List[str]:
     """把探针序列化的 char[]（形如 ``[s, 4, s, t, ...]``，逗号分隔单字符）还原成字符串。
 
-    背景（2026-10-17）：探针把 ``write(char[])`` / ``write(char[],int,int)`` 这类 sink 实参
     记成**逐字符数组**（``[[s, 4, s, ...], 0, 36]``）而非连续字符串，于是 ``compute_value_hit``
-    的子串比对永远 miss —— 明明 canary 逐字符都在实参里，值级判据却判不出（run 361 实测：
     01428 的 ``write(char[])`` 事件 reached=1 却确认不了）。本函数在比对前把这种形态还原回
     字符串，作为**额外的 hay 源**，不改既有判定路径。
 
     判定条件（宁缺勿滥）：括号内 ≥4 段、且除至多 1 段外其余都是 0~1 字符 —— 只对真正的
-    char 数组成立；``[BenchmarkTest00110, bar]`` / ``[Accept-Ranges, bytes]`` / ``[true]`` /
     ``[MD5]`` 这类正常参数列表不会被误还原（多段长度 >1）。
     """
     out: List[str] = []
@@ -682,7 +652,6 @@ def compute_value_hit(canary: str, event: Dict[str, Any], max_snippet: int = 240
     """值级判据（v2 四态）：我方投放数据是否**真的出现在**探针记录的 sink 实参值里（纯函数）。
 
     为什么要这条：探针给所有 TAINT_FLOW 事件都打了 canary_match=1（trace 级断言），但实测
-    run 251 的 4943 条事件里，``source_value`` / ``evidence.payload`` 中真能看到 canary 原文的
     只有 129 条（2.6%）——「数据抵达 sink 实参」长期是**断言**出来的，不是**比对**出来的。
     污点传播对 map 回读、常量分支是值不敏感的（标签没掉就算命中），于是安全版同样被判到达，
     这是误报的根之一。
@@ -702,7 +671,7 @@ def compute_value_hit(canary: str, event: Dict[str, Any], max_snippet: int = 240
     本函数不越权出结论（证据分层铁律①：下层不得直接产出上层结论）。
     """
     # 事件非 dict（上游坏数据）先归一为空 dict —— miss 模板里要读 sink_file，提前在
-    # isinstance 守卫前构造会让失败形态直接抛 AttributeError（F2 回归锁实测）。
+    # isinstance 守卫前构造会让失败形态直接抛 AttributeError。
     if not isinstance(event, dict):
         event = {}
     miss = {"hit": False, "form": "miss", "where": "", "sink_file": str(event.get("sink_file") or ""),
@@ -714,7 +683,6 @@ def compute_value_hit(canary: str, event: Dict[str, Any], max_snippet: int = 240
     sv = str(event.get("source_value") or "")
     if sv:
         hay.append(("source_value", sv))
-        # char[] 逐字符形态还原（2026-10-17）：探针把 write(char[]) 实参记成 [s, 4, s, ...]，
         # 子串比对会 miss；还原成字符串后作为额外 hay 源再比对（不改既有路径，纯增量）。
         for _ds in deserialize_char_arrays(sv):
             hay.append(("source_value:char_array", _ds))
@@ -755,7 +723,6 @@ def compute_value_hit(canary: str, event: Dict[str, Any], max_snippet: int = 240
                     "snippet": snippet, "matched_len": len(can),
                     "definitive": True, "harmful": True,
                     "sanitizer": ""}
-    # HTML 反解码命中（Phase1，2026-10-11）：canary 未以原文出现、但 html.unescape 后出现
     # —— 说明数据确实被反射到了输出，只是被应用/框架 HTML 转义了。这是「数据到达 sink」
     # 的事实（证据层），但**不是**可利用性证据：转义后的反射恰恰是 XSS 防护生效的形态。
     # 因此返回独立的 hit_html_encoded 态且 hit=False —— 确认闸（d2_facade 按 value_hit.hit
@@ -794,17 +761,17 @@ def compute_value_hit(canary: str, event: Dict[str, Any], max_snippet: int = 240
 
 
 class TriggerTransactionOrchestrator:
-    """触发事务编排器（§3.12.x）。
+    """触发事务编排器。
 
     dast_operator: 可选，对象需提供 replay(trigger_spec, target) -> DastImpact。
                    缺省（None）则跳过 DAST 重放，raw_dast_impact 为空，judge 侧按"无 DAST 影响"处理。
-                   重试 3 次 + 退避由 D1 操作器自身负责（§3.7），编排器只消费其结果。
+                   重试 3 次 + 退避由 D1 操作器自身负责，编排器只消费其结果。
     event_source: 可选，callable(canary, since_id, limit) -> List[{"id":int, "canary_state":str}]。
                   缺省（None）则不做 IAST 轮询，verdict 保持 no-arrival。
     readiness_probe: 可选，callable(target: dict) -> {"ready": bool, "block_reason": str}。
-                     缺省（None）不复探。§3.14：run_transaction 真正发流量前做廉价复探（复用 A0
+                     缺省（None）不复探。：run_transaction 真正发流量前做廉价复探（复用 A0
                      环境识别逻辑），避免 A0 预处理结论在扫描中途过期；未就绪则阻断发流量。
-    clock: callable() -> float（秒）。sleep: callable(seconds)。注入二者使编排器可独立测试。
+    clock: callable -> float（秒）。sleep: callable(seconds)。注入二者使编排器可独立测试。
     """
 
     def __init__(
@@ -856,7 +823,6 @@ class TriggerTransactionOrchestrator:
             created_at=now,
             status=STATUS_OPEN,
         )
-        # （2026-09-29 落地）：本事务含 extend_wait_window 覆盖 → 放宽 I1 采集窗口。
         # 仅对显式标记的难达 spec 放宽，不放大全量窗口，避免普遍拖慢。fail-safe：无覆盖则保持默认。
         _extend = any("extend_wait_window" in _replay_overrides_of(s) for s in specs)
         if _extend:
@@ -883,7 +849,7 @@ class TriggerTransactionOrchestrator:
             tx.canary_by_hypothesis[hid] = canary
             tx.verdicts[hid] = IastVerdict(state=STATE_NO_ARRIVAL, provisional=True)
 
-        # §3.14 廉价复探：真正发流量前复用 A0 环境识别逻辑复探一次，避免预处理结论过期。
+        #  廉价复探：真正发流量前复用 A0 环境识别逻辑复探一次，避免预处理结论过期。
         blocked_reason = ""
         if self.readiness_probe is not None:
             try:
@@ -893,11 +859,10 @@ class TriggerTransactionOrchestrator:
             except Exception as exc:  # 复探本身异常不静默吞，记入阻断原因
                 blocked_reason = f"复探异常：{exc}"
 
-        # §3.12 事件隔离：捕获本事务启动前的 iast_events 最大 id 作为水位线（必须在发流量前设置，
+        #  事件隔离：捕获本事务启动前的 iast_events 最大 id 作为水位线（必须在发流量前设置，
         # 使后台采集器只轮询本事务产生的事件，剔除上一轮残留的空路径/陈旧事件）。
         tx.start_watermark = self._watermark() if self._watermark else 0
 
-        # 2026-10-04：事务必须在**发流量之前**登记进 _transactions。原实现登记在重放之后
         # （try/finally 之外的那一行），于是重放期间摄取端回调 submit_backfill_event 根本
         # 查不到本事务 → 回填通道在整个重放窗口内是断开的，只剩下采集器单点兜底。
         self._transactions[tx_id] = tx
@@ -909,7 +874,7 @@ class TriggerTransactionOrchestrator:
         _collector = threading.Thread(target=self._wait_window, args=(tx,), daemon=True)
         _collector.start()
 
-        # §4.7.2 multi-match：按 endpoint 分组，同组假说一次回放全参数带标（D1 已有 replay_multi 时用）。
+        #  multi-match：按 endpoint 分组，同组假说一次回放全参数带标（D1 已有 replay_multi 时用）。
         # 若 dast_operator 不支持 replay_multi，降级为逐假说 replay（兼容旧 D1）。
         raw_impacts: List[DastImpact] = []
         if blocked_reason:
@@ -929,7 +894,6 @@ class TriggerTransactionOrchestrator:
                     order.append(key)
                 groups[key].append(spec)
                 group_hids[key].append(hid)
-            # §自适应并发 + 熔断自动复位（2026-09-07 落地）：固定 12 路并发会压垮承压弱的靶场
             # （H2 内存库在并发重放下丢表 → 500），把「靶场不健康」误判成「漏洞无证据」。
             # 改为自适应闸门：错误率超阈值即熔断，待健康探针恢复后再续跑剩余 spec（非永久阻断）。
             _gate = _AdaptiveConcurrencyGate(
@@ -940,7 +904,6 @@ class TriggerTransactionOrchestrator:
                 max_w=int((os.environ.get("SAST_AI_D1_MAX_WORKERS") or "12")),
             )
             # #④ 防卡死：每条重放加墙钟硬上限（默认 120s），避免底层 HTTP 线程死锁冻住整组循环。
-            # #⑥ 分片并行（2026-09-26 落地）：原「跨组（跨 endpoint）串行」是 205 类 spec 的最大串行瓶颈。
             # 改为把各组提交到受同一自适应闸门管控的全局线程池，跨 endpoint 并行重放；
             # 组内仍用 replay_multi（per-endpoint 多匹配优化）或逐假说串行（不再组内额外开池，
             # 避免「组数×组内并发」把总并发放大击穿靶场），总并发由外层池大小 = 闸门当前自适应
@@ -951,7 +914,6 @@ class TriggerTransactionOrchestrator:
 
             def _process_group(key, group_specs):
                 _group_impacts: List[DastImpact] = []
-                # 2026-10-04：记录本组重放**真正发出**的时刻（组是在线程池里排队执行的，
                 # 队尾的组可能几分钟后才跑到这里）。I1 采集窗口以此锚定，见 _wait_window。
                 try:
                     _now = self._clock()
@@ -977,10 +939,8 @@ class TriggerTransactionOrchestrator:
                     else:
                         # 逐假说 replay：组内串行（并行度交由外层组池 + 闸门统一管控，避免并发放大）。
                         # canary 每 spec 唯一，跨组并发不会串扰 I1 关联；replay 无状态、线程安全。
-                        # 2026-10-12（r84/r85 实证，xss 召回 4~5% 的真根因）：探针捕获缓冲被新请求
                         # 覆写——每个 flush tick（~135s）只吐「最近一个请求」的事件，快速连发的
                         # 请求其事件在 flush 前就被覆盖，**永久丢失**（20 连发仅最后 1 条落库；
-                        # 真实运行 107 连发只幸存 2~11 个身份段；r82 同款：0.3s 间隔 20 条→0 事件，
                         # 4s 间隔 3 条→7 事件全到）。缓解：SAST_AI_D1_REPLAY_PACE_MS 设置逐条
                         # 间隔（建议 ≥4000，与单 worker 配合），让每条重放的事件活到被采集。
                         # 根治需探针侧改为逐事件入队 + 秒级 flush（sec-probe 项目）。
@@ -1024,9 +984,9 @@ class TriggerTransactionOrchestrator:
                         tx.dast_impact_by_hypothesis[_hid] = _group_agg
                 return _group_impacts
 
-            # 必须用闸门公开 API：current_workers()（自适应并发，initial→max，线程安全）。
+            # 必须用闸门公开 API：current_workers（自适应并发，initial→max，线程安全）。
             # 原写 _gate.max_w —— 那是**构造器参数名**而非实例属性（实例只存 self._max），
-            # 直接 AttributeError 打挂整个 D2（round-16 实测：D2 阶段整体失败）。并发上限
+            # 直接 AttributeError 打挂整个 D2。并发上限
             # 仍受同一闸门管控，想放大并发调 SAST_AI_D1_INIT_WORKERS / SAST_AI_D1_MAX_WORKERS。
             _group_workers = max(1, min(_gate.current_workers(), len(order)))
             with ThreadPoolExecutor(max_workers=_group_workers) as _gp:
@@ -1040,7 +1000,6 @@ class TriggerTransactionOrchestrator:
         # §I1 后台化：等待后台采集器自然结束（窗口耗尽或全假说到达 sink，含回填 settle 阶段）。
         # join 超时取 t_max + settle(6*5s) + 余量，确保迟到事件回填完毕再继续主流程。
         #
-        # 2026-10-04：窗口锚点已改为「最后一批重放发出 + t_max」，采集器的存活时间随之变长，
         # join 超时必须同步放宽，否则主线程会先于采集器退出、把还没归类的事件丢在身后。
         # 这里按硬上限（同一公式）放宽，并保留「超时即按末态继续」的 fail-safe。
         _t_max_eff = float(tx.window_t_max or self.window.t_max)
@@ -1050,7 +1009,6 @@ class TriggerTransactionOrchestrator:
         if _collector.is_alive():
             _logger.warning("[I1] 后台采集器在 %.0fs 内未退出，按窗口末态继续", _join_budget)
 
-        # 2026-10-04 收口回收：采集器退出后，对仍是 NO_ARRIVAL 的假说再按 canary 直接查一次
         # iast_events（since_id 仍用水位线，不会捞到上一轮/上一个任务的同 canary 事件）。
         # 这是最后一道兜底——探针事件可能迟到到采集器退出之后才落库，窗口再怎么放宽也接不住，
         # 而事件本身是真实证据，丢掉等于把「打中了」误判成「没打中」。
@@ -1084,8 +1042,6 @@ class TriggerTransactionOrchestrator:
     def _recover_late_arrival(self, tx: TransactionState) -> int:
         """收口回收：对仍是 NO_ARRIVAL 的假说，按 canary 直接回查一次事件并升级。
 
-        为什么需要它（2026-10-04 实测）：探针事件是批量 flush 的，实测会出现整批事件在
-        采集窗口关闭**之后**才落库（run 88 里 39 条被判 no-arrival 的 spec，其
         sink-reached-probe 事件全部集中落在 22:54:58–22:55:02 这 4 秒的一次批量落库里）。
         窗口再怎么放宽也接不住「晚于窗口的落库」，必须在收口时补一次回查。
 
@@ -1102,7 +1058,6 @@ class TriggerTransactionOrchestrator:
             return 0
         _base_wm = max(0, int(tx.start_watermark or 0))
         recovered_hids: set = set()
-        # 值级命中（2026-10-10）：迟到证据补捞同样要采值级事实，否则 late-recover 上来的
         # 这批事件是「有 state 但没有值」的半证据，D2 值级通道会对它们永久饥饿。
         local_value_hits: Dict[str, Dict[str, Any]] = {}
         # B2 sink 异常：迟到补捞同样要采 L3 异常类名，否则 B2 通道对 late-recover 上来的假说永久饥饿。
@@ -1190,11 +1145,8 @@ class TriggerTransactionOrchestrator:
     def _wait_window(self, tx: TransactionState) -> None:
         _t_max = tx.window_t_max if tx.window_t_max else self.window.t_max
 
-        # 2026-10-04 修复（I1 窗口锚点）：deadline 原为常量 `created_at + t_max`，而重放是
         # 提交进线程池**排队**执行的——几百条 spec 的重放往往要几分钟才发完。排在队尾的重放
         # 发出时，created_at + t_max 早已过期，采集循环已经退出，于是它的事件回来时没人接，
-        # 被判 no-arrival，可事件明明就躺在 iast_events 里（run 8847 条 no-arrival 中
-        # 39 条能查到 sink-reached-probe；run 8911/19；run 460/2）。
         # 改为按 `max(created_at, last_dispatch_at)` 动态重算：最后一批重放发出之后仍保有完整
         # t_max 采集窗口。硬上限防止极端排队把窗口拖成无限长（fail-safe：超时按窗口末态继续）。
         _hard_cap = max(float(_t_max) * 10.0, 900.0)
@@ -1203,14 +1155,13 @@ class TriggerTransactionOrchestrator:
             anchor = max(float(tx.created_at or 0.0), float(tx.last_dispatch_at or 0.0))
             return min(anchor + float(_t_max), float(tx.created_at or 0.0) + _hard_cap)
 
-        # 水位线：只轮询本事务启动后产生的事件，剔除历史遗留空路径事件（§3.12 事件隔离）。
+        # 水位线：只轮询本事务启动后产生的事件，剔除历史遗留空路径事件。
         #
-        # 2026-09-27 修复：游标必须**按 canary 独立**。原实现整个事务共享一个 last_id：
         # 批内多个 canary 的事件在 iast_events 里按 id 交错落库，轮询 canary A 把游标推到
         # 1010 之后，再轮询 canary B 就是「id > 1010」，B 那些 id<=1010 的事件被永久跳过。
         # 单假说事务（逐条 verify）只有一个 canary，游标单调推进恰好不出问题，所以这个坑
         # 一直潜伏；批量合并事务后十几个 canary 共享游标 → 大量假说的到达事件被漏读 →
-        # sink_reached 断崖下跌（round-19 实测：事件总量正常但归因大幅丢失）。
+        # sink_reached 断崖下跌。
         _base_wm = max(0, int(tx.start_watermark or 0))
         last_id_by_canary: Dict[str, int] = {
             c: _base_wm for c in set(tx.canary_by_hypothesis.values()) if c
@@ -1218,11 +1169,9 @@ class TriggerTransactionOrchestrator:
         # 每个假说维护「路径最丰富的到达事件」：I1 链路符合性优先选 taint_path 节点数最多者，
         # 避免陈旧空路径事件（上一轮残留）被当作 matched_event_detail 导致 conforms=False。
         best_event_by_hid: Dict[str, Dict[str, Any]] = {hid: None for hid in tx.verdicts}
-        # 值级命中（2026-10-10）：每个假说保留首个「sink 实参值里真的看得见我方数据」的事件事实。
         value_hit_by_hid: Dict[str, Dict[str, Any]] = {}
         # B2 sink 异常：每个假说保留首个 sink 现场异常类名（与值级同生命周期）。
         sink_exc_by_hid: Dict[str, str] = {}
-        # 2026-10-18 自适应退出状态：本事务是否收到过任何事件、最近一次收到事件的时刻。
         # 依据 probe-java EventBuffer.FLUSH_INTERVAL_MS=250ms，事件从产生到可被轮询到
         # 通常在秒级，故「有事件后长时间静默」= 剩余假说确实没到，可提前收口。
         _seen_any = False
@@ -1254,11 +1203,9 @@ class TriggerTransactionOrchestrator:
                                 self._consider_best_event(best_event_by_hid, hid, ev)
                                 self._consider_value_hit(value_hit_by_hid, hid, canary, ev)
                                 self._consider_sink_exception(sink_exc_by_hid, hid, ev)
-            # §4.7.2 multi-match 早停：全部 N 假说至少匹配到 arrival-sanitized/已抵达 sink 才结束；
+            #  multi-match 早停：全部 N 假说至少匹配到 arrival-sanitized/已抵达 sink 才结束；
             # 否则继续等更多事件。窗口耗尽则按现有逻辑退出。
-            # 2026-09-27 修复：必须调用 is_sink_reached(v.state) 而**不能**硬编码
             # (STATE_SINK_REACHED, STATE_ARRIVAL_SANITIZED) —— 探针实际发出的抵达态是
-            # `sink-reached-probe`（run 15 实测 233 条），它不在原硬编码元组里，导致即便
             # 批内假说全部早已抵达 sink，早停分支也永远不触发，窗口白白等满 t_max（≈60s）。
             # 这就是「IAST 几秒就跑通、却静默等满 60 秒」的根因。
             if tx.verdicts and all(
@@ -1266,7 +1213,6 @@ class TriggerTransactionOrchestrator:
                 for v in tx.verdicts.values()
             ):
                 break
-            # 2026-10-18 自适应退出①：有事件后连续静默 quiet_exit 秒 → 剩余假说按「未到达」收口。
             if _quiet_exit > 0 and _seen_any and _last_event_ts and (
                 self._clock() - _last_event_ts
             ) >= _quiet_exit:
@@ -1275,8 +1221,7 @@ class TriggerTransactionOrchestrator:
                     tx.transaction_id if hasattr(tx, "transaction_id") else "?", _quiet_exit, _seen_any,
                 )
                 break
-            # 2026-10-18 自适应退出②：全程零事件 → 从**最后一批重放发出**起 t_max_no_event 秒即退出。
-            # 首次类加载最坏约 14s（靶场实测 13.7s），25s 仍留余量。
+            # 首次类加载最坏约 14s，25s 仍留余量。
             # 注意：采集线程是在**发流量之前**启动的（见 run_transaction），last_dispatch_at 会在
             # 循环期间被主线程持续推进，所以锚点必须每轮重算；用循环外捕获的初值会让队尾重放的
             # 窗口被前几批的派发时刻"提前用完"。
@@ -1289,17 +1234,14 @@ class TriggerTransactionOrchestrator:
                     )
                     break
             self._sleep(self.window.poll_interval)
-        # 后端修复（证据 task-4 XSS 375/382）：主窗口耗尽后，探针事件仍可能因 HTTP 缓冲 / 后端摄取延迟迟到到达。
         # 这里做有限次「回填轮询」，只升不降——只要迟到事件带 sink-reached / sink-reached-probe，就把
         # 此前误判的 NO_ARRIVAL 升级，避免技术/注入族因时序被错杀为 0 确认。
         # 仅当尚有 NO_ARRIVAL 假说未决时才回填；已全数到达 sink 的事务（早停分支）无需再轮询，避免空转。
         #
-        # 2026-10-04 修复：原写法是「本轮没捞到新事件就 break」。主窗口刚耗尽时迟到事件往往
         # **还没到**，于是第一轮必然 _any_new=False → 立刻 break → 回填一轮都没等到，等于完全没有
         # 回填。这正是「迟到事件明明落库了却救不回来」的直接原因。改为：只要还有 NO_ARRIVAL 未决
         # 就把 6 轮等完（6×5s = 30s），全部解决才提前退出。
         if any(v.state == STATE_NO_ARRIVAL for v in tx.verdicts.values()):
-            # 2026-10-18：轮数与间隔改为 WindowConfig 可配（原硬编码 6×5s=30s）。
             # 默认降到 3 轮（15s）：迟到事件的主要来源已由「分片级自适应排空 + 迟到补捞
             # (d2_facade.recover_late_arrival)」兜底，事务内不必再空转 30s。
             _settle_sleep = float(getattr(self.window, "settle_sleep", 5.0) or 5.0)
@@ -1397,7 +1339,7 @@ class TriggerTransactionOrchestrator:
         """从探针事件里提取 sink 现场抛出的异常类名（L3 语义层），取不到返回空串。
 
         探针把 L3 字段（sink_sanitizer / sink_outcome / sink_exception_class / sink_exception_msg /
-        hook_inventory）放进事件 ``context`` 映射；``EventBuffer.eventBody()`` 把 ``context`` 嵌套进
+        hook_inventory）放进事件 ``context`` 映射；``EventBuffer.eventBody`` 把 ``context`` 嵌套进
         ``ev["context"]`` 并展平 canary/canaryState 到顶层；``agent_bridge`` 已把 L3 提升到返回 dict
         顶层；``service._prepare_event`` 已把 L3 并入 ``evidence`` 落库。故三层（顶层 / evidence /
         evidence.context）都要兜底读，确保迟到事件 / 历史事件都能取到。
@@ -1438,7 +1380,6 @@ class TriggerTransactionOrchestrator:
             if v is not None and not v.sink_exception_class:
                 v.sink_exception_class = exc
 
-    # ── D5（2026-10-10）：no-iast-evidence 归因二分 ──
     # 依赖探针侧已接线的 hook_inventory（A2 L3 字段，经 agent_bridge/service 提到顶层并入 evidence）。
     # 给定一个族与其 sink 画像，判断「本轮没拿到任何探针记录」的根因落在哪一侧：
     #   - "probe_coverage_gap"  ：探针根本没织入本族需要的 sink hook（hook_inventory 里查不到本族关键
@@ -1488,7 +1429,7 @@ class TriggerTransactionOrchestrator:
         fam = (family or "").strip().lower()
         kws = TriggerTransactionOrchestrator._D5_FAM_HOOK_KEYWORDS.get(fam)
         if not kws:
-            return "unknown"  # 未登记关键 hook 的族（securecookie/weakrand/bola 等）不二分
+            return "unknown"
         _inv_blob = " ".join(str(k) for k in hook_inventory.keys()) + " " + " ".join(
             str(v) for v in hook_inventory.values())
         if any(kw in _inv_blob.lower() for kw in kws):
@@ -1520,7 +1461,6 @@ class TriggerTransactionOrchestrator:
             for k, v in (imp.slices or {}).items():
                 merged.slices[k] = v
 
-        # 真实攻击元数据合并（2026-08-29）：此前这一段完全缺失，导致多 spec 场景下
         # D1 写入的 attack_degraded 在聚合时被静默丢弃（merged 取默认 False），
         # D2/D2Judge 因而永远读到「未降级」，把「只发了 canary 探针」当成真打过来裁决。
         # 只在「实际发起过回放」的 impact 上统计：blocked/error 未发流量，不构成攻击也不算降级。
@@ -1531,10 +1471,8 @@ class TriggerTransactionOrchestrator:
             for imp in replayed:
                 if imp.attack_payload_used and not merged.attack_payload_used:
                     merged.attack_payload_used = imp.attack_payload_used
-            # ②-1 载荷族自检留痕合并（2026-09-22）：首版漏了这两项 —— merged 是新建的
             # DastImpact，默认 payload_source='none' / payload_rejections=[]，于是多 spec
             # 场景下 D1 明明投了真弹、判废也确实发生，聚合后却一律显示 none / 空
-            # （run 39 实测 164 条 dast_impact_evidence 全是 source=none，与 attack_payload_used
             # 非空自相矛盾）。现按「取最强来源 + 并集留痕」合并。
             _SRC_RANK = {"none": 0, "minimal_fallback": 1, "sca_forge": 2, "a2": 3}
             for imp in replayed:
@@ -1547,9 +1485,8 @@ class TriggerTransactionOrchestrator:
             if isinstance(imp.business_logic, dict) and imp.business_logic:
                 merged.business_logic.update(imp.business_logic)
 
-        # P1 差分结论合并（2026-10-09，r68/r69 复盘）：_aggregate_dast 此前逐字段重建 merged，
         # 唯独漏了 differential —— 事务级 raw_dast_impact 恒 differential={}，D1 明明产出
-        # attempted=True 的对照结论（离线端到端实测 harmful=False no_observable_difference），
+        # attempted=True 的对照结论，
         # 到确认闸 _differential_override 却永远读不到，21 个仅到达误报两次全量存活。
         # 合并规则（保守，绝不零化 TP）：
         #   1) 任一 attempted 且 harmful=True → 取该条（有害优先，保护真阳性）；
@@ -1571,7 +1508,6 @@ class TriggerTransactionOrchestrator:
         elif _diff_benign is not None:
             merged.differential = dict(_diff_benign)
 
-        # 时延三元组「同源配对」聚合（2026-09-07）：elapsed_ms / baseline_elapsed_ms /
         # sleep_seconds_hint 必须整组取自同一条 impact，绝不能分别取各字段的极值——否则
         # D2 会拿「A 条的 elapsed」减「B 条的 baseline」，delta 基准被跨请求污染，双阈值门失真。
         # 选取规则：只在投放过 sleep 型 payload（sleep_seconds_hint>0）的 impact 里挑 elapsed_ms
@@ -1588,7 +1524,6 @@ class TriggerTransactionOrchestrator:
         return merged
 
     def _multi_match_summary(self, tx: TransactionState) -> Dict[str, Any]:
-        # 2026-09-27 修复：reach 判定同样必须用 is_sink_reached(v.state)，否则 `sink-reached-probe`
         # 抵达态的假说不会计入 sink_reached，与早停分支（已改用 is_sink_reached）口径不一致，
         # 下游据此判断「整批到达」会失真。
         reached = [hid for hid, v in tx.verdicts.items() if is_sink_reached(v.state)]
@@ -1598,7 +1533,6 @@ class TriggerTransactionOrchestrator:
             "sink_reached": reached,
             "arrival_sanitized": sanitized,
             "no_arrival": [hid for hid, v in tx.verdicts.items() if v.state == STATE_NO_ARRIVAL],
-            # 2026-10-04：迟到证据回收量。对账时用它把「回收回来的到达」与「窗口内正常打中」
             # 分开，否则修复前后的召回变化无法归因。
             "late_recovered": sorted(hid for hid, ok in (tx.late_recovered or {}).items() if ok),
         }
@@ -1633,7 +1567,6 @@ def aggregate_iast_evidence(per_hypothesis: Dict[str, IastVerdict]) -> Dict[str,
         }
     )
     d["reached_sink_files"] = reached_sink_files
-    # 值级证据（2026-10-10）：把「我方投放数据真的出现在 sink 实参值里」的事实透传给 D2。
     # 只从「已到达 sink」的假说里取，未到达假说上的巧合子串（如同名文件被别的请求打开）
     # 不构成数据流证据。命中可能来自不同假说，族相关性由 D2 侧（拿得到 family）最终把关。
     _vhits = [

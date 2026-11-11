@@ -1,4 +1,4 @@
-"""Ticketing / AppSec platform integration (G12, 第四版 §2.3/2.9).
+"""Ticketing / AppSec platform integration (G12, 第四版 /2.9).
 
 Abstraction over external issue trackers. Concrete default is offline: render a
 finding to a Markdown ticket body ("复制到工单") and, when a webhook URL is

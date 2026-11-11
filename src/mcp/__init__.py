@@ -1,4 +1,4 @@
-"""MCP 集成（§4.2，2026-09-20）。
+"""MCP 集成。
 
   - 二期 对外 MCP Server：``McpServer`` / ``SqlitePlatformDataProvider`` / ``main``
   - 三期 对内 MCP Client：``McpClient`` / ``StdioTransport`` / ``InProcessTransport`` / ``McpToolBridge``

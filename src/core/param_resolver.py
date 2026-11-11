@@ -49,9 +49,7 @@ _TYPE_SIGNATURE_TOKENS = (
 def is_valid_param_name(name: str) -> bool:
     """判断 A2 给出的参数名是否为可安全注入的合法 HTTP 参数名。
 
-    2026-11-03：支持嵌套参数路径 `params[dataScope]`。MyBatis 的 `${params.dataScope}`
     就是这种形态（Spring `@ModelAttribute` 的 Map 字段），此前被 `_PARAM_NAME_RE`
-    和「不含点」两条规则同时拒掉 ⇒ 若依 5 条 sql_injection 真值即使拿到正确参数路径
     也会被登记层以 `invalid_param_name` 跳过。嵌套形态只允许标识符段，
     不含引号/空格/点，不会引入注入脏值。
     """
@@ -86,11 +84,9 @@ def is_valid_route(route: str) -> bool:
         return False
     if " " in r or "\n" in r or "\t" in r:
         return False
-    # R24：注解数组写法（@GetMapping({"", "/"})）曾被解析成 "/admin/,"，逗号属解析残留。
     # Spring 映射路径不会含逗号，含逗号一律判非路由（防线：即使上游解析器回归也拦得住）。
     if "," in r:
         return False
-    # 2026-09-17 整改（漏洞检测能力现状 doc 2.1/三节）：A2 偶尔从 Thymeleaf 模板片段抽出
     # 通配/尖括号残片（如 "/*"、">"、">/"），这些不是真实路由，必须挡在登记之前，
     # 否则会和 "/" 一起污染 D1 重放命中率统计。
     if "*" in r or ">" in r or "<" in r:
@@ -124,10 +120,8 @@ _SPRING_MAPPING_CALL_RE = re.compile(
 def _spring_mapping_path(window: str) -> str:
     """从（可能跨多行的）Spring 映射注解窗口里取**第一个** path（无则返回空串）。
 
-    R24 修复（2026-09-11）：原实现用「窗口里第一个非空字符串」的正则取路径。遇到数组写法
     ``@GetMapping({"", "/"})`` 时，空串因量词要求至少 1 个字符而被跳过，正则改从第二个引号
     起匹配，把 ``"", "/"`` 之间的 ``, ``（逗号 + 空格）当成路径 → 与类前缀拼成 ``/admin/,``
-    这种污染路由（run 11 spec 1718；D1 重放直接 404，垂直越权族整体判 no_evidence）。
 
     现改为：先定位注解调用 ``@XxxMapping(``，按括号配平截出参数，再交给
     ``route_resolver._extract_paths`` 解析（支持 value= / path= / 位置参数 / 字符串数组，
@@ -202,7 +196,6 @@ _PARAM_RE = re.compile(
     r'(?:\([^)]*\))?'                                  # 任意 (...) 或无括号
     r'\s+\w+\s+(\w+)'                                  # 类型 名
 )
-# 2026-11-04（jsc 619 实测，spec 237862）：@CookieValue / @RequestHeader 的参数
 # 绑定在 **cookie / header** 通道，不是 query。旧实现把它们一律当 query
 # （`_PARAM_RE` 只含 RequestParam/PathVariable，@CookieValue 落不到兜底②，
 # 而兜底②把签名里的 `String xss` 当 query）⇒ D1 把 canary 投到 query，
@@ -222,7 +215,6 @@ _CLASS_REQUEST_MAPPING_RE = re.compile(r'@RequestMapping\s*\(')
 def _resolve_java_class_path(code_root: str, fqn: str) -> Optional[str]:
     """把 Java 全限定类名（org.joychou.config.Constants）还原为源码文件路径。
 
-    2026-11-04（jsc 619 实测）：原实现只试 ``code_root/<fqn>.java``，
     但 Maven/Gradle 标准布局下源码在 ``code_root/src/main/java/<fqn>.java``
     ⇒ 恒返回 None ⇒ 常量解析失效 ⇒ cookie 名解析不出 ⇒ Shiro 的 rememberMe
     被登记成 body（应用只从 Cookie 读）⇒ D1 投错通道 ⇒ 端点永久 no-arrival。
@@ -283,7 +275,6 @@ def _resolve_const_string(code_root: str, src_lines: List[str], ref: str) -> Opt
         if m:
             return m.group(1)
     if _fqn:
-        # 2026-11-04（jsc 619 实测）：常量引用里的类名可能是**简单名**
         # （`Constants.REMEMBER_ME_COOKIE`），而 import 语句是**包路径**
         # （`import org.joychou.config.Constants;`）。旧实现只匹配静态 import
         # （`import static a.b.Constants;`），普通包 import 完全匹配不上 ⇒
@@ -330,7 +321,7 @@ def _resolve_const_string(code_root: str, src_lines: List[str], ref: str) -> Opt
 def _resolve_cookie_name(body: str, code_root: str, src_lines: List[str]) -> Optional[str]:
     """从方法体提取被读取的 Cookie 名（如 rememberMe），供 param_location=cookie 回填。
 
-    覆盖：getCookie(req, "literal") 直接字面量、getCookies 循环里 getName().equals("X")、
+    覆盖：getCookie(req, "literal") 直接字面量、getCookies 循环里 getName.equals("X")、
     getCookie(req, CONST) / WebUtils.getCookieValueByName(req, CONST)
     （CONST 经 _resolve_const_string 解析为字面量）。无法解析时返回 None（不编造 cookie 名，
     避免 D1 把 canary 注入到应用根本不读取的字段）。
@@ -378,14 +369,13 @@ def resolve_endpoint_from_source(vuln: Any, code_root: str, route_hint: str = ""
     用漏洞的 file+line 定位到具体 controller 方法，从 class/method 的 @RequestMapping、
     @PostMapping 与 @RequestParam/@PathVariable 抢救出真实 HTTP 入口与参数名。
 
-    route_hint（P1-2，2026-09-13）：调用方已解析出的路由假设（A2 entry / entry_discovery）。
     A2 LLM 的 line 常落错方法（实测：FileUpload.java 文件类型绕过 finding 标 line=35，真实逻辑
     在 L82 的 /upload/picture 方法，行归因解析出 /file），导致源码注解权威（multipart/cookie
     纠偏）因「路由相等才覆盖」守卫无法生效，低精度位置被登记持久化 → D1 注入应用不读取的
     位置 → no-arrival。行归因与 hint 不一致时，在同文件内寻找完整路由与 hint 精确相等的
     映射并改选之（路由是比行号更强的归因信号；仅同文件内纠偏，不跨文件猜测）。
 
-    返回 None 表示源码不可达或解析不出路由（调用方应据此跳过登记，而非注入垃圾值）。
+    返回 None 表示源码不可达或解析不出路由。
     """
     if not code_root:
         return None
@@ -436,7 +426,6 @@ def resolve_endpoint_from_source(vuln: Any, code_root: str, route_hint: str = ""
         if not mm:
             continue
         window = "\n".join(lines[i:min(i + 5, len(lines))])
-        # ②-2（2026-09-22）：类级 @RequestMapping 只作 base path，本身不是可调用端点。
         # _METHOD_MAPPING_RE 的 (Get|Post|...|Request) 分支同样能匹配它，若不排除，它会以
         # 「方法级映射」身份进入 method_maps；当 vuln.line 落在所有方法映射之前时
         # （SAST 行号漂移、或漏洞在字段/工具区），chosen 退化取 method_maps[0] 正好就是它
@@ -459,7 +448,6 @@ def resolve_endpoint_from_source(vuln: Any, code_root: str, route_hint: str = ""
         # 退化选第一个映射（控制器首个 HTTP 入口），避免整控制器 SQLi 因行号错位全部 skipped。
         chosen = method_maps[0]
 
-    # P1-2（2026-09-13）：行归因与路由假设冲突时的路由定向再归因。
     # hint 与行归因选出的完整路由不一致时，在同文件内改选与 hint 精确相等的映射。
     # 仅同文件内纠偏：找不到相等路由则维持行归因结果（不猜）。
     _hint = str(route_hint or "").strip()
@@ -506,7 +494,6 @@ def resolve_endpoint_from_source(vuln: Any, code_root: str, route_hint: str = ""
         param_name = (pm.group(1) or pm.group(2) or "").strip()
         # 位置由**注解**决定（Spring 的绑定规则）：@CookieValue → cookie、
         # @RequestHeader → header、@PathVariable → path、@RequestParam → query。
-        # 2026-11-04：旧实现只区分 PathVariable 与「其余一律 query」，
         # 导致 @CookieValue 参数被登记成 query ⇒ D1 投错通道 ⇒ 端点恒漏。
         _ann = pm.group(0)
         param_location = "query"
@@ -527,7 +514,6 @@ def resolve_endpoint_from_source(vuln: Any, code_root: str, route_hint: str = ""
             param_name = gp.group(1).strip()
             param_location = "query"
     if not param_name:
-        # 兜底①.5（2026-11-04，jsc 619 实测）：request.getHeader("x") 取参
         # —— 与 getParameter 同为「方法体内取参」，但绑定在 **header** 通道。
         # 旧实现只认 getParameter ⇒ header 参数落到兜底②（签名里的 `String origin`
         # 被当成 query）⇒ D1 把 canary 投到 query，而应用只从 Origin 头读
@@ -549,10 +535,9 @@ def resolve_endpoint_from_source(vuln: Any, code_root: str, route_hint: str = ""
                 param_name = pm2.group(1)
                 param_location = "query"
     if not param_name:
-        # 兜底②.5（2026-10-01 修复）：方法签名里的 Spring 自动绑定参数
         # （public String foo(String filepath)）。这类端点的参数名在「方法签名」而非方法体内
         # （无 @RequestParam / request.getParameter 调用），旧逻辑只看方法体 → param_name 恒空，
-        # 甚至被下方 _body 兜底③误判（方法体含 process.getInputStream() 等进程输出流读取）。
+        # 甚至被下方 _body 兜底③误判（方法体含 process.getInputStream 等进程输出流读取）。
         # 这里从签名抽取首个白名单类型参数名（跳过 request/response/session/model 等非入参）。
         # 直接扫描方法体前若干行找「方法声明行」（用 _METHOD_DECL_RE，容忍 throws 子句），
         # 不依赖 method_decl 索引，避免带 throws 的方法被漏判（命令注入等靶场几乎全是）。
@@ -577,9 +562,9 @@ def resolve_endpoint_from_source(vuln: Any, code_root: str, route_hint: str = ""
                     param_location = "query"
 
     if not param_name:
-        # 兜底③：HTTP 请求体全文读取（WebUtils.getRequestBody(req) / request.getReader() /
-        # request.getInputStream() / @RequestBody）。须锚定到「请求对象」或 @RequestBody，
-        # 否则会把 process.getInputStream()（进程输出流，如 convertStreamToString(process.getInputStream())）
+        # 兜底③：HTTP 请求体全文读取（WebUtils.getRequestBody(req) / request.getReader /
+        # request.getInputStream / @RequestBody）。须锚定到「请求对象」或 @RequestBody，
+        # 否则会把 process.getInputStream（进程输出流，如 convertStreamToString(process.getInputStream)）
         # 误判成请求体 → 参数被回退成 _body（实测 /codeinject/sec 即因此被误判，导致 D1 注入到
         # 应用不读取的 body 位置 → 端点永久 no-arrival、waf_blocked 永不被求值）。
         if (re.search(r'getRequestBody\s*\(', body)
@@ -622,7 +607,6 @@ def resolve_endpoint_from_source(vuln: Any, code_root: str, route_hint: str = ""
     }
 
 
-# R24-G（#11 SSRF 归 finding-only 的真因）：A2 有时**语义正确但行号落错** ——
 # 例如 AdminController 的 SSRF finding，description 明写「fetch 方法…url 参数…」，
 # 但 line 落在相邻 ping 方法的 javadoc 收尾行，按 line 解析会回落到更早的 dashboard 路由 `/admin`
 # （`resolve_endpoint_from_source` 取「最近的前置映射」），于是 ssrf 族永远没有 `/admin/fetch` 的 spec。
@@ -715,7 +699,6 @@ def _discover_web_controllers(code_root: str) -> List[str]:
     """发现 code_root 下的 Spring Web 控制器源码文件列表，供调用链反查兜底使用。
 
     两通道：
-    1) 主通道（文件名约定）：``*Controller.java``。覆盖 target-mall 等标准命名，行为与原
        ``rglob("*Controller.java")`` 完全一致——对这类目标零回归。
     2) 兜底（注解识别）：当主通道为空（靶场把控制器命名为 ``SSRF.java`` / ``XSS.java`` /
        ``CommandInject.java``，完全没有 ``*Controller.java`` 后缀）时，按类级注解
@@ -754,7 +737,7 @@ def _discover_web_controllers(code_root: str) -> List[str]:
 
 
 def _resolve_controller_route_by_entity(vuln: Any, code_root: str) -> Optional[Dict[str, str]]:
-    """§5 业务类二次源码注解：漏洞 file 指向 Mapper/Service/DAO（无 @RequestMapping）时，
+    """ 业务类二次源码注解：漏洞 file 指向 Mapper/Service/DAO（无 @RequestMapping）时，
     用类名推导实体（OrderMapper/OrderService → Order），在 code_root 找同名 ``<Entity>Controller.java``，
     从其 @RequestMapping 取真实 HTTP 入口。业务越权/bola 多为按 id 查询，优先取含 ``{id}`` 的端点。
 
@@ -861,7 +844,6 @@ def _resolve_controller_route_by_reference(vuln: Any, code_root: str) -> Optiona
 
     root = Path(code_root)
     # 改用注解感知的控制器发现：主通道 *Controller.java（零回归），兜底按 @RestController/@Controller
-    # 注解识别（覆盖 java-sec-code 等以 SSRF.java/XSS.java 命名的靶场），否则 90 条 missing_route 的主因。
     ctrls = _discover_web_controllers(code_root)
     if not ctrls:
         return None
@@ -902,9 +884,7 @@ def _resolve_controller_route_by_reference(vuln: Any, code_root: str) -> Optiona
             if not mm:
                 continue
             window = "\n".join(lines[i:i + 5])
-            # ②-2（2026-09-22）：排除类级 @RequestMapping（只作 base path，不可调用）。
             # 它原本会作为 method_cands[0] 被选中（位于文件最靠前）→ 本函数直接返回
-            # `/ssrf` / `/cors` / `/jwt` 这类类级基路径。实测 run 38 有 41/175 条 spec
             # 锁在这种路径上且 param_name 全空，其中 40 条来自本通道
             # （param_name_source=caller-controller-reverse-lookup）。排除后，只有类级注解的
             # 控制器会因 method_cands 为空而跳过（下方 `if not method_cands: continue`），
@@ -1042,12 +1022,11 @@ def _norm_route_case(route: str) -> str:
     """路由归一（**保真**）：只补前导斜杠、去尾斜杠，保留原始大小写。
 
     存在的理由：Spring 的 PathPattern 匹配大小写敏感，``/rce/ProcessBuilder`` 与
-    ``/rce/processbuilder`` 是两个不同端点。``_norm_route`` 的 ``.lower()`` 只能用于
+    ``/rce/processbuilder`` 是两个不同端点。``_norm_route`` 的 ``.lower`` 只能用于
     「比较两个路由是否同一端点」，一旦把它的返回值当作真实 HTTP 路径回写
     （trigger_specs.target_endpoint / exploit_spec.entry.route），D1 重放就会打到
     应用上不存在的路径 → 404 → 该 spec 永久 no-arrival。
 
-    实测事故（java-sec-code run 31）：22 个登记端点里 8 个大小写错
     （/deserialize/rememberme/vuln 真实为 /deserialize/rememberMe/vuln、
     /rce/processbuilder 真实为 /rce/ProcessBuilder、
     /xxe/saxparser/vuln 真实为 /xxe/SAXParser/vuln 等），这 8 条在 D1 全部 404。
@@ -1060,7 +1039,7 @@ def _norm_route_case(route: str) -> str:
 
 def normalize_route_key(route: str) -> str:
     """公开的路由匹配键（小写归一）。跨模块做「大小写不敏感」路由比对时用本函数，
-    不要直接 lower() 拼字符串，以免与 ``_norm_route`` 的前导斜杠 / 尾斜杠规则漂移。"""
+    不要直接 lower 拼字符串，以免与 ``_norm_route`` 的前导斜杠 / 尾斜杠规则漂移。"""
     return _norm_route(route)
 
 
@@ -1117,16 +1096,13 @@ def _is_probe_route(file: str, route: str) -> bool:
 
     判据（仅路由本身命中即剔除）：路由以探针前缀开头（如 /api/fw/redis）。
 
-    重要（修复 2026-09-07）：原先还会因「sink 文件是探针控制器」而剔除任意路由，导致 A2 把
     真实业务漏洞（如 SSRF ProfileController 的 /profile/avatar-from-url）归因到
     FrameworkProbeController 时，该真实业务路由被一併误杀。修正为仅按路由前缀判定——
     路由不属探针前缀即保留，无论其归属文件是否为探针类。这样真实业务端点不再被误剔。
     探针类标记 / 路由前缀均来自 workspace_runtime（第 7 类耦合外置）。
 
-    修复 2026-09-08（R14 闭环）：前缀表形如 ``/api/fw/``（带尾斜杠），但探针调试端点的**裸挂载
     路径**本身（如 ``/api/fw``，无尾段）同样命中探针控制器。原先仅 ``startswith(prefix)`` 会放过
     ``/api/fw``，导致 SSRF(HttpFetcher) 经调用链反查落到 FrameworkProbeController 的 ``/api/fw``
-    时被登记为「真实漏洞 spec」（run 15 实测误增一条 /api/fw SSRF spec）。现对每条前缀取去尾斜杠的
     base，路由等于 base 或以其为前缀即剔除，杜绝裸挂载漏网。
     """
     _r = str(route or "").lower()
@@ -1146,8 +1122,6 @@ def _is_probe_route(file: str, route: str) -> bool:
 # ----------------------------------------------------------------------------
 # 第二点 D / D-2 的 sink 类 → 真实业务入口兜底表已外置到 workspace_runtime
 # （src/core/workspace_runtime.py: sink_file_route_overrides / sink_family_route_overrides）。
-# 默认即 target-mall 专属路由；新靶场在 workspace.settings.workspace_runtime_config 覆盖即可，
-# 不再往核心塞对照表（见用户 2026-09-02 第 2 类耦合外置决策）。
 
 
 
@@ -1174,7 +1148,7 @@ def _is_business_vuln(vuln_dict: Dict[str, Any]) -> bool:
     ``plan_pocs`` 归一化之前，会把该字段写成 ``generic``/raw 等非业务 token，
     导致 ``_norm_family`` 返回非业务串、``is_business_logic_family`` 判 False、
     实体→Controller 回落被整体跳过——Mapper/Service/DAO 类越权 finding 因此解析不到
-    路由（task-2 实测 fid360 落空）。但同一 vuln 的 ``type``（如 ``水平越权``→bola）
+    路由。但同一 vuln 的 ``type``（如 ``水平越权``→bola）
     或 ``business_logic_category`` 已可靠携带业务族。本函数对全部族名承载字段逐一
     归一判定，任一命中 ``DIFFERENTIAL_PROOF_FAMILIES`` 即判业务型，使回落不再被单一
     未归一字段遮蔽。注入型族（sql/ssrf/xss…）归一后不在业务集合内，行为不变。
@@ -1224,7 +1198,7 @@ def _resolve_sink_override(
     """第二点 D：sink 类兜底解析。仅当漏洞 sink 命中已知 sink 类且尚未解析出路由时调用。
 
     对每条兜底路由：优先在 discovered 真实路由里取真实参数名/位置；取不到则用兜底表自带参数。
-    返回首个「有参数名」的兜底结果（保证可登记为可重放 spec）；全部无参数名则返回 None（不静默登记）。
+    返回首个「有参数名」的兜底结果；全部无参数名则返回 None。
     """
     overrides = _sink_class_route_overrides(vuln_dict, vuln)
     if not overrides:
@@ -1322,7 +1296,6 @@ def ensure_route_index(entries: Optional[List[Dict[str, Any]]]) -> List[Dict[str
     - 索引形态：已经规整过的条目（带 route / method / params），例如 resolve_endpoint_full
       的内部构造与单元测试直接喂的输入。此时不能用 build_discovered_route_index 再过一遍——
       该函数按 entry_type == "web_route" 过滤，索引形态没有该字段，会被整批丢弃成空索引，
-      使下游兜底静默失效（2026-09-13 曾因此让两条 benchmark_bl_routing 用例回归）。
 
     返回的每条都保证有 route_key（匹配键），route 保持原大小写（保真）。
     """
@@ -1382,11 +1355,10 @@ def _method_from_signature(sig: str) -> str:
     return ""
 
 
-# 纯 Servlet/JSP 工程（OWASP Benchmark）入口解析：类级 @WebServlet 注解 + doGet/doPost 取参。
 _WEBSERVLET_ANNO_RE = re.compile(r"@WebServlet\s*\(([^)]*)\)", re.S)
 # Servlet 取参写法分散（OWASP 205 个测试类实测：getCookies 51 / getParameter 27 /
 # getHeader 21 / getQueryString 21 / getParameterValues 20），按「可注入位置」分派：
-# query→query、getHeader→header、cookie getName().equals→cookie。
+# query→query、getHeader→header、cookie getName.equals→cookie。
 _SERVLET_PARAM_PATTERNS = (
     (re.compile(r"\.getParameter\s*\(\s*\"([^\"]+)\""), "query"),
     (re.compile(r"\.getParameterValues\s*\(\s*\"([^\"]+)\""), "query"),
@@ -1411,9 +1383,6 @@ def _servlet_method_body(text: str, name: str) -> str:
 def servlet_self_endpoint(file_path: str) -> Optional[Dict[str, str]]:
     """从 Java 文件自身的 @WebServlet 注解解析入口路由与请求参数名。
 
-    适用纯 Servlet/JSP 工程（OWASP Benchmark）：这类靶场没有 Spring 注解，漏洞类本身就是
-    HTTP 入口类——例如 BenchmarkTest00008.java 声明
-    ``@WebServlet(value = "/sqli-00/BenchmarkTest00008")``，污点从 doGet 的
     ``request.getParameter("username")`` 进入。而 param_resolver 的既有 tier 只认
     @RequestMapping / @RestController / @Controller，对这类工程一条路由都解不出，
     全部落到 missing_route（task-8 实锤：a2_poc 跳过 344 条）。
@@ -1439,13 +1408,10 @@ def servlet_self_endpoint(file_path: str) -> Optional[Dict[str, str]]:
             break
     if not route or not is_valid_route(route):
         return None
-    # 方法判定（2026-10-14 修正）：
     # - 只有 doPost → POST。
     # - 只有 doGet → GET。
-    # - 两者都有时不能一律 GET：OWASP Benchmark 里 2524/2740 的 doGet 会委托 doPost
     #   （GET 请求最终仍进 doPost），但另有 216 个「非委托型」servlet——doGet 只做
     #   rememberMe cookie 之类的样板动作，真正的取参与 sink 都在 doPost。对这类用 GET
-    #   永远打不到 sink（trustbound 的 BenchmarkTest00004 即为此型），必须 POST。
     #   判据：doGet 方法体内是否出现 doPost( 调用（委托）。实测 216/216 非委托型取参在 doPost。
     _has_get = bool(re.search(r"\bdoGet\b", text))
     _has_post = bool(re.search(r"\bdoPost\b", text))
@@ -1467,7 +1433,6 @@ def servlet_self_endpoint(file_path: str) -> Optional[Dict[str, str]]:
     if not param_name:
         # 动态枚举型取参（getParameterMap / getParameterNames / getHeaderNames / getQueryString / 裸 getCookies）：
         # 这类 servlet 遍历全部输入、接受任意名称（源码注释常写 "Grabs the name of the first
-        # non-standard header as the parameter"），故以类名（OWASP 惯例，如 BenchmarkTest00028）
         # 作为注入位。这不是编造参数名——它们确实读取任意名称的输入，只是没有写死常量。
         _cls = Path(str(file_path)).stem
         if re.search(r"\.getParameterMap\s*\(|\.getParameterNames\s*\(", text):
@@ -1508,11 +1473,9 @@ def resolve_trigger_endpoint(
     vuln_dict = vuln.to_dict() if hasattr(vuln, "to_dict") else (vuln if isinstance(vuln, dict) else {})
     exploit_spec = vuln_dict.get("exploit_spec") or {}
     entry = exploit_spec.get("entry") or {}
-    # 纯 Servlet/JSP 工程（OWASP Benchmark）：漏洞类自身即 @WebServlet 入口类。A2 通常不给 route，
     # 故用文件自身注解兜底。此处只解析一次，供候选阶段与 Tier 0.5 复用，避免重复读文件。
     _servlet_self = servlet_self_endpoint(_field(vuln, "file"))
 
-    # Q3(b)：A2 实际把「真实入口路由」写在了多处，resolve 必须全部纳入候选，否则会漏登。
     # 8→5→3 退化的根因之一正是：exploit_spec.entry.route 为空，但 top-level entry_route /
     # trigger_route / entry_point（形如 "METHOD /path"）里确有真实入口却被忽略 → 全部回落到
     # Tier1/Tier2 仍解析不出 → skipped_unresolved。候选来源（按 SAST ground truth 优先级合并、去重）：
@@ -1540,7 +1503,7 @@ def resolve_trigger_endpoint(
         candidate_routes.append((_r, str(_m).upper() if _m else None))
 
     # ⓪ Q1/Q2 静态路由索引（A1 阶段 bind_static_routes 写入的**确定性事实**）：
-    # 设计约定（round-21-design-plan.md 一、Q1 第 3 条）是「路由绑定优先走静态 resolver，
+    # 设计约定是「路由绑定优先走静态 resolver，
     # 仅歧义情形回落 LLM 推断」。落地前候选顺序恰好相反（① LLM 写的 exploit_spec.entry.route
     # 排在 ⑤ a1_evidence.target_endpoint 之前），LLM 猜错的路由会盖掉静态正确路由。
     # 仅在 route_status=='static' 时提权：该标记只由 bind_static_routes 写入；历史数据里
@@ -1748,9 +1711,6 @@ def resolve_trigger_endpoint(
         "param_name_source": "", "resolvable": False, "resolution_failure": "",
     }
 
-    # —— Tier 0.5：自身 @WebServlet 自路由（纯 Servlet/JSP 工程，如 OWASP Benchmark）——
-    # 这类靶场的漏洞类本身就是 HTTP 入口类（BenchmarkTest00008.java 自带
-    # @WebServlet("/sqli-00/BenchmarkTest00008")），A2 不给 route、Spring 通道又全部失效时，
     # 文件自身注解是唯一的代码级 ground truth。放在 sink 兜底表之前：
     # 注解事实优先于硬编码兜底表。Spring 工程无 @WebServlet，_servlet_self 为 None，零回归。
     if not result["route"] and _servlet_self:
@@ -1766,14 +1726,13 @@ def resolve_trigger_endpoint(
     # 第二点 D：sink 类兜底——若上面所有候选都没解析出路由，但漏洞 sink 命中已知 sink 类
     # （DeserializeUtil/XmlImporter/HttpFetcher/UserMapper/ProductMapper/CouponMapper/JdbcReportDao），
     # 直接用兜底表构造 (route, param, location)，不再回落到探针/错误端点。优先用 discovered 里该
-    # 路由的真实参数名；没有则用兜底表自带参数。仍无参数名则跳过（不静默登记无效 spec）。
+    # 路由的真实参数名；没有则用兜底表自带参数。仍无参数名则跳过。
     if not result["route"]:
         _sink_override = _resolve_sink_override(vuln_dict, vuln, discovered)
         if _sink_override:
             return _sink_override
 
     # route 一旦被某 tier 确认即锁定：低优先级 tier 只补 param，不再回退/覆盖已确认的路由，
-    # 避免源码注解覆盖 A2 entry_point 的真实入口（Q3(b) 关键修正之一）。
     def _lock_route(_r: str, _m: str) -> None:
         if not result["route"]:
             _nr = _norm_route(_r)
@@ -1783,7 +1742,6 @@ def resolve_trigger_endpoint(
             # 第二点 A 守门（Tier1/2 补漏）：A2 把 entry.route 写成探针调试路由时，
             # _add_candidate 已在 Tier0 候选阶段拒绝，但 Tier1/2 直接走 _lock_route 不经过
             # _add_candidate，故此处必须再挡一次——否则 xxe/ssrf/command-execution 等会被锁进
-            # /api/fw/dubbo、/api/fw/redis 等探针端点（task-4 实锤：3 条 family 全落探针路由）。
             if _is_probe_route(_field(vuln, "file"), _nr):
                 return
             # 锁进 spec 的路由必须保真大小写：_nr（小写）只作守门判定，回写用 _norm_route_case。
@@ -1794,18 +1752,15 @@ def resolve_trigger_endpoint(
     # 用户 point 4：源码注解置于 A2 之上（路由/方法以代码声明为准）；但参数名推断弱于 A2 的
     # 结构化结论，故 param 优先用 A2 合法 param，缺则回退源码提取。不再有 A1 独立回退层。
     # 业务类（bola/idor/垂直越权等无 sink）强制走源码注解通道：即便 A2 已给 param_name 也
-    # 必须由其 file:line 重算真实 HTTP 入口，否则会回落到错误/幻觉端点（§5 召回率主矛盾）。
+    # 必须由其 file:line 重算真实 HTTP 入口，否则会回落到错误/幻觉端点。
     _biz = _is_business_vuln(vuln_dict)
-    # §R14-路由绑定缺口修复：原门禁 ``code_root and (not result["param_name"] or _biz)`` 把「参数名已解析」
     # 的技术型漏洞（SQL 注入 / SSRF 等，落在 Mapper/Util 类）整块跳过，导致实体名→Controller 与
     # 调用链反查两条路由兜底通道（_resolve_controller_route_by_entity / _resolve_controller_route_by_reference）
-    # 永远不被触达，route 恒为空 → 该 finding 被 resolvable 门禁刷掉、永远进不了重放（run 14 实测
     # SQLi#2 / SSRF#11 有 findings 但 0 spec）。参数名与路由是独立维度：路由缺失时必须给兜底通道一次机会，
     # 与 param_name 是否已解析无关。故改为只要 code_root 可用即进入本通道；内部各分支自守门
     # （by_entity 仍需 _biz；by_reference 仍需 route 为空）。源码注解仍优先采用 A2 合法 param_name，不回退覆盖。
     if code_root:
         _src = resolve_endpoint_from_source(vuln, code_root)
-        # R24-G（#11 修复）：A2 语义对、行号错时，按「文本点名的方法名」在同文件内纠偏真实路由。
         # 仅当纠偏结果与按 line 解析不同、且同文件确有该方法映射时才覆盖（代码级事实）。
         _hint = resolve_endpoint_by_method_hint(vuln, code_root, vuln_dict)
         if _hint and _hint.get("route") and (_src is None or _hint.get("route") != _src.get("route")):
@@ -1821,7 +1776,6 @@ def resolve_trigger_endpoint(
             if is_valid_param_name(a2_pname):
                 result["param_name"] = a2_pname
                 result["param_name_source"] = "a2"
-                # 2026-11-04（jsc 619 实测，spec 237862）：**位置一律以源码为准**。
                 # 旧实现在 A2 param_name 有效时保留 A2 的 location ⇒ 出现
                 # 「名字来自 A2、位置也来自 A2，但两者错配」的契约：
                 #   /xss/reflect 源码是 `reflect(String xss)`（**query** 绑定），
@@ -1839,7 +1793,6 @@ def resolve_trigger_endpoint(
             elif is_valid_param_name(src_pname):
                 result["param_name"] = src_pname
                 result["param_name_source"] = "source-recovered"
-                # 2026-11-04（jsc 619 实测）：param_name 采信源码时，param_location **必须同步
                 # 采信源码**。旧实现把 location 的采信放在「A2 param_name 有效」的分支之前，
                 # 于是只要 A2 填了 location（哪怕是错的），源码解析出的正确定位就被丢弃 ——
                 # 实测 /rce/jscmd：源码签名是 `jsEngine(String jsurl)`（query 绑定），
@@ -1852,7 +1805,7 @@ def resolve_trigger_endpoint(
             if result["param_name"]:
                 result["resolvable"] = True
                 return result
-        # §5：业务类 file 指向 Mapper/Service/DAO（无 @RequestMapping）时，源码注解通道落空；
+        # 业务类 file 指向 Mapper/Service/DAO（无 @RequestMapping）时，源码注解通道落空；
         # 改由「实体名→同名 *Controller」二次源码注解取真实 HTTP 入口（业务型多为按 id 查询，
         # 优先取含 {id} 端点）。仅业务族、且 route 仍为空时触发；绝不把源码路径当路由，也不覆盖已确认路由。
         if _biz and not result["route"]:
@@ -1887,7 +1840,7 @@ def resolve_trigger_endpoint(
                 return result
 
     # —— Q1/Q2 静态路由优先锁（先于 Tier 2 的 A2 LLM 假说）——
-    # 设计约定（round-21-design-plan.md 一、Q1 第 3 条）：「路由绑定优先走静态 resolver，
+    # 设计约定：「路由绑定优先走静态 resolver，
     # 仅歧义情形回落 LLM 推断」。落地前 Tier 2 会先用 A2 假说的 entry.route 锁住路由
     # （_lock_route 只认首次锁定），静态事实只能退到 Tier 3.5 兜底 → LLM 猜错即盖掉静态正确值。
     # 此处把 A1 阶段 bind_static_routes 写入的静态路由（route_status=='static'）提前锁定。
@@ -1933,7 +1886,6 @@ def resolve_trigger_endpoint(
             # 若为 Java 源码路径（OrderService.java:118 之类）则拒绝，绝不作为 route 锁进 spec，
             # 而是回落 Tier1 源码注解（类级 @RequestMapping 前缀拼接）继续尝试真实路由。这止血了
             # BOLA/IDOR 把源码路经当路由登记、D1 向不存在端点发请求永远 not_hit 的污染
-            # （task-4 实锤：id=550/551 的 target_endpoint 即 orderservice.java:118/131 源码路经）。
             if is_valid_route(_a1_ep):
                 # 保真回写：A1 静态端点的路由来自源码，必须保留原始大小写。
                 result["route"] = _norm_route_case(_a1_ep)
@@ -1949,9 +1901,7 @@ def resolve_trigger_endpoint(
         if is_valid_param_name(_a1_pname):
             result["param_name"] = _a1_pname
             result["param_name_source"] = "a1-business-logic"
-    # —— Tier 3.7：调用图反查路由（2026-11-02）——
     # sink 落在**工具类**里时（`HttpUtils.request` / `SecurityUtil.checkSSRF` /
-    # `JobInvokeUtil.invokeMethod`），sink 文件自身没有 `@RequestMapping`，上面所有 Tier
     # 都解析不出路由 ⇒ 该漏洞永远登记不到 spec ⇒ 永久 no-arrival。
     # 这里顺着 code_index 的 callers 往上找**最近的 HTTP 入口**，且只在
     # 「同深度只有一个不同路由」时采用（工具方法常被多个端点复用，有歧义就不猜）。
@@ -1968,7 +1918,6 @@ def resolve_trigger_endpoint(
             else:
                 # Tier 3.8：**两步桥**（写入口 → 存储 → 调度器执行）。
                 # 定时任务/消息队列这类 sink 不是由请求直接触发的，调用图里没有 HTTP 入口
-                # （RuoYi 的 `JobInvokeUtil.invokeMethod` 由 Quartz 异步调用）。
                 # 这里从 sink 读的字段反查「谁把用户输入写进这个实体」，拿那个写入口当路由，
                 # 并在 prerequisites 里标明这是两步攻击。
                 from src.core.callgraph_route import route_via_writer

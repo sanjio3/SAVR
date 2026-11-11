@@ -1,4 +1,4 @@
-"""意图桥接（2026-10-25，plan §19.1 / 20.4.1 集成层）。
+"""意图桥接。
 
 把 I2 判因结果转成 replay_intents 记录，并在 D2 重放后据确定性证据回写 status；
 同时给 A2 生成「意图摘要」注入 prompt（状态外置）。
@@ -8,7 +8,7 @@
 - build_a2_intent_hints：下一轮 A2 调用前读取 pending/ineffective 摘要。
 
 纯函数为主，无 LLM 依赖。连接统一用原始 sqlite3.Connection（测试用 :memory:；
-生产用 `Database.connect()` 取底层连接）。
+生产用 `Database.connect` 取底层连接）。
 """
 from __future__ import annotations
 

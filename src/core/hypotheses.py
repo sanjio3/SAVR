@@ -1,6 +1,5 @@
 """假说表（hypotheses）：SAST 假说的生命周期与差集载体。
 
-背景（2026-09-14）：
 「SAST ⊖ IAST 自我修正系统」未成型的四因之一，是**没有差集载体**——假说只以自然语言
 reason 字符串存在于 I2 的 feedback_to_a2 里，没有「哪一轮提出、是否被证实、是否被证伪、
 是否仍悬置」的结构化记录，所以无法计算「假说集 ⊖ 观测集」，闭环只能退化成关键词分流。
@@ -27,14 +26,14 @@ from src.iast.canary import canary_key, is_sink_reached
 logger = logging.getLogger(__name__)
 
 # 假说状态
-PROPOSED = "proposed"    # 刚登记，尚无观测
+PROPOSED = "proposed"
 CONFIRMED = "confirmed"  # 运行时观测证实（sink 到达 / D2 判定可利用）
 REFUTED = "refuted"      # 假说被观测证伪（声称可达但既未到达、且探针未插桩该路径）
 OPEN = "open"            # 观测既未证实也未证伪 → 差集成员，需回流 A2 或重放侧
 
 # verification_status 中代表「已证实」的取值
 _CONFIRMED_VERIF = ("confirmed_exploitable", "exploitable", "confirmed",
-                    "confirmed_code_property")  # +I 族路由独立终态（2026-09-28）
+                    "confirmed_code_property")
 # 代表「明确无证据」的取值
 _NO_EVIDENCE_VERIF = ("no_evidence",)
 

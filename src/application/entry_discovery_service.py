@@ -65,18 +65,16 @@ class EntryDiscoveryService:
             self._compiled.append((entry_type, compiled, confidence))
 
     def discover(self, project_path: str, framework: str = "") -> Dict[str, Any]:
-        """发现入口点。framework 由 R0 技术栈识别提供（§8.4 第2点框架特化），
+        """发现入口点。framework 由 R0 技术栈识别提供，
         非空时在结果中回带，供 A0 编排与下游做框架感知决策。"""
         root = Path(project_path)
         entries: List[Dict[str, Any]] = []
         if not root.exists():
             return {"status": "error", "message": f"Path does not exist: {project_path}", "entries": []}
         for path in root.rglob("*"):
-            # §7（2026-09-24）：.codeql-db 内含 CodeQL 建库复制的源码副本，会把同一 servlet
-            # 路由登记两遍（实测 208→416）。对 D2 无正确性影响但污染入口计数，与
+            # 路由登记两遍。对 D2 无正确性影响但污染入口计数，与
             # file_inventory.DEFAULT_SKIP_PREFIXES 同口径排除。
             #
-            # 2026-11-04：改为**前缀匹配** `.codeql-db*`。jsc 源码根下曾残留 5 个半成品库
             # （`.codeql-db.partial2..5`），精确匹配排不掉 → 同一份源码被登记 5 遍，
             # 入口数从 780 膨胀到数千。
             if not path.is_file() or any(
@@ -106,7 +104,7 @@ class EntryDiscoveryService:
             "entry_count": len(entries),
             "entries": entries,
             "rule_candidates": self._rule_candidates(entries),
-            "framework": framework,  # §8.4 框架特化上下文
+            "framework": framework,
         }
 
 
@@ -146,7 +144,7 @@ class EntryDiscoveryService:
         Spring 控制器常把公共前缀写在类级 ``@RequestMapping("/api/admin")`` 上，方法级
         ``@GetMapping("/users")`` 只写相对路径。若只识别方法级路径，discovered_routes 里
         就只有 ``/users`` 而缺 ``/api/admin/users``，导致 /admin/users 这类管理端点永远
-        进不了 discovered_routes（task7 实测：entry_discovery 根本没发现 /admin/users），进而
+        进不了 discovered_routes，进而
         A2 幻觉端点无法被 ground truth 纠正、BOLA/垂直越权的类级前缀路由整条丢失。
         """
         bases: Dict[int, str] = {}
@@ -193,7 +191,6 @@ class EntryDiscoveryService:
         lines = content.splitlines()
         bases = self._class_request_mapping_bases(lines)
         _base_paths = set(bases.values())
-        # （2026-09-20）：识别 @ControllerAdvice / @RestControllerAdvice 类。这类 advice 类
         # （如 JSONP 的 Object2Jsonp）本身不含真实业务路由，只是对控制器响应的统一包装
         # （beforeBodyWrite）。其内若恰有 @GetMapping 等注解，照常登记为 web_route，但打标
         # is_controller_advice=True，供下游（trigger_spec_registry 的 JSONP 重归因）把它识别为
@@ -310,7 +307,7 @@ class EntryDiscoveryService:
         return "\n".join(lines[start:end])
 
     def _extract_request_params(self, rel: str, content: str, entry: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """§7.13/§3.8 入口参数采集：为 web_route 产出 representative_request_params
+        """/ 入口参数采集：为 web_route 产出 representative_request_params
         （param_name + param_location + content_type），供 4.7.2 multi-match 全参数带标一次回放。
         覆盖 Flask/Spring 路径参数与方法参数注解（@PathVariable/@RequestParam/@RequestBody）。"""
         if entry.get("entry_type") != "web_route":

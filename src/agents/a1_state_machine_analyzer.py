@@ -1,9 +1,9 @@
-"""状态机/流程控制 静态分析（重构文档 §2.2 业务逻辑策略分析）。
+"""状态机/流程控制 静态分析。
 
 核心本质：系统未严格校验业务流转的先后顺序或当前状态，允许「插队/倒退/跳跃/闭环破坏」。
 
 识别「状态转换类操作」（取消订单、退款、改地址、发货、完成、审批、撤销等），若方法体内
-未见当前状态前置校验（无 if(status==)/getStatus()/assertState/stateMachine/guard 等），
+未见当前状态前置校验（无 if(status==)/getStatus/assertState/stateMachine/guard 等），
 即构成状态机校验缺失假说（STATE_MACHINE）。
 
 含三类场景：
@@ -55,7 +55,7 @@ def analyze_file(path: str, content: str, lang: Optional[str] = None) -> List[Di
     """单文件分析：返回 状态机校验缺失 假说列表（带 HTTP 路由，可落 trigger_spec）。
 
     识别「状态转换类操作」（发货/完成/审批/撤销/改地址等），若方法体内未见当前状态前置
-    校验（无 if(status==)/getStatus()/assertState/状态机守卫 等）→ 假说。
+    校验（无 if(status==)/getStatus/assertState/状态机守卫 等）→ 假说。
     通过 scan_spring_endpoints 直接抽取真实 HTTP 路由，避免假说因无路由被漏斗丢弃。
     """
     content = safe_text(content)

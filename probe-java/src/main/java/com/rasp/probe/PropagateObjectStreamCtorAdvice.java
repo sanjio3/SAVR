@@ -3,7 +3,6 @@ package com.rasp.probe;
 import net.bytebuddy.asm.Advice;
 
 /**
- * 反序列化入口的污点传播（2026-09-28 落地，第三层探针侧）。
  *
  * 背景：Java 原生反序列化 RCE 在平台上是「能报不能证」。其中一个断点是——攻击者可控的
  * 字节流（通常经 {@code Base64.decode} 得到 byte[]，再包成 ByteArrayInputStream）进入

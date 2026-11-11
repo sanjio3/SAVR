@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 def _force_delete_file(path: str) -> None:
     """删除文件；Windows 上**优先**用原生 DeleteFileW，绕过 safe-delete 沙箱垫片。
 
-    2026-10-22（run 447 实测）：垫片按「每 turn 删除计数」限额（threshold=50），一旦触顶
     就直接终止进程——表现为子进程启动 3 秒内 exit code 1、无 traceback、无 task_result.json。
     原来的实现是「先 os.remove，失败再走原生」，等于每次都先去撞垫片，触顶后连兜底机会都没有。
     故 Windows 上改为原生优先。
@@ -197,7 +196,6 @@ class ScanProgressLogger:
     def _replace_with_retry(temp_path: str, path: str, attempts: int = 6) -> None:
         """原子替换 + 退避重试。Windows 上目标文件可能被前端进度轮询、
         索引服务或杀软短暂持有，os.replace 会抛 WinError 5 / PermissionError。
-        2026-11-07 本轮实测：A1~reporting 全部 completed，仅此一步锁竞争
         就把整轮判 failed，属执行层故障而非能力故障。
         """
         for attempt in range(attempts):
@@ -392,9 +390,7 @@ class ScanProgressLogger:
         defaults['stats'].update(data.get('stats', {}))
         # 保留扫描编排写入的所有扩展字段（stage_results / reports / hitl / external_target /
         # target_epoch / replay_progress / d2_verify_progress / a2_progress / i2_rerun ...）。
-        # 2026-09-22 修复：此处原为固定白名单 ('stage_results','reports','hitl','external_target')，
         # 凡不在名单里的扩展键，都会被 update_phase / add_vulnerability / update_stats 的
-        # 「_load_json → 改 → _save_json（全量写）」静默抹掉。run 33/34 实证：D2 期间写入的
         # target_epoch（「本批次是否横跨靶场重启」的权威结论）与 replay_progress / d2_verify_progress
         # 等被抹成缺失，使「D2 数据是否可对账」在产物里无法审计（事件流仍完整，本文件已丢）。
         # 改为保留 data 中所有未知键：新增扩展字段无需再同步名单，杜绝同类回归（fail-safe）。

@@ -29,7 +29,6 @@ ollama:
   num_ctx: 8192
   max_tokens: 400
   temperature: 0.1
-  # "2m" = 最后一次调用后 2 分钟卸载模型（与根 config.yaml 同步，2026-10-21 r114 实证）。
   # 根因：Ollama 服务端 keep_alive=Forever 时 qwen3:8b 常驻 ~6GB Commit，下一片 A1 的
   # CodeQL 必 OOM → build_failed_or_empty → 全片 heuristic 兜底，CodeQL 基线失真。
   # 置 "0" 太慢（每次调用冷加载 ~20s，a2_poc 慢 10 倍）；"2m" 让 a2_poc 内保持热、

@@ -3,19 +3,17 @@
 ## 为什么需要这个模块
 
 CodeQL 的标准 Java 查询包建模的是 **Servlet API** 的 sink：
-``response.getWriter().print(...)``、``Statement.executeQuery(...)``、
-``Runtime.exec(...)``。但真实项目（以及 java-sec-code 这类教学靶场）大量使用
+``response.getWriter.print(...)``、``Statement.executeQuery(...)``、
 **框架惯用写法**，同一个危害在代码里长得完全不同：
 
 | 族 | CodeQL 认的形态 | 框架惯用形态（CodeQL 漏） |
 |---|---|---|
-| xss | ``response.getWriter().print(param)`` | Spring ``@ResponseBody`` 方法 ``return param;`` |
-| expression_injection | 无 | ``new ExpressRunner().execute(param, ...)`` |
+| xss | ``response.getWriter.print(param)`` | Spring ``@ResponseBody`` 方法 ``return param;`` |
+| expression_injection | 无 | ``new ExpressRunner.execute(param, ...)`` |
 | jndi_injection | 无 | log4j2 ``logger.error(param)``（Log4Shell 面） |
 | cors | 无 | ``setHeader("Access-Control-Allow-Origin", origin)`` |
 | rmi | 无 | ``LocateRegistry.createRegistry(...)`` |
 
-2026-10-31 实测：java-sec-code 29 个真值文件里 **11 个完全没有 trigger_spec**，
 全部落在上表右列。这不是「判据不够好」，是**候选压根没被登记**——
 下游 D1/D2/I2 再强也无从下手。
 
@@ -25,14 +23,11 @@ CodeQL 的标准 Java 查询包建模的是 **Servlet API** 的 sink：
    （那是 CodeQL 的活）。规则宁少勿滥。
 2. **每条规则必须给出「为什么这一行就够」**，写进 ``reason``，供审计。
 3. **不判安全**。本模块只产出「正向证据」，不产出「这里安全」的结论——
-   误杀 TP 的代价远大于漏挡 FP（属性族 2026-10-25 的教训）。
 4. **族名用平台族名**，与 ``trigger_specs.family`` 对齐，避免下游族路由错配。
 5. 每条规则带 ``confidence``；只有 ``high`` 才允许直接落 confirmed_code_property，
    ``medium`` 只登记候选、交给正常流程裁决。
 
-## 与 OWASP Benchmark 的关系
 
-本模块的规则全部是 **Spring / log4j2 / QLExpress / RMI** 形态，OWASP Benchmark 是
 纯 Servlet + ``javax`` 写法，因此这些规则在 OWASP 上应当**零命中**。
 这一点由 ``tools/_wb_fw_rule_audit.py`` 离线校验（两个语料同时跑）。
 """
@@ -135,7 +130,6 @@ def _read(path: str) -> str:
 def _strip_comments(code: str) -> str:
     """去掉 // 与 /* */ 注释，保留行号（用空行占位）。
 
-    必须做：java-sec-code 的注释里就写着 PoC（``url = 'http://...'; classLoader = ...``），
     不摘掉会把注释当代码匹配出假命中。
     """
     out: List[str] = []
@@ -179,7 +173,7 @@ def _method_blocks(code: str) -> List[Dict[str, object]]:
     while i < n:
         # 必须以 @ 开头才算注解块。曾经只判 "Mapping" in line，于是
         # `import ...annotation.RequestMapping;` 这种行也会进来，但它不以 @ 开头、
-        # 注解收集循环一步不走 ⇒ anns 为空 ⇒ continue 后 i 不变 ⇒ 死循环（实测卡死）。
+        # 注解收集循环一步不走 ⇒ anns 为空 ⇒ continue 后 i 不变 ⇒ 死循环。
         if not _ANN_BEFORE.match(lines[i]):
             i += 1
             continue
@@ -198,7 +192,7 @@ def _method_blocks(code: str) -> List[Dict[str, object]]:
         ann_text = " ".join(anns)
         # 方法签名可能跨行。**不能一见到 ")" 就收工**：形参注解自带括号
         # （`@RequestParam("file") MultipartFile file,`），那样会在注解处提前截断，
-        # 后面的形参全部丢失（FileUpload.java 实测：MultipartFile 形参解析不到）。
+        # 后面的形参全部丢失。
         # 改为按括号配平判断「参数列表真正结束」。
         sig_start = i
         sig = ""
@@ -285,9 +279,8 @@ def _split_top_level(s: str) -> List[str]:
 def _class_base_route(code: str) -> str:
     """取**类级** ``@RequestMapping`` 的路径前缀。
 
-    坑：不能「找到第一个 @RequestMapping 就用」。java-sec-code 的 ``Log4j`` 类是
     ``@RestController``（无路径），路径写在**方法**的 ``@RequestMapping(value="/log4j")``
-    上，按「第一个」取会得到 base=/log4j，再拼方法路径就成了 ``/log4j/log4j``（实测）。
+    上，按「第一个」取会得到 base=/log4j，再拼方法路径就成了 ``/log4j/log4j``。
     ⇒ 必须定位 ``class`` 声明行，只取它**紧邻上方**那一段注解。
     """
     lines = code.splitlines()
@@ -550,7 +543,7 @@ def _hardened_ranges(code: str) -> List[Tuple[int, int]]:
 
     为什么必须排除：QLExpress 的 ``sec`` 方法与 ``vuln1`` 写法几乎一样，区别只在
     多了一行 ``QLExpressRunStrategy.setForbidInvokeSecurityRiskMethods(true)``。
-    不排除就会把安全版本报成漏洞（实测 QLExpress.java L40 就是这么误报的）。
+    不排除就会把安全版本报成漏洞。
     """
     out: List[Tuple[int, int]] = []
     for b in _method_blocks(code):
@@ -602,7 +595,7 @@ def _rule_expression_engine(code: str, rel: str) -> List[FrameworkHit]:
 # 典型形态是定时任务的 invokeTarget 注入（如 `/monitor/job/add` + `/monitor/job/run`）。
 # 这类漏洞不是 shell 拼接，A1 的字符串规则会**一条候选都不产出** —— findings 里
 # 有 command_execution，但没有一条落在 Job / Quartz 文件上。
-# 它的真实形态是**反射调用**：`Class.forName(beanName).newInstance()` + `method.invoke(...)`，
+# 它的真实形态是**反射调用**：`Class.forName(beanName).newInstance` + `method.invoke(...)`，
 # 而命令执行规则只认 `Runtime.exec` / `ProcessBuilder`，看不见它。
 #
 # 判据（同文件同时满足，保守）：
@@ -694,11 +687,11 @@ _STATE_ANN_RE = re.compile(r"@(?:PostMapping|PutMapping|DeleteMapping|PatchMappi
 def _rule_csrf_state_change(code: str, rel: str) -> List[FrameworkHit]:
     """状态变更端点（POST/PUT/DELETE/PATCH）—— 只有在「项目级已显式关闭 CSRF」时才报。
 
-    这条规则单独在文件里跑没有意义（没有 ``csrf().disable()`` 就无从判断保护是否开启），
+    这条规则单独在文件里跑没有意义（没有 ``csrf.disable`` 就无从判断保护是否开启），
     因此它由 :func:`detect_path` 的**第二遍**调用：先扫全工程确认存在显式关闭，
     再回过头把各控制器的状态变更端点标出来。
 
-    置信度取 medium：``csrf().disable()`` 是确定的，但「是否另有自定义 token 过滤器兜底」
+    置信度取 medium：``csrf.disable`` 是确定的，但「是否另有自定义 token 过滤器兜底」
     静态判不了，所以只登记候选、不直接确认。
     """
     hits: List[FrameworkHit] = []
@@ -727,7 +720,7 @@ def _rule_csrf_state_change(code: str, rel: str) -> List[FrameworkHit]:
 def _rule_csrf(code: str, rel: str) -> List[FrameworkHit]:
     """Spring Security 的 CSRF 被显式关闭，同时存在状态变更端点。
 
-    为什么一行就够：``csrf().disable()`` 是「确定关掉 CSRF 保护」的显式声明；
+    为什么一行就够：``csrf.disable`` 是「确定关掉 CSRF 保护」的显式声明；
     再叠加同工程存在 ``@PostMapping`` 等状态变更端点，即构成 CSRF 弱点。
     只在**显式 disable** 时命中，不对「没看到 token 校验」这种缺失做推断（FP 太高）。
     """
@@ -838,7 +831,6 @@ def _rule_crlf_header(code: str, rel: str) -> List[FrameworkHit]:
 
     注意：JDK 1.7+ 的 ``HttpServletResponse.setHeader`` 会过滤 ``\\r\\n``，
     所以这条命中是**代码形态成立**而非「一定可打通」——置信度取 medium，
-    由下游重放判定。java-sec-code 的真值把该文件记为 crlf_injection，与此一致。
     """
     hits: List[FrameworkHit] = []
     base = _class_base_route(code)
@@ -880,7 +872,7 @@ def _rule_ssti(code: str, rel: str) -> List[FrameworkHit]:
     """``Velocity.evaluate(ctx, out, tag, <请求参数>)`` —— 服务端模板注入。
 
     为什么一行就够：``evaluate`` 的第 4 个参数就是**模板源码本身**（不是模板名），
-    传进去即被解析执行，``#set($e="e")$e.getClass()...`` 这类指令可直接打到 Runtime。
+    传进去即被解析执行，``#set($e="e")$e.getClass...`` 这类指令可直接打到 Runtime。
     这里额外要求同文件出现 ``VelocityContext``，避免把「模板名走配置」的用法误判。
     """
     if not _VELOCITY_CTX_RE.search(code):
@@ -911,15 +903,14 @@ _DISK_WRITE_RE = re.compile(
 
 
 def _rule_file_upload(code: str, rel: str) -> List[FrameworkHit]:
-    """``MultipartFile`` 的 ``getOriginalFilename()`` 参与路径并落盘 → file_upload。
+    """``MultipartFile`` 的 ``getOriginalFilename`` 参与路径并落盘 → file_upload。
 
     为什么一行就够：原始文件名由客户端完全控制，直接拼进目标路径即「上传到任意位置 +
     任意扩展名」，危害面同时覆盖文件写入与路径穿越。平台族口径取 ``file_upload``
-    （与 java-sec-code 真值一致），因为**根因是「未校验的上传」而不是「路径拼接」**。
 
     判据要三件事同时成立，缺一不可：
       1. 方法签名里有 ``MultipartFile`` 形参；
-      2. 方法体里出现 ``getOriginalFilename()``；
+      2. 方法体里出现 ``getOriginalFilename``；
       3. 方法体里有落盘调用（Files.write / transferTo / FileOutputStream / Files.copy）。
     这样「上传后只解析内容不落盘」（如 ooxmlXXE 的 readxlsx）不会被误报成上传漏洞。
     """
@@ -964,10 +955,9 @@ _CSRF_FLAG_OFF_RE = re.compile(
 def _rule_csrf_config_off(code: str, rel: str) -> List[FrameworkHit]:
     """``Boolean csrfEnabled = false;`` —— CSRF 保护由配置开关控制且默认关闭。
 
-    为什么必须补这条：``_rule_csrf`` 只认 ``csrf().disable()`` 这种**链式显式关闭**，
+    为什么必须补这条：``_rule_csrf`` 只认 ``csrf.disable`` 这种**链式显式关闭**，
     但真实项目更常见的是「开关式」——``@Value("${x.csrf.enabled}") Boolean csrfEnabled = false;``
     再在 ``RequestMatcher`` 里按布尔值决定是否启用。这种写法下 CSRF 实际是关的，
-    而链式规则一条都匹配不到（java-sec-code 的 CSRF.java 就是这么漏的）。
 
     这里只产出「项目级 csrf 处于关闭态」这一个信号（route 留空），
     真正的端点枚举交给 :func:`detect_path` 的第二遍 ``_rule_csrf_state_change``。
@@ -993,7 +983,6 @@ _MAPPER_ROOT_RE = re.compile(r"<mapper\s+namespace\s*=")
 def _strip_xml_comments(text: str) -> str:
     """剥 XML 注释，**但保留换行**。
 
-    直接 ``sub("")`` 会让注释之后的每一行行号前移（java-sec-code 的 UserMapper.xml
     头部有 3 行注释，实测报出的 L17 实际是 L20）。行号是 (file, line, family) 三元组
     和人工复核的锚点，偏了就等于报错位置。
     """
@@ -1010,9 +999,7 @@ _DOLLAR_WHITELIST_RE = re.compile(
 def _mybatis_param_path(var: str) -> str:
     """把 mapper 里的 ``${a.b.c}`` 转成请求参数路径 ``a[b][c]``。
 
-    ## 为什么必须做这一步（2026-11-03 实测）
 
-    若依 5 条 in_scope 真值的 mapper 全是 ``${params.dataScope}``，而 spec 的
     ``param_name`` 是从 controller 方法签名反查来的（``parentId`` / ``username`` / 空）。
     投 ``parentId=<payload>`` 时 mapper 的 ``params.dataScope`` 拿不到值 ⇒
     **SQL 根本没被注入**，但查询照常执行、探针在 mapper 处命中 ⇒ 状态变成
@@ -1034,7 +1021,6 @@ def _rule_mybatis_dollar(code: str, rel: str) -> List[FrameworkHit]:
 
     为什么必须单独做：MyBatis 的 ``${}`` 是**字符串替换**，``#{}`` 才是预编译占位。
     CodeQL 的 Java SQLi 查询只看 Java 代码里的 ``Statement.execute``，
-    **完全看不到 XML 里的拼接**；启发式规则也不认 XML。RuoYi 这类项目的核心注入面
     （``${params.dataScope}``）因此整片漏掉。
 
     判据（三件事同时成立，缺一不可）：
@@ -1109,7 +1095,7 @@ def detect_source(code: str, rel_path: str = "") -> List[FrameworkHit]:
        理由：header 注入是「注入类」危害，cookie 缺 Secure 是「配置属性」危害，
        前者成立时后者没有独立价值（而且同一行 cookie 往往就是注入载体）。
     2. ``file_upload`` 与 ``path_traversal`` **同行**时丢弃 ``path_traversal``。
-       理由：``Paths.get(DIR + f.getOriginalFilename())`` 这一行的根因是「未校验上传」，
+       理由：``Paths.get(DIR + f.getOriginalFilename)`` 这一行的根因是「未校验上传」，
        路径穿越是它的**后果**而不是另一个独立缺陷。只压同一行，避免误伤
        文件里真正独立的穿越点。
     """
@@ -1231,11 +1217,8 @@ def detect_path(project_path: str, max_files: int = 20000,
     """对整个工程跑规则（Java/Kotlin 生产源 + MyBatis mapper XML）。
 
     测试源码一律不扫：``src/test/java`` 里的控制器样例不是部署面，
-    报出来只会污染分母（java-sec-code 的 QLExpressTest 实测多报 5 条）。
 
-    XML 只跑 ``_rule_mybatis_dollar`` 一条规则（2026-10-31）：把 Java 规则套到 XML 上
     没有意义，而 MyBatis 的 ``${}`` 拼接是 CodeQL 和启发式**都看不见**的注入面
-    （RuoYi 的 ``${params.dataScope}`` 就在这）。其它 XML（pom/mybatis-config/logback）
     因缺少 ``<mapper namespace=`` 自然零命中。
     """
     if not enabled():
@@ -1261,7 +1244,6 @@ def detect_path(project_path: str, max_files: int = 20000,
             norm = "/" + rel
             if any(tok in norm for tok in _TEST_DIR_TOKENS):
                 continue
-            # 预算分开计：XML 是 2026-10-31 新增的扫描面，若与 Java 共用 seen，
             # 大工程里的资源 XML 会把 Java 预算吃掉，甚至触发 return out 导致后半程
             # Java 文件整片不扫（比漏报更糟：是静默的半途而废）。
             if _is_xml:

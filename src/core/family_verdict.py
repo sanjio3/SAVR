@@ -1,4 +1,4 @@
-"""按族路由判定通道（I 组，2026-09-28 落地）。
+"""按族路由判定通道。
 
 背景（canary 结构性失效三族）：securecookie / weak_hash / weak_crypto 的「漏洞」不是
 数据流事件（污点到达 sink），而是代码属性（Cookie flag 缺失、弱算法选择）。旧判定把
@@ -11,7 +11,7 @@ safe 用例也抬成 confirmed（G 分析：借 sink 26 条 / 无事件 13 条�
   且算法名 ∈ 弱算法黑名单 → confirmed_code_property；到达算法 sink 但算法不弱 →
   confirmed_sink_control；无算法 sink 事件 → unconfirmed（此前借链路确认的假阳性就此出清）。
 - attribute（securecookie 等）：判定 = Cookie.setSecure/setHttpOnly 的布尔参数断言
-  （探针已记录参数，实测 source_value='[true]'/'[false]'）：false → confirmed_code_property；
+  ：false → confirmed_code_property；
   全 true → unconfirmed；无事件 → unconfirmed（证据不足，不臆断）。
 
 终态语义：confirmed_code_property 是**独立终态**，不与 confirmed_exploitable 混用
@@ -29,9 +29,6 @@ CONFIRMED_CODE_PROPERTY = "confirmed_code_property"
 
 _ALGO_FAMILY_TOKENS = ("weak_hash", "weak_crypto", "hash", "crypto", "weak-encryption")
 _ATTRIBUTE_FAMILY_TOKENS = ("secure_cookie", "securecookie", "cookie_flags", "cookieflags")
-# 2026-10-03（Part2 判据错配出清）：weak_random **必须单列**。
-# 事故：本表原先没有 random 类 token，weak_random 落到默认 dataflow 通道；而 dataflow 的
-# 判据是「canary 到 sink 即 confirmed_exploitable」—— 于是 run 46 实测 16 条 weak_random
 # 全部被抬成 confirmed_exploitable。但「用了 java.util.Random」根本不是**可利用性**主张，
 # 而是**代码属性**主张（非密码学安全随机源）：没有攻击者可控输入、没有可利用后果，
 # 拿「运行时可利用证明」的终态去标它，就是问错了问题。
@@ -50,9 +47,7 @@ _WEAK_ALGOS = {
     "rc2", "rc4", "arcfour", "blowfish", "md2",
 }
 _ATTRIBUTE_SINK_TOKENS = ("Cookie.setSecure", "Cookie.setHttpOnly")
-# 2026-10-08 补 Cookie 构造器：OWASP Benchmark 的 securecookie **真漏洞形态是「new Cookie(...)
 # 之后从不调用 setSecure/setHttpOnly」**，只认 setSecure/setHttpOnly 事件永远抓不到真漏洞
-# （设了 flag 的反而是 safe 用例）⇒ 旧判据对本族系统性失效（run 246 实测 TP 确认率 1/6）。
 # 探针侧同步补了 Cookie.<init> hook（ByteBuddyHookInstaller.installWeakCryptoHooks），
 # 于是「有 Cookie.<init> 事件 且 无 setSecure(true)/setHttpOnly(true)」= flag 缺失的正向证据。
 _COOKIE_CTOR_SINK_TOKENS = ("Cookie.<init>",)
@@ -80,7 +75,6 @@ def _exclusive_sinks_for(family: str) -> Tuple[str, ...]:
 def route_for(family: str, events: Optional[Iterable[Dict[str, Any]]] = None) -> str:
     """族 → 判定通道。未知族一律 dataflow（现行判据），保证零回归。
 
-    路由键优先级（2026-10-03 判据错配出清）：**实际观测到的 sink 签名 > 族名**。
     族名是上游 A2/A1 的**主张**，会被 LLM 自由命名带偏（实测 OWASP 平台族名与真值
     族名一致率仅 64.6%）；而 sink 签名是探针看到的**事实**。只对「专属 sink」认账
     （见 _exclusive_sinks_for），噪声 sink（Response.addHeader / Cookie.setHttpOnly /
@@ -136,7 +130,6 @@ def _first_token(arg: str) -> str:
     - 算法族 Cipher（关键）：'[DES/CBC/PKCS5PADDING, SunJCE]' -> 'des'——
       探针上报的是完整「变换字符串」ALG/MODE/PADDING，必须按 '/' 切出基础算法名，
       否则 DES/3DES 会被误判为非弱算法（confirmed_sink_control），漏掉真实弱加密漏洞。
-      （2026-09-28 修复：run 31 实测 9/15 算法族 spec 因未切分变换字符串而被错判。）
     """
     arg = arg.strip().strip("[]")
     if not arg:
@@ -204,7 +197,6 @@ def judge_algorithm_family(events: Iterable[Dict[str, Any]]) -> Tuple[str, str]:
     if strong_seen or algo_events:
         # 强算法/参数未记录 ⇒ 弱算法主张不成立。必须判 unconfirmed：
         # 返回 confirmed_sink_control（确认态）会把 OWASP hash 的 safe 用例算成命中
-        # （run 364 实测 41 条 FP 全部来自此分支，且 positive_evidence_rule 为空）。
         return "unconfirmed", (
             f"算法族族路由：算法选择 sink 已到但算法参数不弱（{sorted(set(strong_seen)) or '参数未记录'}）"
             " → 弱算法主张不成立，判为未确认"
@@ -218,7 +210,6 @@ def judge_attribute_family(events: Iterable[Dict[str, Any]]) -> Tuple[str, str]:
     三条判据，按证据强度排序：
     ① flag 显式关闭（setSecure(false) / setHttpOnly(false)）→ 确证缺失。
     ② **Cookie 已创建但从未设置 flag**（只有 Cookie.<init> 事件，无任何 setSecure/setHttpOnly）
-       → 确证缺失。这是 OWASP Benchmark securecookie 的主形态，2026-10-08 补。
     ③ flag 显式开启 → 主张不成立（safe 用例）。
     """
     events = list(events or [])
@@ -317,10 +308,9 @@ def judge_safe_implementation(family: str, events: Iterable[Dict[str, Any]]) -> 
 
 # 族路由准入状态集：只有这些状态才允许 judge_* 介入重判。
 # no_evidence 刻意排除——「本轮什么都没观测到」时不许拿残留事件晋升。
-# 2026-10-16（P-D 补）：把两个**已路由的正确终态**也纳入准入。
 # 缺口：属性族 spec 由 D2/M4 的 code_property 通道拿到 confirmed_code_property 后，
 # iast_state 仍是 sink-reached-probe（不是 family-route:*），而本准入集不含这两个终态
-# ⇒ judge 根本不再跑，positive_evidence_rule 永远为空（对应修复计划 §1.3「226 条为空」）。
+# ⇒ judge 根本不再跑，positive_evidence_rule 永远为空。
 # 只放「已确认态」进来是安全的：judge 要么凭本族专属 sink 事件复证并把规则落库，
 # 要么返回 unconfirmed；而 unconfirmed 仅当旧态是 confirmed_exploitable 时才被接受
 # （见下方 apply_family_route 的 accepted 分支），所以 confirmed_code_property /
@@ -338,12 +328,10 @@ def apply_family_route(
 ) -> Tuple[str, Dict[str, Any]]:
     """按族路由重判一条 spec（数据流族原样放行）。
 
-    2026-10-08 准入放开（此前是「修法写了没接通」的关键一环）：
     原实现硬性要求 `verification_status == 'confirmed_exploitable'` 才允许 judge_* 介入，
     而 M4 通道注册表上线后，代码属性族（weak_hash/weak_crypto/weak_random/secure_cookie）
     的仲裁主判据变成 code_property（harmful=False），spec 停在 unconfirmed —— 于是它们
     **永远进不了 judge_***，既够不到 confirmed_exploitable，也没人把它们路由到
-    confirmed_code_property，整族凭空掉成 unconfirmed（run 246 实测：weakrand TP 确认 0/2、
     securecookie TP 确认 1/6）。
 
     放开规则（仍不允许「没证据的晋升」，只是允许 judge 用**本族专属 sink 事件**说话）：
@@ -382,7 +370,6 @@ def apply_family_route(
         # confirmed_sink_control 也必须允许被族判据降级为 unconfirmed。
         # 背景：d2_judge 对算法族/属性族/随机族的**安全实现**（强算法 SHA-256、flag 已置真、
         # 强随机源）会给「观测到 sink 控制但未命中高影响」→ confirmed_sink_control。这类状态若
-        # 不降级，会一直被对账/门禁当成「确认命中」计成 FP（run 364 hash 41 条 FP 全部是此
         # 状态，算法实为 SHA-256 等强算法）。原判据只放 confirmed_exploitable，导致后处理
         # 选不到、也降不动 confirmed_sink_control，P1 修复实际失效。
         # confirmed_exploitable 的原意（出清借链路确认的假阳性）保留不变。

@@ -6,7 +6,7 @@ NVD / CNVD·CNNVD) into a unified ``Advisory`` model, persists them, and matches
 installed components against affected version ranges. Poisoning ("malicious
 package") intel is modelled as advisories with ``malicious=True``.
 
-Safety guardrail (第四版 §2.15): outbound fetching is opt-in and proxy-aware.
+Safety guardrail (第四版 ): outbound fetching is opt-in and proxy-aware.
 By default the service is offline — it ingests from local dataset fixtures so
 tests need zero network access.
 """

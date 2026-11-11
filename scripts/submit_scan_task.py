@@ -1,6 +1,5 @@
 """幂等地提交扫描任务（REST POST /api/scan-tasks）。
 
-背景（2026-09-10 事故）：此前用内联脚本批量提交，脚本在 **拿到响应之后** 才抛 NameError，
 调用方误以为请求失败于是重发，结果同一批任务被建了两遍（同一 name 出现两组重复任务）。
 两组任务并发打同一靶机，d2 阶段从 10~20 分钟拖到近两小时，基线样本被污染。
 
@@ -11,8 +10,6 @@
   4. 只有在真正 POST 成功、拿到 id 之后才打印结果——避免"响应已生效但后续代码报错"导致的重复提交。
 
 用法：
-    python scripts/submit_scan_task.py --name R19-baseline-run1
-    python scripts/submit_scan_task.py --name R19-baseline-run1 --force-new
     python scripts/submit_scan_task.py --dry-run --name X      # 只打印将要提交的内容
 """
 import argparse
@@ -28,7 +25,6 @@ DB = os.environ.get("SAST_AI_DB_PATH", "data/app.db")
 TERMINAL = ("completed", "failed")
 NON_TERMINAL = ("pending", "queued", "running")
 
-# D-1（2026-09-28 批准）：提交前 task_id 残留预检涉及的子表。
 # 有 created_at 的表必须带时间截止（created_at < now）防误杀本轮新行；
 # sca_components 无 created_at 列，只能在「提交前」这一时点整按 task_id 清（此刻不可能有本轮新行）。
 _RESIDUE_TABLES = [
@@ -124,14 +120,8 @@ def preflight_stale_task_id(db_path: str, backup_dir: str = "") -> dict:
         con.close()
 
 
-def canonical_payload(name: str, workspace_id: int = 3, idor_app_id: str = "workspace-3") -> dict:
-    """target-mall 基线的 canonical options（与历史 task-1..17 完全一致）。
-
-    2026-09-18：新增 workspace_id / idor_app_id 两个可选参数。原实现把靶场硬编码成
-    workspace-3（target-mall），扫 java-sec-code（ws=4）只能另写内联 POST，
-    于是绕开了本脚本的幂等保护（9-10 事故的根因就是内联提交重复建任务）。
-    这两个参数默认保持原值，历史调用行为不变。
-    """
+def canonical_payload(name: str, workspace_id: int = 1, idor_app_id: str = "") -> dict:
+    """构造一次扫描任务的默认提交参数。"""
     return {
         "workspace_id": workspace_id,
         "name": name,
@@ -187,27 +177,25 @@ def main() -> int:
                     help="同名任务即使存在也强制新建（会产生并行任务，慎用）")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--db", default=DB)
-    ap.add_argument("--workspace-id", type=int, default=3,
-                    help="工作区 id（3=target-mall，4=java-sec-code，5=owasp-benchmark-sample）")
-    ap.add_argument("--idor-app-id", default="workspace-3",
-                    help="IDOR 应用标识，须与 workspace_id 对应（如 workspace-4）")
+    ap.add_argument("--workspace-id", type=int, default=1,
+                    help="工作区 id（在 SAVR 中注册的工作区）")
+    ap.add_argument("--idor-app-id", default="",
+                    help="IDOR 应用标识（可选，须与 workspace_id 对应）")
     ap.add_argument("--no-verification", action="store_true",
-                    help="关闭 D2 动态验证（无运行实例的纯静态靶场用，如 owasp-benchmark-sample）")
+                    help="关闭 D2 动态验证（无运行实例时使用）")
     ap.add_argument("--no-sca", action="store_true",
-                    help="关闭 SCA（pom 故意用旧依赖、非考察维度的靶场用）")
+                    help="关闭 SCA")
     ap.add_argument("--no-idor", action="store_true",
-                    help="关闭 IDOR（无鉴权面的靶场用）")
+                    help="关闭 IDOR（无鉴权面时使用）")
     ap.add_argument("--shard", default="",
-                    help="分片清单 JSON 路径（全集靶场按片扫描，见 tools/owasp_shards.py）；"
-                         "不传即全量扫描")
+                    help="分片清单 JSON 路径；不传即全量扫描")
     ap.add_argument("--skip-preflight", action="store_true",
-                    help="跳过提交前 task_id 残留预检（D-1，默认开启）")
+                    help="跳过提交前 task_id 残留预检")
     ap.add_argument("--preflight-backup-dir", default=".SAVR/quarantine",
                     help="残留行隔离备份目录")
     ap.add_argument("--env", action="append", default=[],
                     help="任务级环境开关（可多次）：KEY=VALUE。写入 options_json.run_env，"
-                         "由 scan_task_runner 启动时注入子进程（如 --env SAST_AI_DESER_YSOSERIAL=1；"
-                         "此前设在 submit 进程上的 env 传不进 runner，反序列化族整族零载荷）")
+                         "由 scan_task_runner 启动时注入子进程")
     args = ap.parse_args()
 
     DB = args.db
@@ -217,9 +205,8 @@ def main() -> int:
         except Exception as e:
             print(f"[preflight] 预检失败（不阻断提交，可人工排查）：{e}", file=sys.stderr)
     payload = canonical_payload(args.name, args.workspace_id, args.idor_app_id)
-    # 2026-11-05 修：反序列化族（ysoserial 真 gadget）此前因 submit 端 env 传不进
-    # runner 子进程而整族零载荷。受控靶场默认开启该开关，--env 可覆盖/追加。
-    _run_env = {"SAST_AI_DESER_YSOSERIAL": "1"}
+    # 任务级环境开关由 --env 显式提供，不预置任何目标相关的默认值。
+    _run_env = {}
     for _kv in (args.env or []):
         if "=" in _kv:
             _k, _v = _kv.split("=", 1)

@@ -23,7 +23,6 @@
 profiles:
   # ---- 本地小模型（Ollama）----
   # 面向全量扫描的取值。理由见下：
-  #   use_thinking=false : 2026-09-19 实测 4 个真实样本，think=false 命中 4/4、总耗时 31.7s；
   #                        think=true 命中 0~3/4、总耗时 150s+（思考与正文争抢输出预算，
   #                        预算耗尽时 content 全空）。关思考更准、更稳、快约 5 倍。
   #   max_attempts=2     : 本地失败后没有云端兜底（api.fallback_provider 为空），

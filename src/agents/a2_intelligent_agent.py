@@ -46,8 +46,7 @@ logger = logging.getLogger(__name__)
 def _cfg_get(config: Any, dotted_key: str, default: Any = None) -> Any:
     """按点分键取配置，兼容两种形态的 config 容器。
 
-    背景（2026-09-17）：本模块的 config 由调用方决定形态——
-      * 部分路径传 src.core.config.Config 实例，其 get() 原生支持 "a.b.c" 点分键；
+      * 部分路径传 src.core.config.Config 实例，其 get 原生支持 "a.b.c" 点分键；
       * 部分路径（benchmark_cli.run_a2_scan）传手工组装的嵌套 dict
         {'api': {...}, 'agents': {...}}，dict.get("a.b.c") 恒取不到，
         导致配置形同虚设且无任何报错（开关静默失效）。
@@ -389,10 +388,8 @@ NODE_FILE_DELETE_PATTERNS = [
 
 
 # ---------------------------------------------------------------------------
-# 2026-09-17（待请示 §1.2 方案 B「改分类层」）：LLM 族名证据约束修正
 # ---------------------------------------------------------------------------
 # 背景：A2 的 LLM 偶发把「JNDI / Log4j lookup」判成 XXE、把「JSONP callback」判成 CSRF。
-# 实测 run 15 Log4j.java 两条 finding 的 type 与 description 均为 XXE，且描述直接把 JNDI lookup
 # 说成 XML External Entity；Jsonp.java 五条 finding 的 type=CSRF（描述称 callback 下未校验 token）。
 # 这类错配污染报告 by_type，且会让 A2 的 _analyze_java_jndi 因 type 不含 jndi/log4j/ldap 而不生效。
 # 解决办法是在 LLM 结果落成 Vulnerability 之前做一次「证据约束」：当代码证据与 LLM 族名矛盾时，
@@ -479,7 +476,7 @@ class A2SemanticAgent:
 
         # 加载提示词
         self.prompts = self._load_prompts()
-        # §4.1：模板指纹（hash）/ 版本，供 LLM 缓存盐与 model_runs 归因；_load_prompts 内已赋值，
+        # 模板指纹（hash）/ 版本，供 LLM 缓存盐与 model_runs 归因；_load_prompts 内已赋值，
         # 这里给默认值防止未调用时属性缺失。
         self.prompt_hashes = getattr(self, "prompt_hashes", {})
         self.prompt_versions = getattr(self, "prompt_versions", {})
@@ -494,7 +491,6 @@ class A2SemanticAgent:
         # 避免"全部文件失败但任务仍 completed"的静默归零再次发生。
         self._a2_error_count = 0
 
-        # 2026-09-17（Agentic 闭环）：开关默认关。开启后，闭环二次分析（携带 I2 回灌 feedback）
         # 走「带工具调用的多轮推理」；首轮分析不受影响，便于先小范围验证再放开。
         # 取值必须用 _cfg_get 而非 config.get('a.b.c')：self.config 的形态随调用方而变——
         # 有的路径传 Config 对象（点分键），有的传 benchmark_cli 组装的嵌套 dict
@@ -505,7 +501,6 @@ class A2SemanticAgent:
     def _init_client(self):
         """初始化AI客户端：主用 provider 先用，耗尽/失败自动切兜底（智谱 GLM）。
 
-        2026-09-17（统一 LLM 调用层）：provider 归一 + 降级链构造收敛到
         ModelGateway.build_fallback_client，与 review / triage / I2 / D1 共用一套实现和
         埋点口径，消除「A2 绕过网关直连客户端族」的双链路。内部仍复用
         a2_ai_agent._make_client，config 驱动的 base_url / model 保持不变。
@@ -532,7 +527,7 @@ class A2SemanticAgent:
         )
 
     def _load_prompts(self) -> Dict:
-        """加载提示词（§4.1，2026-09-19：优先走 PromptRegistry 统一清单）。
+        """加载提示词。
 
         注册表把 src/prompts/ 下模板收敛成带版本/hash 的清单，并返回
         {name: text, name.hash: <sha256前16>, name.version: <ver>}，供缓存盐与埋点归因。
@@ -541,7 +536,6 @@ class A2SemanticAgent:
         prompts: Dict = {}
         try:
             from src.core.prompt_registry import load_prompts_dict
-            # §4.1 修复（2026-09-20）：把 prompt_version 真正传给模板选择器，未命中按 default
             # 分级回退。此前不传版本 → prompt_version 只进 metadata、从不驱动模板选择。
             _prompt_version = str(_cfg_get(self.config, 'prompt_version', '') or '')
             prompts = load_prompts_dict(version=_prompt_version or None) or {}
@@ -756,7 +750,6 @@ class A2SemanticAgent:
             logger.warning("No AI client available for deep analysis")
             return []
 
-        # 2026-09-19（P1-6）：本地/小模型上下文窗口有限，喂整份源码会直接溢出并静默失败。
         # 只在「模型上下文 <= 8192」时才裁剪输入（云端大模型不裁，保持现有跑分口径不变）。
         # 预算 = 该模型能吃下的输入 token，用 CJK 感知的估算裁剪——原实现写死
         # 「4 字符/token」，而本项目真实提示词实测只有 2.34~2.38 字符/token（中文占多数），
@@ -862,10 +855,10 @@ class A2SemanticAgent:
                 if len(fb_lines) > 1:
                     context_info += "\n".join(fb_lines) + "\n"
 
-        # §R4回归修复：禁止直接用 str.format()。提示词正文里的字面花括号（如路由示例
-        # /order/{id}）会被 format() 当成未提供的占位符抛 KeyError，进而被下面的 except
+        # §R4回归修复：禁止直接用 str.format。提示词正文里的字面花括号（如路由示例
+        # /order/{id}）会被 format 当成未提供的占位符抛 KeyError，进而被下面的 except
         # 吞掉导致 A2 整体静默归零。render_prompt 只替换显式传入的键，其余保留字面量。
-        # §4.3：注入规则库 skill 的补充检测要点（model-agnostic，强化强弱模型对特定形态的识别）。
+        # 注入规则库 skill 的补充检测要点（model-agnostic，强化强弱模型对特定形态的识别）。
         skill_hints = ""
         try:
             from src.core.rule_registry import build_skill_hints
@@ -885,18 +878,14 @@ class A2SemanticAgent:
             system = "You are a professional security code auditor. Analyze code for security vulnerabilities with deep semantic understanding. Consider data flows, call chains, and exploitability. Always output valid JSON in the exact format specified. Output ONLY the JSON, no explanations."
             messages = [{"role": "user", "content": prompt}]
 
-            # 2026-09-17（Agentic 闭环）：闭环二次分析（携带 I2 回灌 feedback）改为带工具
             # 调用的多轮推理——A2 可主动查证端点 / 参数 / 族是否真实存在，而不是只能看
             # prompt 里塞进来的片段。首轮分析（feedback 为空）保持原单次 completion。
             # 注意：feedback 只能从入参 context（dict）取。context_info 到这里已被拼成
-            # 提示词正文字符串（上方 context_info += ...），对它 .get() 会抛
+            # 提示词正文字符串（上方 context_info += ...），对它 .get 会抛
             # 'str' object has no attribute 'get'，并被本函数末尾 except 吞成空结果——
-            # 表现为「闭环二次分析整体静默归零」，极难定位（2026-09-17 回归实测踩到）。
             _feedback = (context or {}).get("feedback") or [] if isinstance(context, dict) else []
             if _feedback and getattr(self, "_agentic_enabled", False):
-                # 2026-09-18（fail-open 加固）：agentic 是**增强路径**，不是唯一路径。
                 # 它抛异常若一路冒到本函数末尾的 except，会被吞成 return [] ——
-                # 即「闭环二次分析静默归零」，与 9-17 修掉的 context_info.get 事故同一形态，
                 # 表现是 feedback 非空时 A2 一条都不产，且不报错。真实 LLM 下工具输出畸形、
                 # 网络抖动等都可能触发，故必须在这一层拦住并回退到单次 completion。
                 try:
@@ -936,8 +925,6 @@ class A2SemanticAgent:
     def _source_snippet_for_family_check(self, file_path: str, line: Any, context_lines: int = 40) -> str:
         """LLM 未回带 code 时，按行号回读源文件片段，供族名证据纠正使用。
 
-        2026-09-18（E2 评审）：原先纠错规则直接吃 ``v.get('code', '')``，LLM 不回带 code 时
-        规则看不到 jsonp / callback 等关键证据，纠正静默失效——run 17 实测 Jsonp.java:L56 与
         Object2Jsonp.java:L75 两条因 code_snippet 为空仍留 csrf。
         这里只用于「判定」，不写回 code_snippet；读不到就返回空串，不阻断 A2 主流程。
         """
@@ -974,7 +961,6 @@ class A2SemanticAgent:
             except Exception:
                 from ..core.llm_output import parse_llm_list
 
-            # 2026-09-19（P0-2）：统一走 llm_output 多级降级链（字符串感知配平 / 截断修复 /
             # 数组元素抢救），替代原本脆弱的「括号配平 + 末尾截断」写法。截断/抢救诊断
             # 打 [LLM-OUTPUT] 日志，区分「模型判定无漏洞」与「答案被 max_tokens 腰斩（平台侧问题）」。
             vulns, diag = parse_llm_list(response or "")
@@ -1020,7 +1006,6 @@ class A2SemanticAgent:
                     llm_params = []
 
                 _llm_type = v.get('type', 'Unknown')
-                # 2026-09-18（E2 评审）：LLM 未回带 code 时按行号回读源文件兜底，
                 # 否则族名纠正规则看不到关键证据（jsonp / callback）而静默失效。
                 _family_evidence = v.get('code', '')
                 if not _family_evidence:
@@ -1550,7 +1535,6 @@ class A2SemanticAgent:
             or '/' in str(vuln.entry_point or '')
         )
         if family and generic_reachability:
-            # 2026-10-02 发难清单 Q2：行号禁止入 chain_id。旧键 {family}:{file}:{line}
             # 行号一漂移键就变，成员掉出原组 → 漏排/重复计（DB 实测大量
             # 「路径穿越:...java:42」形态的 file:line 键，4844 行键为空）。
             # 改用 route-drift 免疫的行号无关弱键（file_tail + type + code_block 哈希，
@@ -1712,7 +1696,6 @@ class A2SemanticAgent:
         """Q3：从 SAST 静态证据（A1 source_candidates）取真实参数名，取代 guess_parameter_name 正则猜测。
         若 A1 未给出，返回空串，由 A2→TriggerSpec 登记阶段结合 entry_discovery 真实路由与
         源码注解精确解析——保证参数名来自「应用真实读取的位置」，而非从描述文本硬猜。
-        注：原「探针实观测请求面（iast_request_params）」一档已于 2026-09-01 移除（探针从不发送
         request_observed，该档恒为空）。"""
         from src.core.param_resolver import is_valid_param_name
         evidence = getattr(vuln, "a1_evidence", None) or {}
@@ -1782,7 +1765,6 @@ class A2SemanticAgent:
 
     # 规范族 token 集合：vuln.type 已是这些规范族之一时，_payload_family 直接采用（不再被
     # description/sink 中残留的旧误标关键词在下方 mapping 顺序里抢先命中覆盖）。
-    # ③类B 二次补强（2026-09-27）：A2 规则链回写 vuln.type='ldap-injection' 后，finding 的
     # description 仍残留「XPath注入」字样；若不优先采用 vuln.type，下方 ('xpath',)→'xpath-injection'
     # 会排在 ('ldap',)→'ldap-injection' 之前命中，把族名又扳回 xpathi，override 完全失效。
     # vuln.type 是权威分类字段，规范族优先于描述性文本（同时修掉「type=sql-injection 但描述含
@@ -1797,7 +1779,6 @@ class A2SemanticAgent:
 
     @staticmethod
     def _payload_family(vuln: Vulnerability) -> str:
-        # ③类B 二次补强（2026-09-27）：权威 type 优先。
         _t = (vuln.type or "").lower().replace("_", "-").strip()
         if _t in A2SemanticAgent._PAYLOAD_FAMILY_CANONICAL:
             return _t
@@ -1837,16 +1818,12 @@ class A2SemanticAgent:
             (("command", "runtime.exec", "processbuilder", "rce"), "command-execution"),
             (("race", "refund", "coupon", "concurrent"), "race-condition"),
             (("workflow", "approval", "bypass", "支付", "退款", "优惠券"), "workflow-bypass"),
-            # §2026-09-22 补齐四族：此前这四类全部落到 generic → 默认载荷表为空 →
             # attack_payloads_json 落 []，D1 重放退化为纯 canary、注入族确认率恒 0。
-            # （实测 run 31#4 CRLF / #12 JSONP / #13 Log4j / #24 URL whitelist 均如此）
             (("crlf", "response splitting", "header injection"), "crlf-injection"),
             (("jsonp", "callback"), "jsonp"),
             (("jndi", "log4j", "log4shell"), "jndi-injection"),
             (("whitelist", "url_bypass", "url bypass", "ends_with"), "url-whitelist-bypass"),
-            # §2026-09-22 位置/上下文类族**移到映射末尾**：它们描述的是「参数在哪」
             # （cookie 位置、跨域上下文），不是「漏洞是什么」。抢在真实漏洞族之前命中就会
-            # 张冠李戴 —— 实测 run 31#26 XSS：code_snippet 含 @CookieValue("xss")，
             # 旧顺序下 cookie 先命中 → payload_family=cookie → 默认载荷表无此族 →
             # attack_payloads_json=[] → 重放没有载荷可注入 → 永久 no-arrival，
             # 即使该 spec 的端点/参数/sink 行全部正确。
@@ -1885,7 +1862,6 @@ class A2SemanticAgent:
             "file-upload": ["webshell_or_probe_file"],
             "deserialization": ["base64(serialized_object)"],
             "idor": ["alternate_owner_resource_id"],
-            # §2026-09-22 补齐四族（原先缺 → 默认载荷为空 → 重放无载荷可注入）。
             # CRLF 用 %0d%0a 编码形态（作为 query 参数值传递时需保持单行可编码）；
             # jndi 指向本地回环 LDAP，与靶场 wiki 的验证姿势一致（不自毁、不外联）。
             "crlf-injection": ["x%0d%0aSet-Cookie:crlf=1", "x%0d%0aContent-Length:0"],
@@ -1895,7 +1871,6 @@ class A2SemanticAgent:
                 "http://whitelisted.example@127.0.0.1/",
                 "http://whitelisted.example.evil.com/",
             ],
-            # §2026-10-14（r89 实测根因 B）补齐：以下族此前无默认载荷 → candidate_payloads 恒空
             # → attack_payloads_json 落 [] → D1 重放退化为纯 canary、确认率恒 0。补齐后每一族都有
             # 可注入载荷，消除"零载荷 spec"。取值保守、指向本地回环或明显标记，不自毁、不外联。
             "open-redirect": ["https://savr-probe.example.com/"],
@@ -1913,8 +1888,6 @@ class A2SemanticAgent:
         return list(table.get(family, []))
 
     # —— F1/F2 辅助：业务逻辑类目识别与真实管理路由择优 ——
-    # R23-3(a)：集合须与规范差分证明族对齐（DIFFERENTIAL_PROOF_FAMILIES）。此前缺 race /
-    # signature_bypass —— task-7 实测 10 条 business_logic_category='race' 的 spec 全由登记层
     # 兜底补出，A2 自身认不出 race 族 → 门控漏判、payload_family 恒 'generic'。
     # 注意 idor 仍经下方别名表折叠为 bola（D1 重放层两者同路由，见 _BL_ROUTE_OVERRIDES），
     # 故此处不把 idor 直接放进集合，避免破坏既有折叠语义。
@@ -2053,7 +2026,7 @@ class A2SemanticAgent:
         # F2：业务逻辑族用 A1/business-logic 标注的 business_logic_category 覆盖 payload_family，
         # 使下游证明（proof_obligations 差分族）与登记（trigger_spec.category）识别一致。
         business_cat = self._business_logic_category(vuln)
-        # F2-补（修复垂直越权召回丢失根因）：A2 的 LLM 已在结构化字段 type/finding_family/
+        # F2-补：A2 的 LLM 已在结构化字段 type/finding_family/
         # display_family 显式给出漏洞族（如「垂直越权」），但 _payload_family 仅靠英文关键词
         # 自下而上匹配（无 vertical/越权 等 needle），对垂直越权类恒回落 'generic'；而
         # _business_logic_category 只读 business_logic_category/category 属性（垂直越权类这两字段
@@ -2071,7 +2044,6 @@ class A2SemanticAgent:
             # 剥离「基础设施层-/业务逻辑类-」等降级标记前缀，取底层业务族再归一
             # （如「基础设施层-垂直越权」→「垂直越权」→vertical_privesc）；注入类剥离后仍归不到
             # DIFFERENTIAL_PROOF_FAMILIES，不会被误判为业务族。
-            # 2026-09-14：剥前缀统一走 src.core.normalize.strip_family_prefix，不再本地内联。
             _raw_hint = strip_family_prefix(_raw_hint)
             _llm_family_hint = canonical_business_logic_family(_raw_hint)
             if _llm_family_hint in A2SemanticAgent._BL_CATEGORY_SET:
@@ -2137,7 +2109,7 @@ class A2SemanticAgent:
                         entry["method"] = "GET"
         # §R5-fix：端到端路由回退。当 LLM 绑定 / entry_point / 正文正则都未取到路由时，
         # 用 finding 的 file:line 在同文件 discovered_routes 中匹配最近方法级路由。
-        # 这是路由"提取层"缺失的兜底（#8 SSTI / #21 JWT垂直 等此前 route 恒为空 → 无法登记 trigger_spec）。
+        # 这是路由"提取层"缺失的兜底。
         if not entry["route"] and discovered_routes:
             _loc = self._match_discovered_route_by_location(vuln, discovered_routes)
             if _loc:
@@ -2252,8 +2224,6 @@ class A2SemanticAgent:
         # F1：BOLA/IDOR 主路径即产出受害者资源 id（解 R1）。此前该字段只在 D2 回灌 feedback 消费端
         # 回填（死开关），主路径恒空 → D1 重放空 id → 404。现改为：能从端点/源码常量取到具体 id 即用具体值；
         # 否则写哨兵 VICTIM_FROM_POOL，由 D1 replay_bola 从账户池解析真实受害者 id。
-        # R23-3(a)（§6.13）：门控从「payload_family 恰为 bola/idor」改为「规范业务族 ∈ 差分证明族」。
-        # 旧门控实测覆盖率极低（task-7：114 条业务族 spec 中 99 条 victim_resource_id 为空），因为没有
         # victim 目标时 D1 差分重放无从构造请求；而 race/state_machine/calculation/auth_session 等
         # 差分族同样需要受害者/对照身份，旧门控把它们全部漏掉。规范族判定走 canonical_business_logic_family，
         # 与登记层（trigger_spec_registry）/证明层同一真相源（NAMING_STANDARDS 簇一）。
@@ -2338,7 +2308,6 @@ class A2SemanticAgent:
                 if node_key not in seen_nodes:
                     seen_nodes.add(node_key)
                     supporting_nodes.append(self._build_supporting_node(item))
-                # 2026-09-18（A2 方案二）：被吸收成员保留独立 findings 行。
                 # 此前该成员在此处被彻底丢弃，导致「按 file_path 统计覆盖」把它所在文件读成
                 # 0 覆盖、且 iast_events 关联桥无处可挂。现在标记归属后随 merged 一起下行，
                 # 由 report_manager 统一落库；D2 候选池按 is_absorbed 排除，前端按标记去重展示。
@@ -2372,7 +2341,6 @@ class A2SemanticAgent:
             canonical.chain_proof = self._build_chain_proof(canonical, canonical.exploit_spec, supporting_nodes)
             self._apply_proof_derivation(canonical)
             merged.append(canonical)
-            # 2026-09-18（A2 方案二）：补行为普通 finding（is_canonical=False，is_absorbed=True），
             # 不参与 canonical 的 proof_tier / exploit_spec 派生；下游按 is_absorbed 排除出 D2 候选池。
             merged.extend(absorbed_members)
 
@@ -2731,7 +2699,7 @@ class A2SemanticAgent:
                 'language': file_info.get('language', 'unknown'),
                 'project_path': self.project_path,
                 'all_files': all_files or {},  # 传递所有文件用于跨文件分析
-                'a1_evidence': a1_evidence or {},  # Q4：A1 调用链证据，供 LLM 前置消费
+                'a1_evidence': a1_evidence or {},
                 'feedback': feedback or [],  # §P4：D2/I2 闭环回灌的 feedback_to_a2，供 A2 二次分析消费
             }
 
@@ -2750,9 +2718,8 @@ class A2SemanticAgent:
                     vuln.has_call_chain = call_chain_result['has_caller']
                     vuln.callers = call_chain_result['callers_str']
                     vuln.verdict = call_chain_result['verdict']
-                    # ③类B 缺陷二修复（2026-09-27）：规则链分析器（如 _analyze_java_ldap）判定
                     # 真实族与 A1 误标不一致时，回写 vuln.type —— trigger_specs.family 经
-                    # vuln.to_dict() → _norm_family 解析，'ldap-injection' 会被确定性归一到
+                    # vuln.to_dict → _norm_family 解析，'ldap-injection' 会被确定性归一到
                     # ldap_injection，使 D2 真值(ldapi) 对账不再错配为 xpathi。
                     family_override = call_chain_result.get('family_override')
                     if family_override and (vuln.type or '').lower() != family_override:
@@ -3619,14 +3586,11 @@ class A2SemanticAgent:
 
     def _analyze_java_ldap(self, vuln: Vulnerability, all_files: Dict) -> Optional[Dict]:
         content = all_files.get(vuln.file, '') or ''
-        # ③类B 二次补强（2026-09-27）：gate 需看到全文件内容（code_snippet 可能漏掉 LDAPManager 字面，
         # 如 02115），故在 gate 之前取 content 并传入 _is_java_ldap_vuln。
         if not self._is_java_ldap_vuln(vuln, content):
             return None
         if not content:
             return None
-        # ③类B 根因修复（2026-09-27 二次）：原 dangerous_search 仅认 DirContext|LdapContext|search\s*\(，
-        # 但 OWASP benchmark 的 LDAP 查询实际调用在 helper LDAPManager.getTheValue* 里（search( 字面不在
         # BenchmarkTestNNNNN.java 本文件内），本文件只含 javax.naming.directory.SearchControls + 过滤器拼接，
         # 故 dangerous_search 恒为 False → _analyze_java_ldap 在 _is_java_ldap_vuln 已判定 LDAP 后仍 return
         # None → family_override 永不回写 → 落库恒为 xpathi。这里把 LDAP 目录包标记纳入 dangerous_search，
@@ -3634,10 +3598,9 @@ class A2SemanticAgent:
         dangerous_search = bool(re.search(r'DirContext|LdapContext|search\s*\(|javax\.naming\.directory|SearchControls|LDAPManager|getDirContext', content, re.IGNORECASE))
         filter_concat = bool(re.search(r'search\s*\([^)]*(\+|format\(|String\.format|MessageFormat)|(\+|format\(|String\.format|MessageFormat)\s*[^;]*filter', content))
         http_entry = self._find_http_entry_for_vuln(vuln, all_files)
-        # ③类B 缺陷二修复（2026-09-27）：family 由 A1 的 vuln.type 经 vuln_hash._norm_family 落库，
         # A1 误标 xpath-injection 时 family 恒为 xpathi。这里返回 family_override，由 scan_file
         # 回写 vuln.type='ldap-injection'，使 _norm_family 的 ('ldap',) 针确定性收敛到 ldap_injection，
-        # 与 D2 真值(ldapi) 对齐（vuln_hash 已于前轮登记 ldap→ldap_injection 映射）。
+        # 与 D2 真值(ldapi) 对齐。
         result_family = 'ldap-injection'
         if dangerous_search and filter_concat and http_entry:
             return {'has_caller': True, 'callers': [], 'callers_str': 'HTTP 输入拼接进入 LDAP 查询过滤器', 'http_entry': http_entry, 'verdict': '✅ A2:真漏洞-Java LDAP注入', 'family_override': result_family}
@@ -4365,7 +4328,6 @@ class A2SemanticAgent:
 
     @staticmethod
     def _is_java_ldap_vuln(vuln: Vulnerability, content: str = '') -> bool:
-        # ③类B 缺陷二修复（2026-09-27 初版 + 2026-09-27 二次补强）：
         # A1 常把 LDAP 查询注入（DirContext.search + 拼接过滤器）误标为 xpath-injection
         # （search( 与 XPath evaluate 形似）。旧逻辑只看 vuln.code_snippet，而 OWASP ldapi 用例的
         # code_snippet 常被 A1 只截到「过滤器拼接行」（如 02115 仅截到 String filter=... + bar），

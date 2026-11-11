@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 熔断振荡修复回归（2026-09-14）。
  *
  * 旧实现：触发与恢复同用一个水线、恢复靠定时、无半开探测，导致队列一出阈值就恢复、
  * 恢复 1s 又被生产速率顶回，形成约 10s 的 tripped/recovered 弛张振荡。

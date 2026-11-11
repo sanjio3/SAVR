@@ -1,4 +1,4 @@
-"""A0 预处理编排路由（§8.1）。
+"""A0 预处理编排路由。
 
 提供 A0 三职责整合的同步入口：路径校验 + 环境识别前置（可选）+ 入口发现/框架特化/补盲回灌。
 """
@@ -35,7 +35,7 @@ def run_a0(payload: EntryDiscoveryRequest):
 
 @router.post("/run/backfill")
 def run_a0_with_backfill(payload: Dict[str, Any] = Body(...)):
-    """执行 A0 编排并回灌 IAST 补盲入口（§8.4 第3点）。"""
+    """执行 A0 编排并回灌 IAST 补盲入口。"""
     try:
         project_path = str(payload.get("project_path") or "")
         workspace_id = payload.get("workspace_id")

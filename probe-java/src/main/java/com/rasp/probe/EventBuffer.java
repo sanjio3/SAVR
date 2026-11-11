@@ -14,22 +14,18 @@ import java.util.concurrent.TimeUnit;
 /**
  * Lock-free asynchronous event pipeline backed by an LMAX Disruptor ring buffer
  * (manual technology stack: "Disruptor 内存队列"). Business threads publish sink/source
- * events with a non-blocking {@code tryNext()} and, when the ring is full, the event is
+ * events with a non-blocking {@code tryNext} and, when the ring is full, the event is
  * dropped rather than blocking the host — preserving the Fail-Open constitution. A
  * single daemon consumer polls batches off the ring and flushes them to the Server.
  *
  * <p>Poll (pull) mode is used instead of Disruptor's push {@code BatchEventProcessor} so
- * the existing scheduled-flush cadence and the test-visible {@link #flush()} entry point
- * keep working unchanged, while backpressure is now observable via {@link #pendingEvents()}
- * (ring occupancy) and {@link #remainingCapacity()}.
+ * the existing scheduled-flush cadence and the test-visible {@link #flush} entry point
+ * keep working unchanged, while backpressure is now observable via {@link #pendingEvents}
+ * (ring occupancy) and {@link #remainingCapacity}.
  */
 public class EventBuffer {
-    // 2026-09-14 熔断振荡修复（第一项）：解耦消费速率与生产速率。
     // 旧值 MAX_BATCH=50 且每 2s flush 一次 → 排空上限仅 25 条/s，远低于扫描高峰的生产速率，
     // 队列持续贴近容量 → 触发熔断 → 停产后 4s 排空 + 5s 冷却 → 恢复 1s 又满，形成约 10s 的
-    // tripped/recovered 弛张振荡。2026-09-14 改为批 256、周期 500ms（排空上限约 512 条/s）。
-    // 2026-09-30（残留低风险一）：D2 重放突发把队列打满、queue=100% 短时三次跳闸 → passthrough
-    // 期事件全丢（run 40/log4j 实证）。把默认再上调到批 512、周期 250ms（排空上限约 2048 条/s，
     // 4 倍），仅改默认值一行；仍可用系统属性覆盖（sec.event.flush.batch / .interval.ms）。
     private static final int MAX_BATCH = intProp("sec.event.flush.batch", 512);
     private static final long FLUSH_INTERVAL_MS = longProp("sec.event.flush.interval.ms", 250L);
@@ -37,15 +33,11 @@ public class EventBuffer {
     // 现改为在有界重试后才计丢弃，重试不把事件退回环（保持背压语义与既有测试不变）。
     private static final int SEND_RETRIES = intProp("sec.event.send.retries", 3);
     private static final long SEND_BACKOFF_MS = longProp("sec.event.send.backoff.ms", 200L);
-    // 2026-09-16（待请示 6 项 #2）：是否入环前抑制 JVM 自举噪声（无 canary 且不在请求上下文的 SINK_HIT）。
     private static final boolean DROP_NO_CANARY_SINKS = boolProp("sec.event.dropNoCanarySinks", true);
-    // 2026-09-21（Q1 全量落地）：是否入环前抑制探针自写日志噪声（tainted source value / sink 含
-    // "sec-agent.log" 标记）。该通道是真实自噪声主通道（R42 实测 run 27 自噪声 148/148 为 TAINT_FLOW），
     // 旧 isSelfSinkNoise 仅覆盖 SINK_HIT+栈含 com.rasp.probe 对主通道完全失效。可用
     // -Dsec.event.dropSelfLogNoise=false 关闭（纵深防御对后端 correlation.py 的同名过滤）。
     private static final boolean DROP_SELF_LOG_NOISE = boolProp("sec.event.dropSelfLogNoise", true);
     private static final String SELF_LOG_MARKER = "sec-agent.log";
-    // 2026-09-30（残留中风险）：入环前按 (canary, sink) 去重。D2 重放洪峰期内，同一 canary 同一
     // sink 会高频重复上报（同一请求被多跳命中），但 D2 只需要「到达」事实，不需要每条事件。洪峰期丢弃
     // 重复不丢证据，且不需改消费端。仅对「带 canary 的重放流量」生效——普通监控流量 canary 为空，
     // 完全不走此分支，绝不误吞真实业务事件。窗口内同键只放行首条，窗口外（下一轮重放/不同 sink）仍记录。
@@ -78,7 +70,6 @@ public class EventBuffer {
 
     /** Non-blocking publish. Returns false (and counts a drop) when the ring is full. */
     public boolean offer(SecurityEvent event) {
-        // 2026-09-16（待请示 6 项 #2）：入环前抑制 JVM 自举噪声。无 canary 的 SINK_HIT 若不在
         // 请求上下文（REQUEST_DEPTH==0），是 JVM 启动期自身读 fat jar / 建连接 / 渲染模板触发的
         // 框架 sink，与任何扫描假说无关——实测重启后 4 分钟涌入 12770 条、99.2% 被去重丢弃。
         // 入环前丢弃即省下解析/去重/落库预算。可用 -Dsec.event.dropNoCanarySinks=false 关闭。
@@ -86,13 +77,10 @@ public class EventBuffer {
             HookMetrics.recordSuppressedStartupNoise();
             return false;
         }
-        // 2026-09-16（待请示 6 项 #4④）：丢弃探针自插桩噪声（探针自身写日志命中文件写入 sink）。
-        // 2026-09-21（Q1 全量落地）：扩展覆盖 TAINT_FLOW 主通道（tainted source value 含探针日志标记）。
         if (isSelfSinkNoise(event)) {
             HookMetrics.recordSuppressedSelfLogNoise();
             return false;
         }
-        // 2026-09-30（残留中风险）：入环前按 (canary, sink) 去重。仅对带 canary 的重放流量
         // 生效——普通监控流量 canary 为空，完全不走此分支，绝不误吞真实业务事件。D2 重放洪峰期内，
         // 同一 canary 同一 sink 会被多跳命中高频重复上报，但 D2 只需要「到达」事实，窗口内同键只放行
         // 首条、丢弃重复，洪峰期不丢证据且不需改消费端。fail-open：判不出（无 ctx/解析异常）不丢。
@@ -120,8 +108,6 @@ public class EventBuffer {
     public void start() {
         executor.scheduleWithFixedDelay(() -> FailOpen.run("flush-events", this::flush),
                 FLUSH_INTERVAL_MS, FLUSH_INTERVAL_MS, TimeUnit.MILLISECONDS);
-        // 2026-10-11：把「静默丢弃」变为可观测。背景——ring 满时 offer() 只 recordDroppedEvent()
-        // 不打日志（transport 全败才 warn），r78 曾出现「224 个 canaried 请求只有 7 个 canary 落库」
         // 而日志零告警，无法定位是环满丢弃 / 去重 / 抑制。此处仅在计数变化时打印，避免刷屏。
         executor.scheduleWithFixedDelay(() -> FailOpen.run("metrics-log", this::logMetricsIfChanged),
                 METRICS_LOG_INTERVAL_MS, METRICS_LOG_INTERVAL_MS, TimeUnit.MILLISECONDS);
@@ -187,7 +173,6 @@ public class EventBuffer {
     }
 
     /**
-     * 2026-09-16（待请示 6 项 #2）：判定是否 JVM 自举噪声——无 canary 的 SINK_HIT 且当前线程
      * 不在请求上下文。仅作用于 SINK_HIT（TAINT/BOLA/RACE 语义事件不受影响，避免丢早期污点跳点）。
      * fail-open：判不出即返回 false（不丢），绝不因抑制逻辑丢真实信号。
      */
@@ -211,13 +196,10 @@ public class EventBuffer {
     }
 
     /**
-     * 2026-09-16（待请示 6 项 #4④）：丢弃探针自插桩噪声。
      * 探针自身写日志（LocalEventLogger 走 java.nio.file.Files.newBufferedWriter）会命中文件写入
      * sink，产生 sink=java.nio.file.Files.newOutputStream 的 SINK_HIT，但其调用栈含 com.rasp.probe
      * （探针自身包），与应用真实漏洞无关——只刷屏日志、污染排查。
      *
-     * <p>2026-09-21（Q1 全量落地）：扩展覆盖 TAINT_FLOW 主通道。R42 实测自噪声主通道是 TAINT_FLOW
-     * （run 27 自噪声 148/148 为 TAINT_FLOW），其 tainted source value 即探针自身日志路径
      * （payload/sink 含 "sec-agent.log" 标记），调用栈常为空，旧判定（仅 SINK_HIT+栈含探针包）对
      * 主通道完全失效。现以「tainted source value / sink 含探针自写日志标记」为通用判据，覆盖所有
      * 事件类型；原 SINK_HIT+栈含探针包判定保留为纵深防御。标记 "sec-agent.log" 是探针内部日志名，
@@ -232,7 +214,6 @@ public class EventBuffer {
             if (event == null) {
                 return false;
             }
-            // 2026-09-30（/ report-sink 启动期 NPE 自噪声）：JVM 启动期 SecureRandom DRBG 自举
             // 会触发 sun.security.provider 内部的哈希/文件 sink，此刻请求上下文未建立、探针内部状态为
             // null → reportSink 路径 NPE（被 FailOpen 捕获打首栈，P1 可观测性让我们看到了它）。此类事件
             // 绝不在请求上下文内且栈含 sun.security.provider，与任何扫描假说无关，直接丢弃。
@@ -266,7 +247,6 @@ public class EventBuffer {
     }
 
     /**
-     * 2026-09-30（残留中风险）：入环前按 (canary, sink) 合并去重。
      * 只对「带 canary 的 SINK_HIT」生效——canary 来自重放请求头 X-SASTAI-Trace，普通业务
      * 流量该字段为空，直接返回 false（不走此分支）。窗口内同键只放行首条、丢弃后续重复。
      * 用 ConcurrentHashMap.compute 原子地「查+放」，避免多生产者在同毫秒各放一条。
@@ -288,9 +268,7 @@ public class EventBuffer {
             String sink = event.sink() == null ? "" : event.sink();
             final String key = canary.toString() + "\u0000" + sink;
             final long now = System.currentTimeMillis();
-            // 2026-10-11 修复（逻辑反转 bug）：原实现用 compute + 「保留旧时间戳」，导致
             // (now - prev) 恒 < 窗口 → **首条也判重复**，带 canary 的 SINK_HIT 被系统性全丢
-            // （实测 run 306/307/311：SINK_HIT 带 canary = 0，TAINT_FLOW 正常）。
             // 现语义与注释一致：窗口内同键**放行首条、丢弃后续**；窗口过期刷新起点再放行。
             final Long prev = DEDUP.putIfAbsent(key, now);
             if (prev == null) {
@@ -383,7 +361,6 @@ public class EventBuffer {
         body.put("sessionId", event.sessionId());
         body.put("sink", event.sink());
         body.put("payload", event.payload());
-        // 2026-09-15 item 5：sink 现场的方法级身份与调用栈，后端回填 iast_events.sink_method / stack_trace。
         body.put("sinkMethod", event.sinkMethod());
         body.put("stackTrace", event.stackTrace());
         body.put("context", ctx);

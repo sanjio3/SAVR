@@ -20,7 +20,6 @@ const router = createRouter({
     { path: "/runs", component: RunMonitorPage },
     { path: "/workspaces/:id", component: WorkspaceDetailPage },
     // 任务页 tab 用**组件内本地 state**（selectedTab ref，默认 Overview），不与 URL 同步 ——
-    // 2026-09-22 回退：早期 Q7 曾用路径分段（/tasks/:id/findings），但 HITL 分支与
     // 深链需求弱、且与 router 状态耦合带来维护负担，故改回纯本地 state。路由不再带 :tab? 段。
     { path: "/workspace/:slug/task/:taskId", component: TaskDetailPage },
     { path: "/tasks/:id", component: TaskDetailPage },

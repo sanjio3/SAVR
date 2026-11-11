@@ -1,6 +1,6 @@
-"""MCP（Model Context Protocol）协议层（§4.2 二期/三期，2026-09-20）。
+"""MCP（Model Context Protocol）协议层。
 
-纯标准库实现 JSON-RPC 2.0 + MCP 2024-11-05 的核心消息（initialize / tools/list /
+纯标准库实现 JSON-RPC 2.0 + MCP  的核心消息（initialize / tools/list /
 tools/call / notifications/initialized），不引入任何第三方依赖，供
 
   - 二期 对外 MCP Server（``src/mcp/server.py``）
@@ -24,7 +24,7 @@ import json
 from typing import Any, Dict, Optional
 
 JSONRPC_VERSION = "2.0"
-# 与 2024-11-05 版 MCP 对齐；tools 能力是本期依赖的唯一 capability。
+# 与  版 MCP 对齐；tools 能力是本期依赖的唯一 capability。
 MCP_PROTOCOL_VERSION = "2024-11-05"
 
 # JSON-RPC 2.0 标准错误码

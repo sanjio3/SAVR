@@ -1,17 +1,16 @@
 """sink 身份校验（④ 关联 / ingest 层）。
 
-背景（§14.2 缺口）：``is_sink_reached(state)`` 只判 canary 状态字符串，不校验「到达的到底是不是
+背景：``is_sink_reached(state)`` 只判 canary 状态字符串，不校验「到达的到底是不是
 该族真实危险函数」。结果 canary 随请求流经框架基础设施（响应写入 / 序列化 / 模板渲染）时被织到这些
 噪声 sink 上，``correlation.confirmed_runtime`` 与 D2 ``sink_reached`` 据此误背书，把「污点流过
 Response.setHeader」当成「漏洞可利用」。
 
 两侧命名空间不可直接比：
 - ``iast_events.sink_file`` = JVM 类名.方法（如 ``java.nio.file.Files.newOutputStream``）；
-- ``trigger_specs.expected_sink_file`` = 源码路径（如 ``src\\main\\java\\...\\Rce.java``）。
+- ``trigger_specs.expected_sink_file`` = 源码路径（如 ``src\\main\\java\\...\\SomeController.java``）。
 故本模块只做「sink 身份是否属于框架噪声」的黑名单判定，不逐族维护「真 sink 白名单」——避免
 RandomAccessFile 这类「对 path-traversal 是真 sink、对其他族是噪声」的跨族误杀。
 
-设计收口（2026-09-23，实证 50 族 / 14918 条关联事件）：
 - 极窄噪声黑名单：仅纯响应写入 / 序列化框架类 + thymeleaf（这些 sink 在任何请求里都会被织到）。
 - XSS / SSTI 例外：响应写入 / 模板渲染本身就是这两族的 sink，噪声黑名单不适用。
 - 零误杀：未知 sink 类（含空 sink_file）→ 视为真实（fail-open），绝不误杀真漏洞。
@@ -40,14 +39,12 @@ SINK_NOISE_BLACKLIST = frozenset(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Cookie 构造/属性 sink 的适用范围（2026-10-30）
 #
 # 探针在每个 doGet 里都会织一个 Cookie（只处理硬编码 "color"），它的
 # `javax.servlet.http.Cookie.<init>` / `setSecure` / `setHttpOnly` 会以
 # `sink-reached-probe` 落库。这个 sink 只对 **secure_cookie** 族有意义；
 # 对其它族它是纯噪声，却因为不在 SINK_NOISE_BLACKLIST 里被 fail-open 放行：
 #   - 00969（cmdi/safe）：11 条事件**全部**是 Cookie.<init>，没有任何 ProcessBuilder；
-#   - 01841（pathtraver/safe）：12 条事件全部是 Cookie.<init>，没有任何文件 IO。
 # 两者因此被确认成 confirmed_exploitable ⇒ Benchmark 误报。
 # 修法：非 cookie 族遇到 Cookie 构造类 sink 一律判非真（放在响应写入族放行之前，
 # 否则 xss 族会被 is_response_writer_family 提前放行）。
@@ -71,7 +68,6 @@ def _is_cookie_family(family: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 会话属性写入 sink 的适用范围（2026-10-30）
 #
 # 同一个 case 常同时挂着 xss / sqli 的候选 spec，而它们的 canary 与 trustbound spec 共用。
 # 于是 session `setAttribute` / `putValue` 事件会被当成 sql_injection 的「到达」，
@@ -97,12 +93,10 @@ def _is_session_write_sink(sink_file: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HTTP 基础设施写入 sink（2026-11-03，jsc-leakfix-r17 实测）
 #
 # ``StringHttpMessageConverter.writeInternal``（REST 序列化器）与
 # ``Response.setHeader/addHeader``（响应头写入）是**所有请求**的必经之路：
 #   - websocket 部署异常串经过 writeInternal 返回，曾被当成 xss 值级命中
-#     （jsc 607 实测 2 条 confirmed_exploitable 全是这类噪声）；
 #   - log4j 端点的 `return token` 回显经过 writeInternal / setHeader，
 #     同样被误判 xss。
 # 对响应写入族（xss/ssti）它们同样不是「页面上下文 sink」——模板引擎
@@ -124,11 +118,9 @@ def _is_http_infra_noise(sink_file: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 无数据流 sink 的族（2026-11-03）
 #
 # csrf / cors 是「路由级配置属性」：危害不在任何一行代码的运行时参数上，而在
 # 「这个端点缺不缺防护」。探针在任何真实 sink（XML 解析器 / 反序列化器 / 命令
-# 执行器）上看到的值级命中，都**不能**为这两个族背书——jsc 607 实测 4 条 csrf
 # spec 全是被 xxe/xstream 端点的探针事件跨族确认的（值级真命中、族完全错）。
 # 这两族的确认只允许两条路：technique/差分 oracle（响应证据）或静态规则升级
 # （framework: 前缀）。sink_file 为空时 fail-open（无信息不误杀）。
@@ -144,12 +136,12 @@ def _is_no_dataflow_family(family: str) -> bool:
 # 信任边界（trustbound / trust_boundary_violation）真 sink 正向白名单
 #
 # 信任边界族的真漏洞证据**唯一**是「会话属性写入」：HttpSession.setAttribute / putValue
-# （探针侧落地为 StandardSession / StandardSessionFacade.setAttribute|putValue）。
+# 。
 # 其余 sink 一律不是该族证据：
 #   - doGet 里的 Cookie 构造（Cookie.<init> / setSecure / setHttpOnly）是探针故意织的
 #     「假 sink」（只处理硬编码 "color" cookie），与信任边界无关；
 #   - Response.addHeader / setHeader 回写的 Set-Cookie / Accept-Ranges 是框架噪声
-#     （task-4 实测 7 条 confirmed 全是这类噪声，source_value 里根本没有 canary）。
+#     。
 # 故对信任边界族不能走 fail-open（否则 Cookie / Set-Cookie 噪声会被当真确认），必须正向
 # 白名单：只有会话属性写入算真 sink。本组 tokens 同时服务于 is_genuine_sink_identity
 # （网关身份）与 is_family_relevant_sink（值级身份）。
@@ -185,10 +177,8 @@ def is_response_writer_family(family: str) -> bool:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 族相关 sink 画像（2026-10-10 落地，值级判据专用）
 #
 # 起因：值级比对（我方投放数据是否真的出现在 sink 实参值里）如果只看「有没有命中」，
-# 会被**非本族**的 sink 污染 —— 实测 run 251 的 129 条值级命中里有 28 条落在
 # javax.servlet.http.Cookie.<init>：那只是请求把自己的 cookie 原值建对象（canary 就在名字旁边），
 # 与任何注入族都无关。同理 SQL _safe 版的回显、路径 עם常量也不该被当成链路证据。
 #
@@ -213,7 +203,6 @@ _FAMILY_SINK_HINTS: Dict[str, Tuple[str, ...]] = {
     "path": ("fileinputstream", "fileoutputstream", "randomaccessfile",
              "files.new", "files.read", "files.write", "file.", "fileutils", "pathto"),
     "ldap": ("dircontext", "initialdircontext", "ldap", "namingenumeration", "ldapcontext"),
-    # 2026-10-12（r80 实证）：Tomcat 的真实反射入口是 CoyoteWriter（response.getWriter() 的
     # 实际返回类型），且它**覆写了** write/print/println/format 等（ByteBuddy 按类织入，钩父类
     # PrintWriter 对 Tomcat 响应体零命中）。旧 tokens 只覆盖到 CoyoteWriter.write（因字符串里
     # 恰好含 "writer.write"），而最常用的 print/println/format 会被判「非本族 sink」剔除。
@@ -228,12 +217,10 @@ _FAMILY_SINK_HINTS: Dict[str, Tuple[str, ...]] = {
     "hash": ("messagedigest.getinstance", "messagedigest.update", "digestutils", "stringutils.getmd5"),
     "deserialization": ("objectinputstream", "readobject", "resolveClass".lower(), "xstream.fromxml",
                         "readvalue", "readValue".lower(),
-                        # 2026-11-03（jsc 607）：fastjson/jackson 的事件 sink 是 JSON 解析器自身，
                         # 不带 objectinputstream 字样——画像缺这几条会让 gate-B 的族相关性闸
                         # 把 fastjson 真值点的迟到证据挡在外面（fail-closed 反向误杀）。
                         "fastjson", "parseobject", "json.parse", "defaultjsonparser",
                         "jackson", "objectmapper", "fromxml"),
-    # 2026-11-03（jsc 607）：log4j/JNDI 的事件 sink 落在 JndiManager/JndiLookup/
     # Interpolator.lookup 上，与 ldap 无字面交集；无画像时 gate-B 走 fail-open，
     # 有画像就必须把这些真 sink 覆盖进来，否则 jndi 真值点会被反向误杀。
     "jndi": ("jndi", "initialcontext", "naming.lookup", "jndimanager", "jndilookup",
@@ -242,14 +229,13 @@ _FAMILY_SINK_HINTS: Dict[str, Tuple[str, ...]] = {
     "expression": ("expressionparser", "spel", "ognl", "scriptengine.eval", "templateengine.process"),
 }
 
-# SecureRandom 陷阱（2026-10-09 实证）：java.security.SecureRandom extends java.util.Random 且
 # 不覆写 nextXxx，java.util.Random 上的 hook 会把强随机源误抓成弱随机。值级证据里同样要排除，
 # 否则「弱随机」族的值级命中会从 SecureRandom 上取证，方向性错误。
 _SECURE_RANDOM_EXCLUDE = "securerandom"
 
 
 def family_sink_tokens(family: str) -> Tuple[str, ...]:
-    """取该族的 sink 画像（无任何登记 → 返回空元组，交由调用方 fail-open）。"""
+    """取该族的 sink 画像。"""
     f = (family or "").strip().lower().replace("-", "_").replace(" ", "_")
     if not f:
         return ()
@@ -259,7 +245,6 @@ def family_sink_tokens(family: str) -> Tuple[str, ...]:
     for key, tokens in _FAMILY_SINK_HINTS.items():
         if key in f:
             return tokens
-        # 同义族名（pathtraver / path_traversal / file_read）
         if key == "path" and ("traver" in f or "file_" in f or "fileinclude" in f):
             return tokens
         if key == "command" and ("cmdi" in f or "rce" in f or "code_injection" in f):
@@ -281,7 +266,7 @@ def is_family_relevant_sink(sink_file: str, family: str) -> bool:
         return False         # 框架噪声 sink
     tokens = family_sink_tokens(family)
     if not tokens:
-        return True          # 未登记族（业务逻辑 / 未知族）→ fail-open
+        return True
     if "random" in tokens and _SECURE_RANDOM_EXCLUDE in sf:
         return False
     return any(t in sf for t in tokens)
@@ -294,19 +279,14 @@ def is_genuine_sink_identity(sink_file: str, family: str) -> bool:
     仅显式框架噪声 sink 或非本族真 sink 才判非真。
 
     信任边界特例：该族真 sink 唯一是会话属性写入（setAttribute / putValue），必须正向白名单，
-    避免 Cookie 假 sink / Set-Cookie 框架噪声被当作真确认（task-4 实测 7 条 confirmed 全是噪声）。
+    避免 Cookie 假 sink / Set-Cookie 框架噪声被当作真确认。
 
-    Cookie 特例（2026-10-30）：见 ``_COOKIE_SINK_TOKENS`` 注释。Cookie 构造/属性 sink
     只对 secure_cookie 族有意义，对其它族一律非真 —— 这条必须放在响应写入族放行之前，
     否则 xss 族会先被 ``is_response_writer_family`` 提前放行。
 
-    csrf/cors 特例（2026-11-03）：两族是路由级配置属性，没有任何运行时数据流 sink；
-    任何非空 sink_file 上的探针/值级命中都不能为其背书（jsc 607：4 条 csrf spec 被
     xxe/xstream 端点的解析器 sink 跨族确认）。确认只能走 oracle 或静态规则升级。
 
-    HTTP 基础设施写入特例（2026-11-03）：对响应写入族，``writeInternal``（REST 序列化器）
     与 ``setHeader/addHeader``（响应头）是所有请求的必经之路，不是页面上下文 sink ——
-    必须放在写入族放行之前判掉（jsc 607：websocket 异常串/log4j 回显被误确认 xss）。
     """
     sf = (sink_file or "").strip()
     if _is_no_dataflow_family(family) and sf:

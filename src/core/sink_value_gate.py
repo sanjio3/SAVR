@@ -1,9 +1,8 @@
-"""值级 sink 实参闸（本质修复）：判定「污点值是否真的到达 sink」。
+"""值级 sink 实参闸：判定「污点值是否真的到达 sink」。
 
 为什么这是本质
 --------------
 污点流的本质问题是「**污点值是否真的流到 sink**」。源码正则/语义模式只能猜
-OWASP Benchmark 的几种固定写法，换靶场即失效。而运行时探针已经记录了 sink 的
 **实际实参**（`iast_events.source_value` / `evidence_json.payload`），因此可以直判：
 
   重放注入的 payload（taint_marker 的 PAYLOAD 段）出现在 sink 实参里 → 污点真到 sink → 可利用
@@ -11,7 +10,6 @@ OWASP Benchmark 的几种固定写法，换靶场即失效。而运行时探针�
 
 这是 target-agnostic 的运行时判定，不看源码形状。
 
-实测（run 364 cmdi）：
   - FP：20/28 有 cmdi sink 事件的用例「payload 不在实参」→ 正确判安全；
   - TP：15/25 有事件的用例「payload 在实参」→ 正确判可利用；
   - 另有 10 条 TP「payload 不在实参」实为 **D1 重放注错源**（servlet 读 header，重放注了 param），
@@ -49,7 +47,6 @@ _CHAR_LIST_RE = re.compile(r"\[([^\[\]]{4,})\]")
 def flatten_char_arrays(text: Any) -> str:
     """把探针记录的 char[] 实参（逐字符列表）重组成字符串。
 
-    实测（r106 xss，CoyoteWriter.write）：Java 侧实参是 char[]，探针把 source_value 记成
     ``[[s, 4, s, t, 4, 1, 3, b, b, ...]]``——canary 被逐字符拆开，任何字面/身份段匹配都失败
     （xss 29 个真 TP 因此误判 absent）。这里把「全是短元素」的列表就地拼接；
     ``[userid, 10340]`` 这类正常短参数列表（元素含长串）保持原样。
@@ -71,9 +68,8 @@ def flatten_char_arrays(text: Any) -> str:
     return _CHAR_LIST_RE.sub(_repl, s)
 
 # 各族「真 sink」token（只在这些 sink 上比对 payload，避免日志/响应等旁路 sink 误命中）。
-# token 为子串匹配，且必须来自 iast_events 实测 sink_file 分布（见 docs/2026-10-18-两项落地前置方法分析.md）：
 #   - trustbound：探针实录为 StandardSession.setAttribute / StandardSessionFacade.setAttribute，
-#     故用 "Session.setAttribute" 而非接口名 "HttpSession.setAttribute"（实测匹配不到）。
+#     故用 "Session.setAttribute" 而非接口名 "HttpSession.setAttribute"。
 #   - xpath：实录为 XPathImpl.evaluate，补 XPathImpl 实现类形态。
 #   - sqli：补 MyBatis Executor.query / Executor.update（hsqldb / delegating 已由 Statement/PreparedStatement 覆盖）。
 #   - xss：实录主形态是 CoyoteWriter.print/println（占比 ~78%），补 print（同时覆盖 println）
@@ -82,7 +78,6 @@ def flatten_char_arrays(text: Any) -> str:
 # 出现在 sink 实参 → at_sink，仅 FP（实参无 payload）被 absent 否决，结构性保证 0 抑损。
 FAMILY_SINK_TOKENS: Dict[str, tuple] = {
     "command_execution": ("Runtime.exec", "ProcessBuilder"),
-    # 2026-10-18（r106 实证）：补探针实录的真实 SQL sink 形态——
     #   prepareCall（CallableStatement，HSQLDB/DBCP 各 58 条）、prepareStatement（方法名小写，
     #   PreparedStatement 接口名匹配不到）、addBatch（Statement.addBatch 真执行）、
     #   JDBCStatement / DelegatingStatement（探针按实现类织入，无方法后缀）。
@@ -94,23 +89,18 @@ FAMILY_SINK_TOKENS: Dict[str, tuple] = {
         "prepareCall", "prepareStatement", "addBatch", "CallableStatement",
         "JDBCStatement", "DelegatingStatement",
     ),
-    # 2026-10-18（r108 实证）：path_traversal 的 spec 常与 xss/trustbound/xpathi 用例同处一案
     # （发现层族误判），旧 token 只覆盖 FileInputStream/FileOutputStream/Files./File. 四类，
     # 补 NIO / 随机访问 / 上传落盘形态，避免「真到达却判 no_event」。
     "path_traversal": (
         "FileInputStream", "FileOutputStream", "Files.", "File.",
         "RandomAccessFile", "FileChannel", "Paths.get", "Path.of", "FileReader", "FileWriter",
     ),
-    # XXE（2026-10-18 新增）：探针实录 javax.xml.parsers.DocumentBuilder.parse /
-    # org.apache.xerces.jaxp.DocumentBuilderImpl.parse（run 389 各 6 条）。此前无 token ⇒
-    # xxe spec 恒 no_event ⇒ 值级闸对 xxe 完全失效（BenchmarkTest01479 的 FP 无法否决）。
     "xxe": (
         "DocumentBuilder.parse", "DocumentBuilderImpl.parse",
         "SAXParser.parse", "SAXParserImpl.parse", "XMLReader.parse",
         "Unmarshaller.unmarshal", "SAXSource", "Transformer.transform",
     ),
     "ldap_injection": ("DirContext.search", "InitialDirContext", "NamingEnumeration"),
-    # 2026-10-18：补 XPathExpressionImpl.evaluate（探针实录 com.sun...jaxp.XPathExpressionImpl，
     # 122 条事件；旧 token XPathExpression.evaluate 因 Impl 断开匹配不到，同 trustbound Facade 类 bug）。
     # 另补 compile：Benchmark 部分用例写 `xp.compile(expr).evaluate(doc,NODESET)`，canary 在
     # **compile 实参**里（evaluate 实参只有 [#document, NODESET]），探针已补 hook compile。
@@ -134,7 +124,6 @@ def payload_of(taint_marker: str) -> str:
     - 旧格式（反射 XSS 等仍在使用）：``s4st41<hex>"><svg<hex>`` → 没有 ``PAYLOAD``
       分隔符，payload 是 canary 身份段之后的全部（XSS 注入串本身，如 ``"><svg…``）。
 
-    2026-10-18 实证（r106 run 380/381）：xss spec 的 marker 100% 是旧格式，
     ``payload_of`` 返回空 → ``judge_sink_value`` 整体短路 no_event，值级闸对 xss 全族
     形同虚设；而探针其实录得了 1022 条 CoyoteWriter.write 事件。不是探针覆盖问题，
     是**解析器不认旧格式**。
@@ -152,10 +141,9 @@ def identity_of(taint_marker: str) -> str:
     """canary 身份段（``s4st41<16hex>``）：marker 里 PAYLOAD 段之前的稳定前缀。
 
     为什么值级命中要看身份段：探针实录的 sink 实参经常把 payload 段截断/改写
-    （r106 实证：``session.putValue`` 把 canary 当 KEY 存、值段截尾
     ``PAYLOAD56254c0`` vs marker ``PAYLOAD56254c01``），但**身份段原样保留**。
     因此 at_sink 判据用「payload 段 ∥ 身份段」双轨：payload 段精确命中优先级最高，
-    身份段命中兜底（实测在 sqli/trustbound/xss/xpathi 四族上身份段匹配零 FP）。
+    身份段命中兜底。
     """
     m = str(taint_marker or "")
     if not m:
@@ -228,9 +216,7 @@ def judge_sink_value(
     - absent   : 真 sink 已到达但实参里两者都没有 → 污点被截断/常量/错源 → 安全；
     - no_event : 无该族真 sink 事件 → 证据不足，无法判定（既不能确认也不能据此否决）。
 
-    判据纪律（2026-10-18 实证收口）：
     1. **只比对 source_value**（sink 实际实参）。evidence_json 是请求侧回显元数据，
-       实测把身份段匹配污染（r106 trustbound blob 匹配 → 31 个 FP 全判 at_sink），
        不能当 sink 实参用。
     2. **族身份约束**：token 命中后再过 ``is_family_relevant_sink``（框架噪声黑名单 +
        族画像），Response.setHeader / Cookie.<init> / thymeleaf 等非本族 sink 上的命中
@@ -252,7 +238,7 @@ def judge_sink_value(
     # 噪声约束（fail-open：导入失败不阻断）。只用 is_genuine_sink_identity 的框架噪声
     # 黑名单 + trustbound 白名单做约束；不用 _FAMILY_SINK_HINTS 正向画像——它比
     # FAMILY_SINK_TOKENS 更窄（SQL 画像不含 MyBatis Executor.query），会把已由 token
-    # 命中的合法 sink 误剔除（实测打挂 test_sql_mybatis_new_token_absent_veto）。
+    # 命中的合法 sink 误剔除。
     _genuine = None
     try:
         from src.iast.sink_identity import is_genuine_sink_identity as _genuine
@@ -273,7 +259,6 @@ def judge_sink_value(
     needles = [(k, v) for k, v in needles if v]
     for e in sink_evs:
         sv = str(e.get("source_value") or "")
-        # char[] 实参（逐字符列表）先重组，否则 canary 被拆开永远匹配不到（r106 xss 实证）
         sv_flat = flatten_char_arrays(sv)
         variants = [sv] if sv_flat == sv else [sv, sv_flat]
         for raw in variants:

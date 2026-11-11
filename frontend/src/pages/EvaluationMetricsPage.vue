@@ -139,7 +139,7 @@
         <div v-if="error" class="callout danger">{{ error }}</div>
       </section>
 
-      <!-- 以下三节 2026-09-21 从「运维看板」迁入：它们是效果度量（用得好不好），
+      <!--
            不是运行健康（平台活着没有），也不属于用量统计（用掉多少）。 -->
       <section class="card stack glow-card">
         <h3>降噪与误报</h3>
@@ -260,7 +260,6 @@ const runForm = ref({ name: "dashboard-run", dataset_path: "" });
 const compareForm = ref({ a: "", b: "" });
 const matrix = ref<Row | null>(null);
 const matrixForm = ref({ models: "", prompt_versions: "", scan_modes: "filter_first,pure_ai", agent_impls: "", repeat: "3" });
-// 2026-09-21 从运维看板迁入的效果度量
 const ops = ref<Row | null>(null);
 const iast = ref<Row | null>(null);
 

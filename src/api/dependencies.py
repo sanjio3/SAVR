@@ -50,7 +50,6 @@ class AppContainer:
         self.entry_asset_repository = EntryAssetRepository(self.db)
         self.audit_log_repository = AuditLogRepository(self.db)
         self.finding_workflow_service = FindingWorkflowService(self.finding_repository)
-        # 2026-09-19：按 agents.d1.enable_llm_overlay（默认关）注入 D1 的 LLM 网关。
         # 关时传 None，与接入前一致（D1 的 AI 复核与 LLM 造弹都不走）。
         self.d1_service = D1Service(self.db, gateway=D1Service.build_gateway_from_config(None))
         self.retest_service = RetestService(self.db, d1_service=self.d1_service)
@@ -66,7 +65,7 @@ class AppContainer:
         self.iast_service = IastService(self.db)
         self.iast_correlation_service = IastCorrelationService(self.db)
         self.i2_adjudicator = I2Adjudicator(self.db, rule_feedback=self.rule_feedback_service)
-        # §8.1 A0 编排：整合 Preprocess + R0 + EntryDiscovery + P0（依赖 iast_service，须在其后）
+        #  A0 编排：整合 Preprocess + R0 + EntryDiscovery + P0（依赖 iast_service，须在其后）
         self.a0_service = A0Service(
             preprocess=self.preprocess,
             entry_discovery=self.entry_discovery_service,

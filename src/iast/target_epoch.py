@@ -1,13 +1,9 @@
-"""靶场实例纪元（target instance epoch）——D2 批次隔离的判据底座（2026-09-21）。
+"""靶场实例纪元（target instance epoch）——D2 批次隔离的判据底座。
 
-动机（run 23 实证）
 --------------------
-D2 批次重放期间靶场可能被看门狗重启：2026-09-20 17:24:22 java-sec-code 优雅退出
-（code=0，看门狗 5s 重建），新 JVM 直到 17:30~17:31 才启动完 Spring Boot。而 run 23
 （16:59:30~17:34:35）的 D1/D2 重放窗口正落在该停机 + 启动区间内 —— 停机窗口内重放的
 spec 拿不到任何证据，会被写成 no_evidence（「永久非漏洞」结论）；窗口边缘的结论也不可信。
 
-数字一旦落库就污染对账与差分门禁（run 23 即此情形：运行期 IAST 抵达 32→1、sink 抵达
 50→8，整轮数字不可用）。
 
 本模块只回答一个问题：**这一轮 D2 批次是否横跨了靶场实例重建？** 若横跨，则把落在
@@ -48,7 +44,6 @@ DEFAULT_CONFIRM_BAD = 2
 # 连续 N 个好样本才关闭窗口（防恢复期抖动来回开关）。
 DEFAULT_CONFIRM_GOOD = 2
 # 停机窗口起点前推保护带（秒）：紧贴停机前完成的验证同样可疑（请求可能正是在
-# 靶场崩塌过程中发出的，run 23 的重放打停靶场即此类）。取 15s 作为保守值。
 PRE_DOWN_GUARD_SEC = 15.0
 
 _TARGET_UNHEALTHY_FALLBACK = frozenset({"target_unhealthy"})
@@ -62,7 +57,7 @@ _POSITIVE_FINAL_STATES = frozenset({
 })
 _POSITIVE_VERIF_STATES = frozenset({
     "confirmed_exploitable", "confirmed_sink_control", "exploitable", "confirmed",
-    "confirmed_code_property",  # I 族路由独立终态（2026-09-28）
+    "confirmed_code_property",
 })
 _ARRIVAL_STATES = frozenset({
     "iast-reached", "iast-authz-confirmed", "sink-reached", "sink-reached-probe",
@@ -212,11 +207,11 @@ class TargetEpochTracker:
 
     用法：
         tr = TargetEpochTracker(service_url, app_name=..., agent_id=..., db=...)
-        tr.start()            # 批次起点基线（含可选后台采样线程）
+        tr.start            # 批次起点基线（含可选后台采样线程）
         ... 批次执行 ...
-        tr.stop()
+        tr.stop
         tr.overlaps(t0, t1)   # 单 spec 是否落在停机/重启窗口内
-        tr.report()           # 落 summary / task_alert 的整批结论
+        tr.report           # 落 summary / task_alert 的整批结论
     """
 
     def __init__(
@@ -288,7 +283,7 @@ class TargetEpochTracker:
         if hb:
             try:
                 age = self._clock() - datetime.fromisoformat(hb).replace(tzinfo=timezone.utc).timestamp()
-                # iast_sessions 的时间戳由 datetime.utcnow() 写入（无时区），按 UTC 解析。
+                # iast_sessions 的时间戳由 datetime.utcnow 写入（无时区），按 UTC 解析。
                 if age > self.heartbeat_stale_sec:
                     return "STALE"
             except Exception:
@@ -421,7 +416,6 @@ class TargetEpochTracker:
         """单 spec 的验证窗口 [t0, t1] 是否与停机窗口相交；相交返回原因，否则 None。
 
         终点前推 pre_down_guard_sec：紧贴停机前完成的验证同样可疑（该请求可能正是在
-        靶场崩塌过程中发出的 —— run 23 的重放打停靶场即此类），必须一并失效。
         """
         if t0 is None or t1 is None:
             return None
@@ -554,12 +548,10 @@ def spec_invalidation_reason(
     """判定单条 D2 结果是否应落 invalidated（可重试）而非 confirmed / no_evidence。
 
     判据优先级：
-    ⓪ 纪元交叉校验（2026-09-22 新增，见 epoch_clears_unavailability）：纪元**明确**说
        本轮靶场全程可用（verdict=clean、无停机窗口）时，①②③ 三条「靶场不健康」判据一律
        不成立 —— 它们都只是「某次请求疑似打不通」的噪声，与靶场是否可用无关。此情形返回
        空串，保持 D2 原裁决（通常是 no_evidence），不被 invalidated 挤出对账。
        实测根因：target-26/27/28/30/31 的 target_unhealthy 全都伴生 clean + 空窗口，
-       是长期系统性误标（run 31 为 12+15 条），一直在压低 D2 数字。
        注意仅「明确 clean」才否决；`undeterminable`（纪元无数据）沿用旧行为，
        避免把真停机误判成「永久非漏洞」。
     ① 单 spec 权威信号：D2 已判「环境未就绪」（final_state=target_unhealthy）。该分支
@@ -571,7 +563,6 @@ def spec_invalidation_reason(
        注意该字段是**跨步骤粘性 OR**（orchestrator 对同一事务的多条 impact 做
        `merged.target_unhealthy = merged.target_unhealthy or imp.target_unhealthy`，
        且 spec 级阻断也会被标 True），因此单独出现时只是「某一步骤出现过疑似靶场不健康
-       的症状」，不足以否定整条结论 —— 这正是 run 26 实测 15 条 confirmed_exploitable
        被误标的根因。故必须叠加「无正向证据」才采信。
     ④ 批次级信号：该 spec 的验证窗口与靶场停机/重启窗口相交。
     都不命中 → 返回空串（保持原裁决）。

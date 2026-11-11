@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """trigger_specs 权威列 ↔ raw_json.exploit_spec.entry 投影同步。
 
-问题（本轮实测 39/145 处差异）：I1 的多个 post-pass 会在 D1 重放前把
+问题：I1 的多个 post-pass 会在 D1 重放前把
 ``param_name / param_location / content_type`` 这些**权威列**改成按注解、源码、
 形参类型推断出的真值，但只发 ``UPDATE trigger_specs SET ...``，从不回写
 ``raw_json.exploit_spec.entry``。D1 读权威列所以重放没问题，报告层读 entry 却拿到

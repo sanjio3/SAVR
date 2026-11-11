@@ -169,7 +169,6 @@ public final class SecurityAgent {
         if (!CircuitBreaker.instrumentationEnabled()) {
             return;
         }
-        // 2026-09-30（report-sink 启动期 NPE 自噪声）：请求上下文外的 sink（JVM 启动期 DRBG 自举、
         // 探针/框架后台 IO）此刻探针内部状态可能未就绪，走完整断言会 NPE。真实命中必在请求上下文内，
         // 故上下文外的 sink 直接返回，不进 TaintStore/inspectRasp/captureStackTrace 重路径。fail-open。
         if (!HookRuntime.inRequestContext()) {
@@ -196,7 +195,6 @@ public final class SecurityAgent {
         // 设计一①：sink 现场显式断言平台 canary 抵达危险函数实参 → 透传 canary + canaryState=sink-reached，
         // 后端将其归一到独立态 sink-reached-probe，即便 D1 仅投 canary 探针也判有害、不降级。
         //
-        // 2026-10-12 值级 / trace 级分离（实测根治「仅到达」噪声误报）：
         //   值级（canary 身份段真实出现在本 sink 实参文本里）→ 断言 canaryState=sink-reached（强证据）；
         //   trace 级（canary 仅由请求携带、并不在本 sink 实参里）→ 只回带 canary 做关联，不设 canaryState。
         //   实测近 6 万事件：89% 的 sink-reached 是 trace 级噪声 sink（Cookie.setSecure /
@@ -226,7 +224,6 @@ public final class SecurityAgent {
                 captureStackTrace())));
     }
 
-    // 2026-09-15 item 5：从 sink 调用栈提取方法级身份与完整调用链。
     // 跳过探针自身/基础设施帧（com.rasp.probe、net.bytebuddy、反射/Thread 等），
     // 取第一个应用帧作为 sink 方法身份。
     private static boolean isInfraFrame(String cn) {
@@ -362,7 +359,6 @@ public final class SecurityAgent {
         }
         // 设计一①：sink 现场显式断言平台 canary 抵达危险函数实参 → 透传 canary + canaryState=sink-reached。
         //
-        // 2026-10-12 值级 / trace 级分离（同 reportSink，实测根治「仅到达」噪声误报）：
         //   值级（canary 真实出现在本 sink 实参里）才断言 sink-reached；trace 级只关联、不断言。
         String valueCanary = HookRuntime.currentSinkValueCanary();
         if (!valueCanary.isEmpty()) {

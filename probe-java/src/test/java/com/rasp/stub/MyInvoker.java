@@ -6,7 +6,7 @@ import org.apache.dubbo.rpc.Result;
 
 /**
  * Verification stub for the Dubbo {@code Invoker} sink. Lives in a package that is NOT
- * ignored by {@code baseBuilder()} (which ignores {@code com.rasp.probe.}), so the
+ * ignored by {@code baseBuilder} (which ignores {@code com.rasp.probe.}), so the
  * agent actually transforms it and the {@code invoke(Invocation)} sink advice fires.
  */
 public final class MyInvoker implements Invoker {

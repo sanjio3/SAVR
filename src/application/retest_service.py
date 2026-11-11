@@ -12,7 +12,7 @@ Strategies:
   the same ``vulnerability_hash_v2`` still appears in the fresh findings.
 * ``git_diff`` - pull the ``base_ref``/``patch_ref`` code delta for the files on
   the vulnerability chain, analyse only that chain (no full re-scan) and decide
-  ``fixed`` / ``not_fixed`` / ``uncertain`` (第四版 G1 / 第一版 §2.13).
+  ``fixed`` / ``not_fixed`` / ``uncertain`` (第四版 G1 / 第一版 ).
 """
 
 from typing import Any, Dict, List, Optional

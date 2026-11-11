@@ -1,12 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""spec 状态口径归一（2026-11-01）。
+"""spec 状态口径归一。
 
 ## 解决什么问题
 
 本轮的 `deserialization` 全族 12 条 spec 一次重放都没有，却全部被记成
 `iast_state = 'no-arrival'`（语义是「打了但没到 sink」），于是 D2 记 `true_miss`，
-在四档口径里算「动态漏报」。
 
 实际原因是 D1 的这句日志：
 
@@ -174,7 +173,7 @@ PROPERTY_ONLY = frozenset({
     "unmapped", "unknown", "",
 })
 
-# 无 HTTP 入口：连「打一发」的前提都不成立（例如 RMI 服务在 main() 里）。
+# 无 HTTP 入口：连「打一发」的前提都不成立（例如 RMI 服务在 main 里）。
 NO_HTTP_ENTRY = frozenset({"rmi"})
 
 
@@ -203,7 +202,6 @@ def is_dynamic_eligible(family: str) -> bool:
     return classify_dynamic(family) == "replay"
 
 
-# ── sink-reached 状态一致性校验（2026-11-01，阶段 3 前置）────────────────────
 #
 # 为什么必须做：本轮实测 36 条「到了 sink 但未确认」里，**14 条一次重放都没有**
 # （`replay_attempts` 零行）。其中 7 条连该文件在本任务内都**没有任何 iast_event**，

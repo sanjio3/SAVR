@@ -266,7 +266,6 @@ function arrayLabel(value: unknown) {
   return Array.isArray(value) && value.length ? value.join(", ") : String(value || "-");
 }
 
-// severityTone 已收敛到 @/domain/task-view（批次 4，2026-09-22）
 
 function errText(caught: unknown) {
   return String((caught as any)?.response?.data?.detail || (caught as Error)?.message || caught);

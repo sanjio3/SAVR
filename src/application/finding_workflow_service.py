@@ -31,7 +31,6 @@ class FindingWorkflowService:
         self.instance_repository = instance_repository or VulnerabilityInstanceRepository(db)
         self.fix_feedback_repository = FixFeedbackRepository(db)
         self.model_gateway = model_gateway or gateway_from_config(
-            # 2026-09-19：gray-review 此前用无参 ModelGateway() —— 它只认
             # SAST_AI_MODEL_PROVIDER 环境变量，生产环境不设 → provider 恒空 →
             # 恒 offline-heuristic，而离线 handler 又只是把确定性 reason 原样返回，
             # 于是这个「AI 复核」节点实际从未调用过模型（API /findings/{id}/ai-review
@@ -205,7 +204,7 @@ class FindingWorkflowService:
         comment: str = "",
         created_by: str = "local",
     ) -> Dict[str, Any]:
-        """Record developer feedback on a fix suggestion (G7 / §2.3).
+        """Record developer feedback on a fix suggestion (G7 / ).
 
         ``led_to_retest_pass`` is auto-backfilled from the latest retest run for
         this vulnerability hash when the caller does not supply it explicitly.

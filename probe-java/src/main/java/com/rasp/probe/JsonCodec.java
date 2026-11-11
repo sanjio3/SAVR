@@ -96,7 +96,6 @@ public final class JsonCodec {
     }
 
     private static String quote(String value) {
-        // 2026-10-15 修复（P-A 根因）：原实现只转义 \\ " \n，**漏了 \r \t 及其它控制字符**。
         // 事件体里任一字段（栈帧的 Windows \r\n、payload/taint_path 里的 \t 等）含未转义控制字符，
         // 就会让整批 JSON 非法 → 后端 _safe_json 解析失败 → events=[] → accepted:0（HTTP 200），
         // 整批事件被**静默丢弃**且探针侧无告警。实测：含裸 \r 或 \t 的 body → accepted:0 不落库。

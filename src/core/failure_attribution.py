@@ -1,4 +1,4 @@
-"""D2 失败归因（failure_attribution）—— 「未确认」的四值判责（2026-10-03 M1）。
+"""D2 失败归因（failure_attribution）—— 「未确认」的四值判责。
 
 为什么要这一列
 --------------
@@ -49,7 +49,7 @@ _POSITIVE_STATUS = frozenset({
 # 靶场自身不可用：不是漏洞打不通，是场地没了
 _INVALID_STATUS = frozenset({"invalidated"})
 
-# 探针侧缺覆盖的显式 iast_state（Q8 落地后由探针覆盖清单产出）
+# 探针侧缺覆盖的显式 iast_state
 _PROBE_GAP_STATES = frozenset({
     "probe_not_instrumented",
     "probe_unavailable",
@@ -75,7 +75,6 @@ _DIFFERENTIAL_FAMILIES = frozenset({
 
 # iast_state 常被 D2 的后处理加上前缀（确认硬闸 / 族路由改判）。归因时要**剥掉前缀**
 # 再比状态，否则 'confirm-gate:no-arrival' 会被当成未知态直接掉进 true_miss，把
-# 「探针没覆盖」误记成「打不通」（实测 run 50 有 36 条正是此形态）。
 _STATE_PREFIXES = ("confirm-gate:", "family-route:")
 
 
@@ -107,7 +106,7 @@ def classify(
 
     参数：
         spec        trigger_specs 行（dict），至少含 verification_status/iast_state/raw_json
-        facts       运行时事实（runtime_facts.collect_facts()）
+        facts       运行时事实（runtime_facts.collect_facts）
         env_premise 该族/该黄金条目的环境前提（可空）
 
     返回 ``(cls, reason)``；已确认的 spec 返回 ``("", "")``。
@@ -203,15 +202,13 @@ def classify_many(
     return {"counts": counts, "rows": rows}
 
 
-# ── 阶段层归因（2026-11-04）：回答「卡在流水线哪一层」 ──
 #
-# 与上方 classify() 的分工：
+# 与上方 classify 的分工：
 #   failure_attribution（四类）＝「该谁修」——env/probe/pipeline/true_miss
 #   failure_attribution_layer ＝「卡在哪层」——spec/replay/verdict/iast
 #
 # 为什么要这一列：四层是串联的，任何一层断了，最终症状都是
 # verification_status != confirmed。旧口径只记 true_miss，导致每轮都要人工回查
-# attempt/iast_state 才能判断责任层（2026-11-04 jsc 615 的 10 个未覆盖点就是这样
 # 逐点人工归因的）。有了这一列，一次 GROUP BY 就能看到水位在哪一层。
 LAYER_SPEC = "layer1_spec"        # A2 未产出可投载荷 / 未产出 spec
 LAYER_REPLAY = "layer2_replay"    # D1 未发请求、路由错（4xx/5xx）、零重放
@@ -234,7 +231,6 @@ _LAYER_NO_PAYLOAD = frozenset({"payload_unavailable"})
 
 # 这些族的「载荷」本来就是请求本身，不要求 replay_attempts.payload 非空。
 # csrf：不带 token 的状态变更请求就是攻击载荷，D1 发的就是空 payload 的 POST；
-# 旧逻辑把它记成「A2 未产出可投弹药」，jsc 617 spec 237772 就是这样被误归
 # layer1_spec 的（同一 spec 的 6 次重放其实已把 `CSRF passed.` 打出来了）。
 _PAYLOAD_OPTIONAL_FAMILIES = frozenset({"csrf"})
 
@@ -272,7 +268,6 @@ def classify_layer(
     _payload_optional = _fam in _PAYLOAD_OPTIONAL_FAMILIES
     # 「有实投载荷」= 至少一次 attempt 带了非空 payload。
     # 注意 attack_payloads_json 为空**不等于**没弹药：多数族走 payload_library 内置生成器，
-    # 该字段本就为空，真载荷在 replay_attempts 里（2026-11-04 修正，避免把 55 条
     # 有实投载荷的 spec 误判成 layer1）。
     _real_payload = bool(_atts) and any(str(a.get("payload") or "").strip() for a in _atts)
     if not _real_payload and not _payload_optional and iast_state not in _LAYER_SINK_REACHED:
@@ -332,37 +327,6 @@ def classify_layers(
     return {"counts": counts, "rows": rows}
 
 
-def golden_premise_map(workspace_name: str = "") -> Dict[str, Any]:
-    """从黄金集反查「族 token → env_premise」，供批量归因使用。
-
-    fail-open：拿不到黄金集（未识别靶场 / 导入失败）返回空 dict，归因退化为
-    「不看环境前提」，只是少判一类，不会误判。
-    """
-    out: Dict[str, Any] = {}
-    try:
-        from src.api.routers.round_report import GOLDEN_SETS
-        low = str(workspace_name or "").lower()
-        picked = None
-        for key, golden in GOLDEN_SETS.items():
-            if key in low:
-                picked = golden
-                break
-        # 未识别靶场时不猜：空前提意味着「不因环境剔除任何条目」，是最保守的选择
-        if not picked:
-            return out
-        for entry in picked or []:
-            if len(entry) < 6:
-                continue
-            _premise, _tokens = entry[5], entry[3]
-            if not _premise:
-                continue
-            for t in (_tokens or []):
-                out.setdefault(str(t).lower(), _premise)
-    except Exception:  # pragma: no cover
-        logger.debug("[failure_attribution] 黄金前提表加载失败（退化为无前提）", exc_info=True)
-    return out
-
-
 def attribute_task(db, task_id: Any, premise_by_family: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """对某 task 的全部 spec 做一次批量归因并写回 failure_attribution 列。
 
@@ -373,17 +337,9 @@ def attribute_task(db, task_id: Any, premise_by_family: Optional[Dict[str, Any]]
         return {"counts": {}, "written": 0}
     try:
         if premise_by_family is None:
-            _ws = ""
-            try:
-                rows = db.execute(
-                    "SELECT w.name FROM scan_tasks t LEFT JOIN workspaces w ON t.workspace_id=w.id "
-                    "WHERE t.id=?", (int(task_id),), fetchall=True) or []
-                if rows:
-                    _r = rows[0]
-                    _ws = (_r.get("name") if isinstance(_r, dict) else _r[0]) or ""
-            except Exception:
-                _ws = ""
-            premise_by_family = golden_premise_map(_ws)
+            # No truth set is bundled. Callers that keep their own golden set can
+            # pass the family -> environment premise mapping explicitly.
+            premise_by_family = {}
         rows = db.execute(
             "SELECT id, family, target_endpoint, verification_status, iast_state, raw_json, "
             "accounts_json, victim_resource_id, failure_attribution, attack_payloads_json "
@@ -396,7 +352,6 @@ def attribute_task(db, task_id: Any, premise_by_family: Optional[Dict[str, Any]]
             "attack_payloads_json": r[9] if len(r) > 9 else "",
         } for r in rows]
         res = classify_many(specs, None, premise_by_family)
-        # 阶段层归因（2026-11-04）：同时算「卡在哪层」，与责任归属并列写入。
         # 需要 replay_attempts 才能判 layer2（零重放/路由不通），故单独查一次。
         _att_map: Dict[Any, Any] = {}
         try:
@@ -411,7 +366,6 @@ def attribute_task(db, task_id: Any, premise_by_family: Optional[Dict[str, Any]]
                     _code = _a[1] if len(_a) > 1 else None
                     _pay = _a[2] if len(_a) > 2 else ""
                 # payload 必须带上：阶段层要靠「是否有实投载荷」区分 layer1/layer2，
-                # 只传 status_code 会让所有 spec 都被判成「无弹药」（2026-11-04 踩过）。
                 _att_map.setdefault(_sid, []).append(
                     {"status_code": _code, "payload": _pay})
         except Exception as _ae:
@@ -444,7 +398,6 @@ def persist(db, spec_id: Any, cls: str, reason: str = "",
 
     同时写两列：
       failure_attribution*       责任归属（env/probe/pipeline/true_miss）
-      failure_attribution_layer* 阶段层（spec/replay/verdict/iast，2026-11-04 新增）
     layer 为空时只写旧列，保持向后兼容。
     """
     if db is None or not spec_id or (not cls and not layer):

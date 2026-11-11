@@ -14,14 +14,13 @@ logger = logging.getLogger(__name__)
 def _dict_row_factory(cursor: sqlite3.Cursor, row: tuple) -> dict:
     """将 sqlite 行转为 dict，使调用方既能用 row['col'] 也能用 row.get('col')。
 
-    原实现用 sqlite3.Row，但它没有 .get() 方法，导致 IastService 等模块
+    原实现用 sqlite3.Row，但它没有 .get 方法，导致 IastService 等模块
     对查询结果调用 row.get(...) 时抛 AttributeError。dict 行同时兼容
     row['col'] 与 row.get('col')，且保留列顺序。
     """
     return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
 
 
-# 写锁冲突的重试策略（2026-09-19，run 21 事故根治）。
 # 现象：扫描收尾写终态时撞 `database is locked`，watcher 翻态失败 → scan_tasks 卡 running 数小时，
 # 前端一直显示陈旧态，只能靠人工跑 reconcile_orphaned_tasks 回收。
 # 机理：busy_timeout=30000 只放大「单次忙等窗口」，但跨进程长写事务（findings 批量重写、
@@ -44,11 +43,9 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
         self._initialized = False
-        # 2026-09-18（F2 ②连接复用）：按线程缓存连接。
         # 原实现每次 execute 都新建 sqlite3 连接并跑 4 条 PRAGMA（foreign_keys / journal_mode /
         # synchronous / busy_timeout），用完既不显式关闭也不复用，只靠 GC 回收。在 ingest 热路径上
         # 每事件 2~5 次查询，等于每事件新建并丢弃 2~5 个连接；而 WAL 库打开连接需要读 WAL 索引，
-        # 库越大（本项目 app.db 已 GB 级）开连接越慢 —— 2026-09-15 实测这正是 ingest 端到端耗时的
         # 主要来源（解析阶段占 98.7%，且隔离小库 260~404 条/秒、真实库仅 78.7 条/秒）。
         # 按线程缓存而非全局单连接：语义与现状完全一致（连接从不被两个线程同时使用），
         # 且不会把 cursor 跨线程暴露出去。
@@ -64,7 +61,6 @@ class Database:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA journal_mode = WAL")
             connection.execute("PRAGMA synchronous = NORMAL")
-            # 2026-09-14：写锁忙等窗口。Python sqlite3 默认 timeout=5 秒，在数 GB 级库上做长写事务
             # （sync_blackboard 逐行乐观锁、findings 批量重写、探针事件突发写入）极易超时，表现为
             # sqlite3.OperationalError: database is locked（/api/agent/events 返回 500）。
             # WAL 只解决读并发，写仍然串行，故必须显式放大忙等窗口。
@@ -945,21 +941,18 @@ class Database:
                 connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
         ensure_column("findings", "vulnerability_hash_v2", "TEXT NOT NULL DEFAULT ''")
-        # 2026-09-19（P1-7 埋点归属）：model_runs 原本没有任务与提示词指纹维度，
         # 导致成本与耗时只能按时间窗聚合，tasks.py 的注释自承「非精确归属」。
         # 补三列后即可按 task / stage 精确归因，这也是调本地模型时最需要的观测维度。
         ensure_column("model_runs", "task_id", "INTEGER")
         ensure_column("model_runs", "prompt_hash", "TEXT NOT NULL DEFAULT ''")
         ensure_column("model_runs", "stage", "TEXT NOT NULL DEFAULT ''")
-        # 2026-09-22：工作区前向归属。历史 task_id 为 NULL 的调用无法逆归因（无外键），
-        # 故只对未来行生效；record() 会在插入时按 task_id 自动解析 workspace_id。
+        # 故只对未来行生效；record 会在插入时按 task_id 自动解析 workspace_id。
         ensure_column("model_runs", "workspace_id", "INTEGER")
         ensure_column("findings", "vulnerability_hash_v1", "TEXT NOT NULL DEFAULT ''")
         ensure_column("findings", "hash_components_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column("findings", "source", "TEXT NOT NULL DEFAULT ''")
         ensure_column("trigger_specs", "poc_chain_json", "TEXT NOT NULL DEFAULT '{}'")
         ensure_column("trigger_specs", "param_name_source", "TEXT NOT NULL DEFAULT 'unknown'")
-        # 2026-08-29 D1 真实攻击：spec 需携带 A2 构造的攻击载荷与账户上下文。
         # category: 漏洞大类（普通 owasp 族 或 业务逻辑族 bola/race/vertical_privesc/...）
         # attack_payloads_json: A2 产出的真实攻击 payload 列表（反序列化等需真 gadget 链）
         # accounts_json / victim_resource_id / auth_binding_json: 账户发现产物（差分重放用）
@@ -970,34 +963,27 @@ class Database:
         ensure_column("trigger_specs", "victim_resource_id", "TEXT NOT NULL DEFAULT ''")
         ensure_column("trigger_specs", "victim_identifiers", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column("trigger_specs", "auth_binding_json", "TEXT NOT NULL DEFAULT '{}'")
-        # 2026-09-01 验证链路可控性：replayable=0 表示 spec 已登记但 D1 不应自动重放（如路由落在
-        # 探针/诊断端点、或不依赖 canary 重放的业务逻辑类目待登录账号配置）。D1 在 verify() 前据此
+        # 探针/诊断端点、或不依赖 canary 重放的业务逻辑类目待登录账号配置）。D1 在 verify 前据此
         # 跳过，避免向不存在/错误的端点发请求、污染命中统计。默认 1（可重放）。
         ensure_column("trigger_specs", "replayable", "INTEGER NOT NULL DEFAULT 1")
-        # 2026-09-02 §#3③：D2 业务/技术验证裁决回填，供攻击计划(AP)读 business_logic_confirmed /
         # verification_status / iast_state 正确呈现「运行时命中态」，不再只依赖 IAST canary 事件
         # （业务差分重放不产生 canary sink 事件，原 AP 分类器恒判 not_hit）。三处同步：base schema +
         # ensure_column + 旧表重建块。
         ensure_column("trigger_specs", "business_logic_confirmed", "INTEGER NOT NULL DEFAULT 0")
         ensure_column("trigger_specs", "verification_status", "TEXT NOT NULL DEFAULT ''")
         ensure_column("trigger_specs", "iast_state", "TEXT NOT NULL DEFAULT ''")
-        # 2026-10-02（净化器判定九问 Q5）：non_bypassable 真阴性的一等公民证据列。
         ensure_column("trigger_specs", "bypass_state", "TEXT NOT NULL DEFAULT ''")
         ensure_column("trigger_specs", "bypass_reason", "TEXT NOT NULL DEFAULT ''")
         ensure_column("trigger_specs", "filter_spec_json", "TEXT NOT NULL DEFAULT '{}'")
-        # 2026-10-24（可见率治本）：族级行为 oracle 的观测结果（不参与判定，先观测后接线）。
         # oracle_state ∈ exploitable / not_exploitable / inconclusive / ''（未跑）；
         # oracle_signal ∈ boolean_diff / time_delay / file_signature / reflection_raw / ...
         ensure_column("trigger_specs", "oracle_state", "TEXT NOT NULL DEFAULT ''")
         ensure_column("trigger_specs", "oracle_signal", "TEXT NOT NULL DEFAULT ''")
-        # 2026-10-03（Part2 M1 度量地基）：未确认结果的四值判责（详见 base schema 注释）。
         # 三处同步：base schema + ensure_column + 旧表重建块。
         ensure_column("trigger_specs", "failure_attribution", "TEXT NOT NULL DEFAULT ''")
         ensure_column("trigger_specs", "failure_attribution_reason", "TEXT NOT NULL DEFAULT ''")
-        # 2026-11-04：阶段层归因（四层：spec/replay/verdict/iast），与责任归属并行。
         ensure_column("trigger_specs", "failure_attribution_layer", "TEXT NOT NULL DEFAULT ''")
         ensure_column("trigger_specs", "failure_attribution_layer_reason", "TEXT NOT NULL DEFAULT ''")
-        # 2026-10-05（r58 精确率整改方案 1+2）：安全实现抑制标记。
         # suppressed_by_safe_verdict=1 表示 src/core/safe_verdict.py 判定该 spec
         # 命中已知安全实现（如 weak_random 用了 SecureRandom、sqli 源头是返回常量的
         # getTheValue helper），不应计入检出集合。**这是 A2 也生效的抑制**——
@@ -1009,7 +995,6 @@ class Database:
         ensure_column("trigger_specs", "suppressed_by_safe_verdict", "INTEGER NOT NULL DEFAULT 0")
         ensure_column("trigger_specs", "suppress_rule", "TEXT NOT NULL DEFAULT ''")
         # 方案 3（置信度分层）：正向证据规则命中的标记（不改检出集合，只提 confidence）。
-        # 依据 r58 全族普查：hash:weak_hash 命中纯度 100%（TP 89/FP 0）、
         # sqli:sql_string_param 纯度 92.9% —— 命中即几乎必然是真漏洞。
         ensure_column("trigger_specs", "confidence_boost", "REAL NOT NULL DEFAULT 0")
         ensure_column("trigger_specs", "positive_evidence_rule", "TEXT NOT NULL DEFAULT ''")
@@ -1017,7 +1002,6 @@ class Database:
         # 族标签是 A1/A2 打的，会标错 —— 实测 17.3% 的检出用例，平台报的族与真实
         # 类别完全对不上（典型：弱随机数被标成 broken_access_control，用户照着
         # 标签去查越权，方向全错）。能力族单独用吻合率 75.4%，与平台族**并集 100%**
-        # （r60 实测：平台族错的 391 个用例，能力族 391 个都对，两者都错 0 个）。
         # 所以不改族、只把能力族一并记下来，展示时两个族一起给用户。
         ensure_column("trigger_specs", "capability_family", "TEXT NOT NULL DEFAULT ''")
         ensure_column("iast_events", "taint_path_json", "TEXT NOT NULL DEFAULT '{}'")
@@ -1036,16 +1020,12 @@ class Database:
         ensure_column("iast_sessions", "version_status", "TEXT NOT NULL DEFAULT 'unknown'")
         # 方案 3：探针挂载阶段（WARMING_UP 预热中 / READY 已就绪），由探针心跳上报，前端据此提示。
         ensure_column("iast_sessions", "agent_phase", "TEXT NOT NULL DEFAULT 'unknown'")
-        # 2026-10-02（净化器判定九问 Q8）：探针上报的「已织桩 sink 清单」，用于把笼统 no-arrival
         # 拆成 probe_not_instrumented / probe_unavailable / genuine_no_arrival 三态。缺失则保守回退。
         ensure_column("iast_sessions", "coverage_manifest_json", "TEXT NOT NULL DEFAULT '{}'")
-        # 2026-08-28 ③ 选项A：活跃扫描会话归属。replay 窗口内无 canary 身份段的事件据此归属到
         # 当前活跃扫描 task，避免多 task workspace 下事件被静默归 NULL（结构性丢数据）。
         ensure_column("iast_sessions", "current_task_id", "INTEGER")
         ensure_column("workspaces", "slug", "TEXT")
-        # 2026-09-07 黑板/轮次体系：scan_tasks.run_id 把「轮次身份」从 name 字符串与独立 txt 文件
         # 收进 DB，与 scan_runs 强绑定。此前轮次 out-of-band 导致同一 task 被多轮覆写成混合库，
-        # 单轮归因做不到（task-3 事故：漏斗读数 47→25 自相矛盾）。
         ensure_column("scan_tasks", "run_id", "INTEGER")
         # 回填历史 workspace 的 slug（slug 为空时按 id 派生，保证 URL 可读且唯一）。
         try:
@@ -1057,13 +1037,10 @@ class Database:
                 connection.execute("UPDATE workspaces SET slug = ? WHERE id = ?", (f"{s}-{r['id']}", r["id"]))
         except Exception:
             pass
-        # 2026-08-28 ④：A1/CodeQL 证据持久化，供 A2 阶段稳定消费（已通过 a1_evidence_index 注入 A2 prompt）。
         ensure_column("findings", "a1_evidence", "TEXT NOT NULL DEFAULT '{}'")
-        # 2026-09-15 item 3：SCA 命名空间从 finding_type 剥离。组件名/编号拆到独立列，
         # finding_type 仅留族名 "sca"。旧库自动补齐两列（默认空串），不重建 findings 表。
         ensure_column("findings", "sca_component", "TEXT NOT NULL DEFAULT ''")
         ensure_column("findings", "sca_advisory_id", "TEXT NOT NULL DEFAULT ''")
-        # 2026-09-10 黑板阶段三：vuln_blackboard 并发读改写合并需要的两个列。
         # 旧库只有 UNIQUE(workspace_id, vhash, run_id) 无版本列，靠 ensure_column 补齐，
         # 不必重建表；缺列时 blackboard.py 会自动退化为「直接覆盖」的旧行为（见 _upsert_merged）。
         ensure_column("vuln_blackboard", "version", "INTEGER NOT NULL DEFAULT 0")
@@ -1094,7 +1071,6 @@ class Database:
         connection.execute("CREATE INDEX IF NOT EXISTS idx_scan_trigger_ws ON scan_trigger_policy(workspace_id)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_iast_sessions_ws ON iast_sessions(workspace_id)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_iast_sessions_app ON iast_sessions(app_name, agent_id)")
-        # 2026-08-24 探针挂载端口持久化：用户在「Register IAST target」表单填写，
         # 挂载命令据此生成 -Dserver.port=PORT，避免目标项目随机跳端口。
         try:
             connection.execute("ALTER TABLE iast_sessions ADD COLUMN server_port INTEGER NOT NULL DEFAULT 8899")
@@ -1106,10 +1082,8 @@ class Database:
         connection.execute("CREATE INDEX IF NOT EXISTS idx_iast_events_task ON iast_events(task_id)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_trigger_specs_hash ON trigger_specs(workspace_id, vulnerability_hash_v2)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_trigger_specs_session ON trigger_specs(session_id)")
-        # 2026-10-24（upsert 前置）：唯一键 (task_id, vulnerability_hash_v2)。
         # 背景：闭环二次回灌是「先 DELETE 整表再 INSERT」，spec id 全变 ⇒ replay_attempts.spec_id
-        # 49% 变成孤儿（458 实测 652/1339），verification_status 也被清空导致整轮重放。
-        # 改为 upsert 后 id 稳定，孤儿归零。建唯一索引前必须先消除历史重复（老库 run 364 有 25 组）。
+        # 49% 变成孤儿，verification_status 也被清空导致整轮重放。
         try:
             _dups = connection.execute(
                 "SELECT task_id, vulnerability_hash_v2, COUNT(*) AS c FROM trigger_specs "
@@ -1117,7 +1091,6 @@ class Database:
             if _dups:
                 # 只对重复组做小范围清理（组数极少：老库仅 25 组）。
                 # 早期版本用「全表自连接 + 相关子查询」删除，在 59k 行上退化为 O(n²)，
-                # 把后端启动拖死过一次（2026-10-24 实测）。这里改为逐组取 id 列表、保留最大 id。
                 _removed = 0
                 for _row in _dups:
                     try:
@@ -1141,7 +1114,6 @@ class Database:
                 "ON trigger_specs(task_id, vulnerability_hash_v2)")
         except Exception as _ux_exc:  # noqa: BLE001
             logger.warning("[db] 唯一索引 ux_trigger_specs_task_vhash 创建失败（不影响运行）：%s", _ux_exc)
-        # 2026-10-23（观察层）：每次 D1 重放一行「请求 + 响应 + 判定输入」。
         # 背景：此前响应证据只落在 19MB 的报告 JSON 里（dast_impact_evidence），
         # 跨轮不可查、LLM 判因读不到；I2 只能靠规则表猜「是 payload 被拦还是打法错」。
         # 本表是「可观察的响应」的结构化落点，供 i2 判因、闭环定向重放、净化器知识复用。
@@ -1179,7 +1151,6 @@ class Database:
         connection.execute("CREATE INDEX IF NOT EXISTS idx_replay_attempts_task ON replay_attempts(task_id, spec_id, attempt_no)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_replay_attempts_hash ON replay_attempts(vulnerability_hash_v2)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_replay_attempts_created ON replay_attempts(task_id, created_at)")
-        # 2026-10-25（plan §19.1 / 20.4.1，探索图 + 单步意图）：I2 判因不再只产 reason 文本，
         # 而是产出结构化 intent 记录；下一轮 A2 只注入意图摘要（状态外置），确定性检查回写 status。
         connection.execute(
             "CREATE TABLE IF NOT EXISTS replay_intents ("
@@ -1206,7 +1177,6 @@ class Database:
         )
         connection.execute("CREATE INDEX IF NOT EXISTS idx_replay_intents_task ON replay_intents(task_id, spec_id)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_replay_intents_pending ON replay_intents(task_id, status, priority)")
-        # 2026-10-25（plan §20.5.1，决策缓存）：代码片段指纹 + 族 → 判定结果，跨任务复用。
         # Benchmark 模板化代码多，同一段净化器/注入点在多个 task 里重复，缓存可跳过重复 LLM 判别。
         connection.execute(
             "CREATE TABLE IF NOT EXISTS decision_cache ("
@@ -1220,7 +1190,6 @@ class Database:
             "created_at TEXT NOT NULL)"
         )
         connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_decision_cache_key ON decision_cache(code_hash, family)")
-        # 2026-08-25 重命名：iast_trigger_specs -> trigger_specs（该表实为 A2 预测 poc 假说，非 IAST 专属）。
         # 仅在旧表存在时执行；全新库已是 trigger_specs，ALTER 会失败，忽略即可。
         try:
             connection.execute("ALTER TABLE iast_trigger_specs RENAME TO trigger_specs")
@@ -1270,7 +1239,6 @@ class Database:
                 connection.execute("ALTER TABLE trigger_specs_new RENAME TO trigger_specs")
             except Exception:
                 pass
-        # 2026-09-01：iast_request_params 随「运行时观测请求面」链路一并移除，老库残留表在此清理。
         try:
             connection.execute("DROP TABLE IF EXISTS iast_request_params")
         except Exception:

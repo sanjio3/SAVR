@@ -1,10 +1,10 @@
-"""A1 业务族「结构特征」确定性检测（Q1，2026-09-10）。
+"""A1 业务族「结构特征」确定性检测。
 
-背景（Q1 要解决的问题）：
+背景：
     历史上**业务逻辑类 findings 的唯一来源是 A2 LLM**。这带来两个硬伤：
 
     1. **单点故障**：A2 一挂（如 audit_prompts 里 `/order/{id}` 触发 ``str.format``
-       KeyError 被 ``analyze()`` 的 except 吞掉），垂直越权/竞态/重放/状态机类
+       KeyError 被 ``analyze`` 的 except 吞掉），垂直越权/竞态/重放/状态机类
        findings 全部消失，只剩注入类 —— 且任务仍报 completed，极难察觉。
     2. **不可复现**：同一份代码两轮扫出的业务族候选可能完全不同，无法建立召回基线。
 
@@ -15,7 +15,7 @@
     - 管理前缀路由（/admin、/ops、/manage...）上没有任何权限注解 → 垂直越权结构
     - 金额/数量入参直传下单/支付方法、服务端未取价重算 → 计算逻辑（金额篡改）结构
 
-    这些判据全部基于 :mod:`src.core.route_resolver` 的静态路由索引（Q2），因此
+    这些判据全部基于 :mod:`src.core.route_resolver` 的静态路由索引，因此
     **Q2 是 Q1 的前置依赖**：先有「哪个方法是哪个 HTTP handler、有哪些入参、有没有
     @PreAuthorize」的确定性事实，才能在其上做结构判定。
 
@@ -28,7 +28,7 @@
 """
 from __future__ import annotations
 
-# 确定性结构检测：不依赖 LLM，A2 挂掉也能产出业务族候选（Q1 消除单点故障的关键一环）。
+# 确定性结构检测：不依赖 LLM，A2 挂掉也能产出业务族候选。
 IS_PRIMARY_PATH = False
 
 import re
@@ -81,7 +81,6 @@ _OWNERSHIP_TOKENS = (
 
 # 状态流转语义（匹配 handler 方法名或路由**末段**）。
 # 只对末段匹配是刻意的：此前对整条路由匹配时，"/marketing/preview" 被 `mark\w*`
-# 命中、"payment" 被 `pay` 命中，产生与状态机无关的误报（实测事故）。
 _STATE_TRANSITION_OP = re.compile(
     r"(?i)^("
     r"ship|cancel|refund|complete|approve|reject|confirm|settle|pay|close|"
@@ -229,9 +228,8 @@ def analyze_route(entry: RouteEntry, body: str) -> List[Dict[str, Any]]:
             }))
 
     # ---- R3：垂直越权（管理前缀路由 + 无权限注解 + 应用无全站认证兜底）----
-    # 2026-11-02 实杀：原条件只看 `not entry.has_guard`，而「没注解」不等于「没鉴权」。
-    # 若依的 ShiroConfig 有 `filterChainDefinitionMap.put("/**", "user,kickout,...")`
-    # ——**全站要求认证**，58 个管理端点因此被判成垂直越权（本轮里 105 条 0 确认）。
+    # 应用可能在 Shiro 的 filterChainDefinitionMap 里配置全站认证兜底，此时管理端点
+    # 缺注解不等于缺鉴权，直接报垂直越权会产生大量误报。
     # 现在要求「应用本身没有全站认证兜底」才允许报，否则只能算「缺细粒度权限」，
     # 那不是一个可确认的越权漏洞。
     if (_ADMIN_PREFIX_RE.search(entry.route or "") and not entry.has_guard
@@ -284,7 +282,7 @@ def analyze_files(
 
     Args:
         files: ``[{"path":..., "content":...}, ...]``（与 A1 scan_files 同构）
-        route_index: 已建好的路由索引；不给则内部构建（Q2 复用同一索引可省一次解析）
+        route_index: 已建好的路由索引；不给则内部构建
 
     Returns:
         业务族假说列表（形状与 A1BusinessLogicAIAgent / a1_bola_analyzer 对齐）。

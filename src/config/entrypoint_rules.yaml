@@ -16,7 +16,7 @@ rules:
   - entry_type: web_route
     pattern: '@WebServlet\s*\(([^)]*)\)'
     confidence: high
-    note: 'Servlet 路由：@WebServlet(value = "/x") / @WebServlet("/x") / @WebServlet(urlPatterns = "/x")。供 OWASP Benchmark 等纯 Servlet 靶场发现入口。'
+    note: 'Servlet 路由：@WebServlet(value = "/x") / @WebServlet("/x") / @WebServlet(urlPatterns = "/x")。供纯 Servlet 应用发现入口。'
   - entry_type: web_route
     pattern: "@(app|router)\\.(get|post|put|delete|patch)\\s*\\(\\s*['\"]([^'\"]+)"
     confidence: high

@@ -18,9 +18,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class CircuitBreaker {
     private static final long SAMPLE_INTERVAL_MS = 1000L;
 
-    // 2026-09-14 熔断振荡修复（第二、三项）：滞回水线 + 半开探测。
     // 旧实现：触发水线与恢复水线同为「不超阈」，恢复靠「连续 5s 不超阈」的定时恢复，无半开探测。
-    // 由于排空速率远低于生产速率（见 EventBuffer 的修复），队列一出阈值就恢复、恢复 1s 又触顶，
+    // 由于排空速率远低于生产速率，队列一出阈值就恢复、恢复 1s 又触顶，
     // 形成约 10s 的 tripped/recovered 弛张振荡。
     // 现改为：①恢复水线（resume）显著低于触发水线，形成滞回带，避免擦边反复；
     //          ②最短跳闸时长，避免抖动式跳合；
@@ -68,7 +67,6 @@ public final class CircuitBreaker {
     }
 
     /**
-     * 2026-09-29（P1 熔断语义改造）：按异常类型分流的入口。
      * 并发类异常（ConcurrentModificationException 及其 cause 链）只影响单条 hook 调用
      * （该条 fail-open、该条事件丢失），不代表基础设施过载——把它计入全局错误预算曾导致
      * D2 并发重放期 CME 风暴直接触发全局降级 passthrough，静默丢失整段证据窗口。

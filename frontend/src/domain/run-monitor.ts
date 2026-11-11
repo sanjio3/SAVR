@@ -101,7 +101,6 @@ export interface TaskProgressSnapshot {
   /**
    * 阶段**裸名**（不含阶段码）。
    *
-   * 2026-09-22 真实浏览器走查修正：原字段名 stageLabel、值取 stageLabel()，而 STAGE_LABELS
    * 本身已含阶段码（"R 报告器" / "A1 规则扫描" / "SCA 成分分析"）。监控页模板又写了
    * `{{ stageCode }} {{ stageLabel }}` → 渲染成「R R 报告器」「A1 A1 规则扫描」。
    * 规则与 StepFlow 一致：**阶段码只由徽标承担，文字只写名称**。故此处置为裸名。

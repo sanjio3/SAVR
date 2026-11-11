@@ -1,7 +1,6 @@
-# CodeQL 适配层配置（2026-10-20 建立）
 #
 # 优先级：环境变量 > 本文件 > 代码默认值
-# 环境变量映射见 src/core/config_registry.py::codeql_config()
+# 环境变量映射见 src/core/config_registry.py::codeql_config
 #
 # 为什么这些参数要配置化：它们是「运维需要调的参数」，之前硬编码在
 # a1_codeql_adapter.py 里，每次调整都要改代码 + 重启，且容易遗忘取值依据。
@@ -19,7 +18,6 @@ enabled: true            # 是否启用 CodeQL。等价环境变量：SAST_AI_DI
 bin_path: "auto"
 
 memory:
-  # 固定 4GB。取值依据（2026-10-20 r114 实测）：
   #   - 3GB 时 CodeQL 拆分出的 Java heap 仅 1344MB，TaintedPath.ql（CWE-022）OOM；
   #   - 4GB 时 heap 约 1800MB，TaintedPath 11.2s 成功，全量 4216 告警；
   #   - 高于 4GB 会与靶场/前端抢内存（历史 6-16GB 导致 40 次 JVM OOM）。
@@ -36,5 +34,5 @@ timeout_seconds:
   create: 1800           # database create（Java 需 mvn compile，代价高）
   analyze: 3600          # database analyze（全量 127 查询约 4 分钟，留足余量）
 
-# 官方查询套件。自定义 .ql 由 analyze_extra() 隔离执行（不混跑，避免整轮失败）
+# 官方查询套件。自定义 .ql 由 analyze_extra 隔离执行（不混跑，避免整轮失败）
 suite: "java-security-extended"

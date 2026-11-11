@@ -3,9 +3,9 @@ package com.rasp.probe;
 import net.bytebuddy.asm.Advice;
 
 /**
- * L2 propagation: mutable builder {@code toString()} (java.base, bootstrap-injected).
+ * L2 propagation: mutable builder {@code toString} (java.base, bootstrap-injected).
  *
- * The String produced by {@code StringBuilder/StringBuffer/StringJoiner.toString()}
+ * The String produced by {@code StringBuilder/StringBuffer/StringJoiner.toString}
  * inherits the builder's confidence. Split from the old
  * {@code PropagateStringBuilderAdvice} so each {@code @OnMethodExit} lives in its own
  * class (ByteBuddy rejects two {@code @OnMethodExit} methods in one class with

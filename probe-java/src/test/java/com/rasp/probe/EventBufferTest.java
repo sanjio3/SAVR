@@ -48,7 +48,6 @@ class EventBufferTest {
         assertEquals(4, buffer.queueCapacity());
         assertEquals(4, buffer.remainingCapacity());
 
-        // 2026-10-11：本测试只验环形容量/背压，不能与 (canary,sink) 去重语义冲突——
         // 用两个不同 sink（键不同）确保都被接收。同键去重语义由
         // dedupKeepsFirstReplayEventAndDropsRepeatWithinWindow 专测。
         buffer.offer(new SecurityEvent("SINK_HIT", "HIGH", "trace", "session-1", "jdbc-a", "a",
@@ -87,11 +86,9 @@ class EventBufferTest {
 
     @Test
     void dropsProbeSelfSinkNoiseAtSource() {
-        // 2026-09-21 任务①（R29 纵深防御）：探针自写日志命中文件写入 sink（java.nio.file.Files）
         // 且调用栈含 com.rasp.probe，是探针自插桩噪声，须从源头丢弃（offer 返回 false），不进环。
         ProbeConfig config = new ProbeConfig("http://127.0.0.1:1", "agent", "app", 1, 4);
         EventBuffer buffer = new EventBuffer(config, new ProbeHttpClient(config));
-        // 2026-09-21（Q1）：自噪声改用独立计数器 suppressedSelfLogNoise，与队列满丢弃
         // droppedEvents 分开（同 suppressedStartupNoise 的设计），避免「主动抑制」被误报成「丢弃」。
         long before = HookMetrics.suppressedSelfLogNoise();
         SecurityEvent selfNoise = new SecurityEvent(
@@ -120,7 +117,6 @@ class EventBufferTest {
 
     @Test
     void dropsTaintFlowSelfLogNoise() {
-        // 2026-09-21（Q1 全量落地）：自噪声主通道是 TAINT_FLOW，其 tainted source value 含探针自写
         // 日志标记 "sec-agent.log"，调用栈常为空。旧判定（仅 SINK_HIT+栈含探针包）对该通道失效，
         // 须从源头丢弃（offer 返回 false），不进环、不污染关联层 confirmed_runtime。
         ProbeConfig config = new ProbeConfig("http://127.0.0.1:1", "agent", "app", 1, 4);
@@ -150,7 +146,6 @@ class EventBufferTest {
 
     @Test
     void dedupKeepsFirstReplayEventAndDropsRepeatWithinWindow() {
-        // 2026-10-11 逻辑反转 bug 回归锁：历史上 compute+保留旧时间戳使 (now-prev) 恒 < 窗口，
         // 连首条都被判重复 → 带 canary 的 SINK_HIT 被系统性全丢（实测四任务带 canary 的
         // SINK_HIT = 0）。正确语义：窗口内同键放行首条、丢弃后续。
         ProbeConfig config = new ProbeConfig("http://127.0.0.1:1", "agent", "app", 1, 8);

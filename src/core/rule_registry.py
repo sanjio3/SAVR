@@ -1,4 +1,4 @@
-"""Skill（可插拔检测能力单元）运行时加载器（§4.3，2026-09-19）。
+"""Skill（可插拔检测能力单元）运行时加载器。
 
 打通规则生成闭环的「最后一公里」：此前 rule_feedback_service 产出候选规则写
 generated_rules.yaml（staging），但**运行时没有加载方**。本模块把
@@ -11,9 +11,9 @@ generated_rules.yaml（staging），但**运行时没有加载方**。本模块�
     模板的 ``{skill_hints}`` 槽位，强化所有模型（强/弱）对特定形态的识别。
 
 两条通道都**只消费 status=active 的 skill**：候选规则先以 staging 落盘，经 golden 回归 +
-D2 差分门禁 + 人工确认后再置 active，避免未验证规则影响真实扫描（§4.3 闭环、项目铁律）。
+D2 差分门禁 + 人工确认后再置 active，避免未验证规则影响真实扫描。
 
-RuleSkill 结构（与待请示文档 §4.3 一致）：
+RuleSkill 结构：
   {id, version, family, languages, trigger, payload, golden, gate}
 
 模型无关：skill 只是一段文本要点 / 匹配表达式，不绑定任何具体模型，强弱模型同吃。
@@ -30,7 +30,7 @@ from typing import Dict, List, Optional
 import yaml
 
 def _default_rules_dir() -> Path:
-    """规则目录默认值：优先用 tool_paths.get_rules_dir()（唯一路径真相），取不到再退回相对路径。"""
+    """规则目录默认值：优先用 tool_paths.get_rules_dir（唯一路径真相），取不到再退回相对路径。"""
     try:
         from src.core.tool_paths import get_rules_dir
         return Path(get_rules_dir())
@@ -51,9 +51,9 @@ class RuleSkill:
     payload: Dict = field(default_factory=dict)
     golden: Dict = field(default_factory=dict)
     gate: Dict = field(default_factory=dict)
-    # 生命周期：staging（候选中，不参与运行时）→ active（经 golden 回归+人工确认后启用）。
+    # 生命周期：staging（候选中，不参与运行时）→ active。
     # 只有 active 才被 A1 规则表达式 / A2 提示词消费；staging 仅落盘待验证。
-    # 这是 §4.3「候选 → 门禁 → 人工确认 → 提升为 active」闭环的运行时开关。
+    # 这是 「候选 → 门禁 → 人工确认 → 提升为 active」闭环的运行时开关。
     status: str = "active"
     # 定义该 skill 的 yaml 文件绝对路径。用于门禁提级时**定点回写 status 行**（保留文件注释）。
     source_path: str = ""

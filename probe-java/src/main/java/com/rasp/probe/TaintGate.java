@@ -28,7 +28,7 @@ public final class TaintGate {
      *   java.io.FileInputStream, java.nio.file.Files, ...).
      * DANGEROUS_FAMILY_TOKENS — class-name fragments appearing in the concrete impl of
      *   an interface-based sink (Statement for JDBC, DocumentBuilder/SAXParser/Transformer
-     *   for XML). Matched with contains(); each fragment is unique to the dangerous type
+     *   for XML). Matched with contains; each fragment is unique to the dangerous type
      *   so it cannot accidentally fire on a benign class.
      */
     private static final String[] DANGEROUS_PREFIXES = {

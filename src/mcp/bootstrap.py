@@ -1,4 +1,4 @@
-"""外部 MCP server 的启动接线（三期收口，2026-09-20）。
+"""外部 MCP server 的启动接线。
 
 **为什么需要这个模块**：三期交付了 ``McpServer`` / ``McpClient`` / ``McpToolBridge`` 与 23 条测试，
 但 ``McpToolBridge`` 在全仓**零引用** —— 没有任何调用方，外部 MCP 能力实际不可用（只有机制，
@@ -7,14 +7,14 @@
 ``load_external_servers(config=None)``：
   1. 读配置段 ``mcp``（``config.yaml``，经 ``core.config`` 单例；也可显式传入）；
   2. ``mcp.enabled != true`` 时**直接返回 disabled** —— 行为与接线前完全一致（默认关闭）；
-  3. 逐个 server 起 ``StdioTransport`` → ``McpClient.initialize()`` → ``McpToolBridge.discover()``；
-  4. 汇总后一次 ``a2_tools.register_external_tools()`` 注册进统一命名空间
+  3. 逐个 server 起 ``StdioTransport`` → ``McpClient.initialize`` → ``McpToolBridge.discover``；
+  4. 汇总后一次 ``a2_tools.register_external_tools`` 注册进统一命名空间
      （工具名 ``mcp__<server>__<tool>``）。
 
 三条硬约束：
   - **幂等**：进程内只加载一次（模块级锁 + flag）；``force=True`` 可重载。
   - **fail-open**：未配置 / 起不来 / 握手失败一律记入 ``errors`` 后继续，**绝不影响主扫描**。
-  - **可关闭**：``close_external_servers()`` 逐个关掉子进程。
+  - **可关闭**：``close_external_servers`` 逐个关掉子进程。
 
 配置样例（``config.yaml``）::
 

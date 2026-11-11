@@ -1,9 +1,9 @@
-"""A1 外接 CodeQL 适配层（§8.1 / §9.1「A1 规则扫描 → 外接工具（如 CodeQL）」能力改造）。
+"""A1 外接 CodeQL 适配层（ / 「A1 规则扫描 → 外接工具（如 CodeQL）」能力改造）。
 
 A1 的静态模式匹配目标从内置正则/规则引擎改为外接 CodeQL 工具。本模块提供适配层：
 - 检测本机 codeql CLI 是否可用；
 - 可用时提供 database create / database analyze（SARIF）调用骨架；
-- 不可用时 is_available()=False，由 A1PipelineService 回退内置规则引擎（不阻断扫描）。
+- 不可用时 is_available=False，由 A1PipelineService 回退内置规则引擎（不阻断扫描）。
 
 注意：CodeQL 对 Java 项目需要编译数据库（codeql database create --language=java 需 Maven/Gradle
 构建环境），Python/JS 可自动提取。实际调用依赖本机 CodeQL CLI + 查询库（qlpack），本适配层
@@ -18,9 +18,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# 配置统一（2026-10-20）：CodeQL 的运维参数（enabled/bin/ram/threads/suite/timeout）收进
 # config/codeql.yaml，由 src.core.config_registry 统一读取（环境变量 > yaml > 代码默认）。
-# 不配置化会撞的坑：硬编码 6-16GB 内存导致 40 次 JVM OOM（r113）、root 路径不统一、
 # 套件名硬编码等。配置模块极特殊不可用时退回历史 env/默认值，绝不抛异常中断扫描。
 try:
     from src.core import config_registry as _cfg
@@ -75,23 +73,19 @@ def _cfg_codeql_timeout(kind: str, default: int) -> int:
 logger = logging.getLogger(__name__)
 
 
-# ── 构建 JDK 绑定（2026-10-31）─────────────────────────────────────────────
 # 背景：CodeQL 对 Java 项目要跑 ``mvn -B compile``。子进程若**继承后端进程的 JAVA_HOME**
 # （本机是 jdk-21），而项目声明 JDK8 且用老版本 Lombok，编译直接崩：
 #   NoSuchFieldError: Class com.sun.tools.javac.tree.JCTree$JCImport does not have
 #   member field 'com.sun.tools.javac.tree.JCTree qualid'
 # ⇒ 空库 ⇒ codeql_status=build_failed_or_empty ⇒ 降级启发式（A1 主力整条失效）。
 #
-# 实测（java-sec-code，2026-10-31）：
 #   JAVA_HOME=jdk-21  → mvn -B compile 失败（上面的 NoSuchFieldError）
 #   JAVA_HOME=jdk65   → BUILD SUCCESS（4.7s）
-# 对照：OWASP Benchmark 是纯 javac 编译（无 Maven/Lombok），所以那边
 # engine=codeql+heuristic / codeql_status=ok 一直正常——**同一套代码，只因项目形态不同而一个通一个不通**。
 #
 # 结论：构建子进程的 JAVA_HOME 必须**按项目声明**决定，不能继承。这也正是「真实业务项目
 # 普遍是 Maven/Gradle + 老 JDK + Lombok」时 A1 全线退化的根因。
 
-# 2026-11-06 开源 P0：默认只扫跨平台的标准 JDK 安装位置，不内置任何本机绝对路径。
 # 部署方可通过 SAST_AI_JDK_ROOT 追加自己的 JDK 根目录。
 _JDK_ROOTS = tuple(p for p in (
     os.environ.get("SAST_AI_JDK_ROOT", ""),
@@ -236,7 +230,6 @@ def _env_with_mvn_shim(project_path: Optional[str] = None) -> Dict[str, str]:
     existing = env.get("PATH", "")
     if shim not in existing.split(os.pathsep):
         env["PATH"] = shim + os.pathsep + existing
-    # 2026-11-04（jsc 611/612/613 三轮实测）：显式覆盖 SAST_AI_JAVA_HOME 必须无条件生效。
     # 原实现把 override 检查关在 ``if project_path:`` 里 —— CodeQL 的 prepared 扫描根
     # （无 pom，甚至传 None）场景下，覆盖被静默忽略，构建回退到继承的 jdk-21，
     # 撞老 Lombok 编译失败 → java 级 empty → 整轮降级启发式（A1 276→133）。
@@ -285,7 +278,6 @@ class CodeQLAdapter:
     _CUSTOM_PACK_ROOT = Path(__file__).resolve().parent.parent.parent / "tools" / "codeql-queries"
 
     def __init__(self, codeql_bin: Optional[str] = None, threads: Optional[int] = None, ram_mb: Optional[int] = None):
-        # 配置统一（2026-10-20）：参数优先级 = 显式入参 > config/codeql.yaml(+环境变量) >
         # 路径查找/代码默认。详见 src.core.config_registry。链路修通后**默认启用**，
         # 仅 SAST_AI_DISABLE_CODEQL=1（或 yaml enabled:false）时禁用。
         _disabled = not _cfg_codeql_enabled(default=True)
@@ -293,7 +285,7 @@ class CodeQLAdapter:
             self._codeql = None
         else:
             # 优先级：显式入参 > config(CODEQL_BIN / bin_path=auto 探测) > PATH 查找
-            # 入参可能是配置里的 "auto" 字样，按「未指定」处理，否则 Path("auto").exists()
+            # 入参可能是配置里的 "auto" 字样，按「未指定」处理，否则 Path("auto").exists
             # 为 False，会直接把 CodeQL 降级掉。
             explicit = str(codeql_bin or "").strip()
             if explicit.lower() == "auto":
@@ -304,7 +296,7 @@ class CodeQLAdapter:
         # 线程护栏保留固定小值（编译分层也吃 CPU，与后端/Ollama 共存）。
         self._threads = int(threads if threads is not None else _cfg_codeql_threads(default=2))
         # 内存预算配置：None=动态计算（默认）；0=不传 --ram（CodeQL 按机器自适应）；
-        # >0=固定值（保留人工覆盖能力）。真正的解析在 _resolve_ram_mb()。
+        # >0=固定值（保留人工覆盖能力）。真正的解析在 _resolve_ram_mb。
         self._ram_mb_cfg = self._parse_ram_cfg(
             ram_mb if ram_mb is not None else _cfg_codeql_ram(default=4096))
 
@@ -318,7 +310,6 @@ class CodeQLAdapter:
         except (TypeError, ValueError):
             return None
 
-    # 2026-10-20 实测结论：固定 4GB。全量 security-extended 实测——3GB 时
     # heap 仅 1344MB，TaintedPath.ql（CWE-022 重查询）OOM；4GB 时 TaintedPath 11.2s 成功。
     # 故上下限都定 4096：低于 4GB 会丢 path traversal 查询，高于 4GB 会与靶场/前端抢内存
     # （历史 6-16GB 导致 40 次 JVM OOM）。
@@ -329,7 +320,7 @@ class CodeQLAdapter:
     def _commit_stats_mb() -> Optional[tuple]:
         """读取 Windows Commit 真实读数，返回 (commit_limit_mb, commit_free_mb, phys_avail_mb)。
 
-        注意：psutil 在 Windows 的 swap_memory() 是「页面文件使用率」（本机页面文件 8GB，
+        注意：psutil 在 Windows 的 swap_memory 是「页面文件使用率」（本机页面文件 8GB，
         total=8192），NOT CommitLimit——CommitLimit = 物理内存 + 页面文件（本机约 40.6GB）。
         正确来源是 GlobalMemoryStatusEx：ullTotalPageFile=CommitLimit，ullAvailPageFile=CommitFree。
         非 Windows 或调用失败返回 None。
@@ -368,7 +359,6 @@ class CodeQLAdapter:
     def _resolve_ram_mb(self) -> int:
         """计算本次 analyze 的 --ram 预算（MB）。
 
-        背景（2026-09-25 task-6 复盘）：固定 --ram=4096 会被 ``codeql resolve ram`` 拆成
         -J-Xmx1800M + off-heap 1565M，security-extended 127 条查询编译分层即 OOM
         （115 次 OutOfMemoryError，栈在 QLStratificationReporter/SCC.tarjan，status 99，
         29.6 分钟纯无效功）。固定小值=坏慢，固定大值=撞 Commit 上限，故改动态：
@@ -381,7 +371,6 @@ class CodeQLAdapter:
         """
         if self._ram_mb_cfg is not None:
             return max(0, int(self._ram_mb_cfg))
-        # 2026-10-20 实测结论：固定 4GB。原动态预算在 CommitFree 不足时返回 0
         # （不传 --ram），CodeQL 自适应可能吃 5.6GB 且不可控；固定 4096 实测全量 4216 告警成功。
         return self._RAM_MAX_MB
 
@@ -436,7 +425,7 @@ class CodeQLAdapter:
     def _env_with_mvn_shim(project_path: Optional[str] = None) -> Dict[str, str]:
         """兼容入口：转调模块级 ``_env_with_mvn_shim``（含构建 JDK 绑定）。
 
-        保留这个方法名是因为单测与外部脚本都在用 ``CodeQLAdapter._env_with_mvn_shim()``，
+        保留这个方法名是因为单测与外部脚本都在用 ``CodeQLAdapter._env_with_mvn_shim``，
         改成模块函数后旧调用方不该跟着改。
         """
         return _env_with_mvn_shim(project_path)
@@ -476,9 +465,7 @@ class CodeQLAdapter:
             return False
         return "inProgress:" not in txt
 
-    # ── 库新鲜度校验（2026-11-01）────────────────────────────────────────
-    # 事故：java-sec-code 的 ``.codeql-db`` 是 **2026-09-12** 建的，7 周前的快照。
-    # ``create_database`` 只看 ``_is_finalized()`` 就 ``reused=True`` 直接复用，
+    # ``create_database`` 只看 ``_is_finalized`` 就 ``reused=True`` 直接复用，
     # 于是 analyze 跑在旧库上、产出 0 告警，上层把结论写成
     # ``build_failed_or_empty`` —— 看起来像「构建失败」，实际是**复用了过期快照**。
     # 连带后果：我为了修构建 JDK 做的绑定，在这条路径上根本没被执行到。
@@ -488,14 +475,11 @@ class CodeQLAdapter:
     # 指纹文件名：写在库目录里，记录「建库时的源码内容指纹」。
     _FP_FILE = ".sastai_src_fp"
 
-    # 2026-11-04（jsc 619 实测，CodeQL finalize 死循环的根因）：
     # 扫描目录时必须排除**所有** `.codeql-db*` 变体，不能只排精确的 `.codeql-db`。
     #
-    # 事故链：java-sec-code 源码根下残留了 5 个半成品库
     # （`.codeql-db.partial2..5` 等，共 4.3 万文件 / 420MB，是此前
     # 「Refusing to create database: exists and is not empty」时改名留下的）。
     # CodeQL 建库时把源码目录当 source root 复制，于是把这些**库目录也当源码复制**，
-    # 路径变成 `.codeql-db.fresh-X/src/D_/.../java-sec-code/.codeql-db.partial3/src/D_/...`，
     # **超过 Windows MAX_PATH(260)** ⇒ `AccessDeniedException` ⇒
     # ① 复制源文件失败（properties extractor 报错）；
     # ② finalize 清理 `cache/cached-strings/pools/*/info` 时被拒 → 无限重试（死循环）；
@@ -518,7 +502,6 @@ class CodeQLAdapter:
     def _source_fingerprint(cls, project_path: str, limit: int = 20000) -> str:
         """源码内容指纹（sha256）。
 
-        为什么不用 mtime：2026-11-01 实测，扫描期间有组件会 touch
         `src/main/resources/url/*.xml`（**内容没变**，git status 干净），
         mtime 判据因此把刚建好的库判成 stale，**每轮都重建 CodeQL 库**（A1 从 3 分钟涨到 8 分钟）。
         内容指纹不受 touch 影响，且只覆盖真正决定 CodeQL Java 库的东西：
@@ -706,7 +689,6 @@ class CodeQLAdapter:
                     # 此时 strptime 那条路根本走不到 —— 第一版漏了这个分支。
                     created = (raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)).timestamp()
                 else:
-                    # 兜底：9 位纳秒（2026-09-12T09:46:36.963177600Z）必须截到 6 位，
                     # strptime 的 %f 只吃 1~6 位，否则解析失败、created 退化成 0，
                     # 整个新鲜度校验被静默跳过。
                     _s = str(raw).strip()
@@ -759,7 +741,6 @@ class CodeQLAdapter:
     def _run_create(self, cmd, db: str, project_path: str, finalized_grace: float = 300.0):
         """跑 ``codeql database create``，并在「已 finalize 但 cleanup 卡住」时提前收工。
 
-        实测（2026-11-01）：本机 ``codeql database cleanup``（create 的最后一步，
         只负责删 TRAP 临时文件）会无限期挂住——进程活着、内存不动、TRAP 目录不再缩小。
         干等的话 ``create`` 会耗到 1800s 超时，A1 整轮降级成启发式。
         但 cleanup 只是**磁盘回收**，不影响库可用性：``finalised: true`` 之后
@@ -820,12 +801,10 @@ class CodeQLAdapter:
     def _quarantine_stale_db_dirs(cls, project_path: str, keep: str = "") -> List[str]:
         """把源码根下的**残留 CodeQL 库目录**移出源码根（不删除）。
 
-        2026-11-04（jsc 619 实测，CodeQL 静态侧整轮降级的根因）：
         ``codeql database create --source-root=<项目根>`` 会把源码根**整个复制**进库目录
-        （CLI 无排除参数，实测 ``--help`` 只有 ``--source-root``）。若源码根里残留了
+        。若源码根里残留了
         半成品库（``.codeql-db.partial*`` / ``.codeql-db.broken-*`` / ``.codeql-db.fresh-*``），
         它们会被当成源码一起复制，路径变成
-        ``<新库>/src/D_/.../java-sec-code/.codeql-db.partial3/src/D_/...``
         ⇒ **超过 Windows MAX_PATH(260)** ⇒ ``AccessDeniedException`` ⇒
         源文件复制失败 + finalize 清理 cache 时无限重试（死循环）+ 库不完整
         ⇒ analyze 得到 ``java: empty`` ⇒ 上层记成 ``build_failed_or_empty``
@@ -899,7 +878,6 @@ class CodeQLAdapter:
         if not self.is_available():
             return {"status": "unavailable", "reason": "codeql CLI not found"}
         db = db_path or CodeQLAdapter.default_db_path(project_path, language)
-        # 复用判定（2026-11-01 收紧）：原先只看「已 finalize」就复用，导致 7 周前的
         # 旧库被直接拿来分析，产出 0 告警并被上层记成 build_failed_or_empty。
         # 现在要求「已 finalize + source-root 一致 + 比最新源码新」三者同时成立；
         # 不成立时不删旧库，改建到 `.fresh-<ts>` 兄弟目录（见 _pick_db_target 注释）。
@@ -907,7 +885,6 @@ class CodeQLAdapter:
         if reused:
             logger.info("[codeql] 复用已有数据库（%s）", db)
             return {"status": "ok", "database": db, "reused": True}
-        # 2026-11-04（jsc 619 实测）：建库前先把源码根下的残留库目录隔离出去。
         # 不隔离的话它们会被 --source-root 复制进新库 → 路径爆 MAX_PATH(260)
         # → AccessDenied → finalize 死循环 → 库不完整 → 静态侧整轮降级启发式。
         # 详见 _quarantine_stale_db_dirs 的说明。
@@ -932,7 +909,6 @@ class CodeQLAdapter:
             build_command = "mvn -B compile"
         if build_command:
             cmd += ["--command=" + build_command]
-        # 强制重新编译（2026-11-01，本轮实测）：Maven/Gradle 都是增量编译，
         # target/classes 已是最新时 javac **一次都不跑**，CodeQL tracer 抓不到任何 javac
         # ⇒ 建库「成功」但告警为 0，上层记成 build_failed_or_empty（日志是
         # "detected code written in Java/Kotlin but could not process any of it"）。
@@ -964,7 +940,6 @@ class CodeQLAdapter:
             # create 成功也必须显式 finalize：CLI 2.x 不保证 create 完成 finalize。
             # 但**已经 finalize 的库不能再 finalize 一次**——CodeQL 会报错，
             # 进而让 create_database 返回 error、整轮 A1 降级。
-            # 2026-11-01 实测：`_run_create` 在 cleanup 卡住时杀掉进程并当成功，
             # 此时库已 finalised=true，冗余的 finalize 直接把它打回 build_failed。
             if self._is_finalized(db):
                 self._write_db_fingerprint(db, project_path)
@@ -1000,7 +975,6 @@ class CodeQLAdapter:
             return {"status": "unavailable", "reason": "codeql CLI not found"}
         suite = self._normalize_suite(query_suite, language)
         out_sarif = str(Path(db_path)) + ".sarif"
-        # 2026-10-20（真因，r114/r115 实证）：CodeQL 的 --output 拒绝覆盖已存在的 sarif——
         # 第一次成功后文件留存，后续 analyze 全部 10s 返回 error（reason 只有 "Running queries."），
         # 导致 A1 永久 fallback heuristic。analyze 前必须清理旧文件。
         try:
@@ -1009,10 +983,9 @@ class CodeQLAdapter:
         except Exception:
             pass
         cmd = [self._codeql, "database", "analyze", db_path, suite]
-        # 2026-10-20：自定义 .ql 不再与官方套件混跑。r113 实证「官方 java-security-extended
         # + 5 个自定义 .ql 一起跑」→ query filter 'tags contain' 约束失败 + exit 1，整轮
         # analyze 失败、官方结果一起丢。现改为官方套件单独跑（主结果），自定义查询由
-        # analyze_extra() 隔离执行、容错合并。extra_queries 参数保留兼容但不拼进主命令。
+        # analyze_extra 隔离执行、容错合并。extra_queries 参数保留兼容但不拼进主命令。
         # 内存护栏：动态预算（见 _resolve_ram_mb），预算<=0 时不传 --ram 让 CodeQL 自适应，
         # 避免再出现「护栏本身把堆压到 1800M 致编译分层 OOM」的坏慢路径。
         cmd += ["--threads=" + str(self._threads)]
@@ -1036,7 +1009,6 @@ class CodeQLAdapter:
     def analyze_extra(self, db_path: str, extra_queries: Optional[List[str]] = None) -> Dict[str, Any]:
         """单独执行自定义 .ql（与官方套件隔离，失败不影响官方结果）。
 
-        2026-10-20：r113 实证「官方套件 + 自定义 .ql 混跑」会因 query filter/编译问题
         让整轮 analyze exit 1、官方结果一起丢。隔离后官方套件成功即产出主结果，
         自定义查询失败只降级为 warning。
         """

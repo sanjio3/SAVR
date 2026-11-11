@@ -1,9 +1,6 @@
-"""missing_route 观测面（E-1，2026-09-28 落地）。
+"""missing_route 观测面。
 
-背景（run 28 定性）：A2→TriggerSpec 登记漏斗的 skipped_unresolved（missing_route 等）
-此前只有计数、没有反馈——真漏报被静默丢弃。run 28 定性结论：97 个去重 hash 中
 29 个是已被其他 spec 覆盖的重复假说、39 个 FP、26 个跨文件未映射、真漏报仅 2 用例
-（BenchmarkTest02677 弱密码存储、02393 sensitive_data_exposure）。OWASP 上它的实际
 代价 ≈2 用例召回，本质是「垃圾假说被路由解析器隐性过滤」+ 无显式反馈；真实风险在
 未来跨文件靶场（sink 在 service 层）。
 
@@ -90,7 +87,7 @@ def build_missing_route_watch(db, task_id: int, reasons: List[Dict[str, Any]]) -
             "case": "",
             "file": "",
         }
-        # 用例名兜底链：reason 自带 file（登记期内存现值，运行期 findings 表尚未写盘查必空）
+        # 用例名兜底链：reason 自带 file
         # → findings 表回查（仅离线补录历史任务时可用）→ reason 里的 route
         case = ""
         file_path = str(r.get("file") or "")

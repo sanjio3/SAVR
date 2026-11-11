@@ -1,4 +1,4 @@
-"""A2 Agentic 闭环的工具集（2026-09-17 落地）。
+"""A2 Agentic 闭环的工具集。
 
 背景：评审把 A2 的二次分析从「单轮 prompt 注入反馈文本」升级为「带工具调用的
 多轮 Agent loop」，工具集一步到位，含规则执行与 exploit 只读探测。此前 A2 唯一的外部
@@ -30,11 +30,9 @@ from typing import Any, Dict, List, Optional
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# §4.2 一期（2026-09-19）：工具级超时与埋点。本地 agentic 工具此前无任何超时，
 # 任一工具 hang（RAG 死锁 / grep 大仓）会直接卡死整个多轮 loop。超时后返回 ok=False
 # 而非抛异常，保证 loop 不被打断（fail-open）。
 TOOL_TIMEOUT_SECONDS = float(os.environ.get("SAST_AI_A2_TOOL_TIMEOUT", "10"))
-# §4.2 三期（2026-09-20）：外部 MCP 工具端到端超时。外部进程（CodeQL/Semgrep/依赖查询）不可控，
 # 默认给得比本地工具宽（20s），但仍有硬上限，避免外部工具 hang 死 agentic loop。
 EXTERNAL_TOOL_TIMEOUT_SECONDS = float(os.environ.get("SAST_AI_MCP_TOOL_TIMEOUT", "20"))
 
@@ -264,7 +262,6 @@ _EXECUTORS = {
     "probe_readonly": lambda a: tool_probe_readonly(a.get("family", "")),
 }
 
-# §4.2 三期（2026-09-20）：外部 MCP 工具统一命名空间。
 # 本地工具（上表）与外部 MCP 工具合并为「一套工具名」，agentic 侧无感知差异。
 # 外部工具名带前缀 ``mcp__<server>__<tool>``（由 McpToolBridge 生成），与本地名天然不撞。
 # 注册表在模块级，进程内共享；`register_external_tools` 由 MCP 接线处调用（幂等覆盖同名）。
@@ -337,7 +334,7 @@ def _record_stat(name: str, ok: bool, ms: float) -> None:
 
 def execute_tool(name: str, arguments: Optional[Dict[str, Any]] = None,
                  timeout: Optional[float] = None) -> Dict[str, Any]:
-    """执行一个工具调用（§4.2 一期：带超时 + 埋点；三期：外部 MCP 工具统一路由）。
+    """执行一个工具调用。
 
     - 未知工具返回 ok=False（不打断 loop）；
     - 本地无此工具时，查外部 MCP 工具注册表（``mcp__<server>__<tool>``）并转发；
@@ -350,7 +347,7 @@ def execute_tool(name: str, arguments: Optional[Dict[str, Any]] = None,
     fn = _EXECUTORS.get(name)
     is_external = False
     if fn is None:
-        # §4.2 三期：本地未注册 → 查外部 MCP 工具（统一命名空间）。
+        #  三期：本地未注册 → 查外部 MCP 工具（统一命名空间）。
         with _EXTERNAL_LOCK:
             ext = _EXTERNAL_EXECUTORS.get(name)
         if ext is None:
@@ -393,7 +390,7 @@ def reset_tool_stats() -> None:
 
 
 class ToolSpec:
-    """统一工具协议（§4.2 二期/三期基础）：一份定义，映射到 Anthropic 与 OpenAI 两种 schema。
+    """统一工具协议：一份定义，映射到 Anthropic 与 OpenAI 两种 schema。
 
     一期只用于生成提示词文本；二期（对外 MCP Server）/ 三期（对内 MCP Client）
     直接复用本类做 tools/list 与 tools/call 的映射，无需重写工具定义。
@@ -416,7 +413,7 @@ class ToolSpec:
 
 
 def get_tool_specs() -> List[ToolSpec]:
-    # §4.2 三期：含外部 MCP 工具（统一命名空间）；无外部工具时与旧版行为一致。
+    #  三期：含外部 MCP 工具（统一命名空间）；无外部工具时与旧版行为一致。
     return [ToolSpec(s["name"], s.get("description", ""), s.get("input_schema", {}))
             for s in all_tool_schemas()]
 

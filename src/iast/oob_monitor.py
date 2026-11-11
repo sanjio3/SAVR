@@ -1,4 +1,4 @@
-"""OOB（带外）回执监听（第四层配套，2026-09-28 落地）。
+"""OOB（带外）回执监听。
 
 为什么必须有 OOB：Java 原生反序列化 RCE 的 payload 是**二进制序列化对象**，
 平台的 canary 是字符串，进不了 readObject 的实参（结构性限制，见
@@ -60,7 +60,6 @@ def _connect(db_path: Optional[str] = None) -> sqlite3.Connection:
     con = sqlite3.connect(path, timeout=15)
     con.execute(_DDL)
     con.execute(f"CREATE INDEX IF NOT EXISTS idx_{_TABLE}_token ON {_TABLE}(token)")
-    # 旧表兼容：spec_id 列在 2026-09-29 收口时新增，已存在的库需补列。
     try:
         con.execute(f"ALTER TABLE {_TABLE} ADD COLUMN spec_id INTEGER")
     except Exception:
@@ -86,7 +85,6 @@ def oob_enabled() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# 带外基础设施断口修复（2026-10-03 Part2 M3）
 # ---------------------------------------------------------------------------
 # 两个断口（都是「代码写了但没接上」，不是设计问题）：
 #   断口一：DNS 形态依赖 SAST_AI_OOB_BASE_DOMAIN，用户尚未配置公网域名 ⇒ 只有 DNS
@@ -99,7 +97,7 @@ def oob_enabled() -> bool:
 # 修法（定稿推荐丙：两层并存，先把本机 HTTP 端到端跑通，公网 DNS 后配）：
 #   - DNS 形态继续用 oob_domain，未配域名即不可用（不硬凑）；
 #   - HTTP 形态用 oob_http_url，默认指后端自己的 /api/oob 端点，开箱即可端到端；
-#   - oob_mode() / oob_status() 把「哪条路通」显式暴露出来，别让调用方猜。
+#   - oob_mode / oob_status 把「哪条路通」显式暴露出来，别让调用方猜。
 # ---------------------------------------------------------------------------
 
 # HTTP 回执端点所在主机。默认指向平台后端自身（8000），因为收数路由就挂在
@@ -171,7 +169,7 @@ def oob_status(db_path: Optional[str] = None) -> Dict[str, Any]:
         "registered_total": registered,
         "callback_total": callbacks,
         # 只有「平台侧能出网」时带外才有意义；egress=none 意味着即使域名配了，
-        # 回执也回不来（靶场出网是另一回事，需投弹实测才知道）。
+        # 回执也回不来。
         "ready": oob_mode() != "disabled",
     }
 
@@ -256,7 +254,6 @@ def register(
 ) -> bool:
     """登记一次待回执的 OOB 投递（占位行，kind='registered'）。
 
-    2026-09-29 收口：新增 spec_id，使回执到达后能精确对号到具体 spec，
     而不是只能靠 (task_id, family, endpoint) 粗匹配。
     """
     if not token:
@@ -284,7 +281,6 @@ def record_callback(
 ) -> bool:
     """回调接入方调用：记录一次真实收到的带外请求。
 
-    2026-09-29 收口：回执落库时从登记行继承归属信息（task_id/family/endpoint/spec_id），
     使回调可按 task 查询、且能精确对号到 spec，而不是只有 token 一个字段。
     """
     if not token:

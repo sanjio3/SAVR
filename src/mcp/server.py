@@ -1,4 +1,4 @@
-"""二期：对外 MCP Server（§4.2，2026-09-20）。
+"""二期：对外 MCP Server。
 
 把平台能力暴露成 MCP tools，让外部 IDE / agent 能消费本平台：
 

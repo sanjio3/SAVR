@@ -17,8 +17,6 @@ PIPELINE_LABELS = {
     "preprocess": "输入与预处理",
     "a1": "A1 规则扫描",
     "a2": "A2 语义分析",
-    # 2026-09-17（待请示 §4.6-2.3）：D2 阶段名此前只写「验证/裁决器」，但该阶段耗时主要来自
-    # 闭环 a2_rerun（R29 实测 74 分钟里约 7 分钟才真动态验证）。改名如实反映阶段内容。
     "d2": "D2 动态验证（含闭环 a2_rerun）",
     "reporting": "报告生成",
 }
@@ -55,12 +53,12 @@ def _parse_llm_overrides(raw: str) -> Optional[Dict[str, Any]]:
 
 
 def _acquire_singleton_lock(task_id: int, output_dir: Path) -> "Optional[int]":
-    """命名互斥体单实例守卫（修复重复进程根因）。
+    """命名互斥体单实例守卫。
 
     同一 task_id 只允许一个 scan_task_runner 真正执行。防止托管运行时的后台任务
     外壳重拉子进程 / 后端重试 relaunch / orphan_recovery 双发 导致的重复子进程争抢
     iast_sessions.current_task_id 与 DB 写入，从而把 canary→sink 归属搅乱、单轮耗时
-    从 15 分钟膨胀到 115 分钟（历史实测）。
+    从 15 分钟膨胀到 115 分钟。
 
     返回锁文件描述符（持有即占用）；若已被存活进程占用则返回 None，调用方应优雅退出、
     绝不参与竞争。陈旧锁（持有 PID 已死）自动接管，避免任务卡死无法重跑。
@@ -82,8 +80,6 @@ def _acquire_singleton_lock(task_id: int, output_dir: Path) -> "Optional[int]":
             )
             return None
         # 陈旧锁：强制接管
-        # 2026-10-22：不能直接用 os.remove——safe-delete 沙箱垫片在每 turn 删除计数触顶后
-        # 会直接终止进程（run 447 启动 3 秒 exit 1、无 traceback）。改用原生删除旁路。
         try:
             from src.core.progress_logger import _force_delete_file
             _force_delete_file(str(lock_path))
@@ -104,7 +100,6 @@ def _acquire_singleton_lock(task_id: int, output_dir: Path) -> "Optional[int]":
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Background scan task runner")
-    # 2026-10-03（分片作用域）：全集靶场（如 OWASP Benchmark v1.2）按片扫描的分片清单路径。
     # 由 task_runner 从任务 options 下发，最终由 run_benchmark 写入 SAST_AI_SHARD_FILE。
     parser.add_argument("--shard-file", default="", help="分片清单 JSON 路径（全集靶场按片扫描）")
     parser.add_argument("--task-id", required=True, type=int)
@@ -128,7 +123,6 @@ def parse_args():
     parser.add_argument("--sca-tool", default="osv-scanner")
     parser.add_argument("--sca-severity-threshold", default="LOW")
     parser.add_argument("--sca-ignore-unfixed", action="store_true")
-    # 2026-09-20：任务级 LLM 扫描强度覆盖（JSON 字符串）。留空 = 全用服务端默认值。
     parser.add_argument("--llm-overrides", default="")
     parser.add_argument("--workspace-runtime-config", default="",
                         help="JSON 字符串：本 workspace 的 workspace_runtime_config（靶场专属路由/标记/镜像/JDK 覆盖）。")
@@ -170,7 +164,6 @@ def _combine_preprocess(progress: Dict[str, Any], options: Dict[str, Any]) -> Di
 def _build_pipeline(progress: Dict[str, Any], options: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     phases = progress.get("phases", {})
     stage_results = progress.get("stage_results", {}) or {}
-    # 2026-09-16（#4② 待请示批准）：把闭环重跑轮次 i2_rerun 与 D2 验证迭代 d2_verify_progress
     # 折入 a2/d2 阶段文案与 metrics，保证终态 summary 也带进度（前端进度条本轮不做，先落 metrics）。
     _a2p = progress.get("a2_progress") or {}
     _i2r = progress.get("i2_rerun") or {}
@@ -268,7 +261,6 @@ def _build_pipeline(progress: Dict[str, Any], options: Dict[str, Any]) -> Dict[s
     if pipeline["d2"]["status"] == "completed" and pipeline["reporting"]["status"] == "pending":
         pipeline["reporting"]["status"] = "running"
         pipeline["reporting"]["message"] = "等待生成报告"
-    # 2026-09-17（待请示批准）：挂「阶段 -> 具体任务清单」并补齐前端需要的 i1/i2 并发阶段，
     # 使前端能把空壳阶段卡片换成可展开的任务列表（i1/i2 此前实时 pipeline 缺项，恒显 pending）。
     return attach_stage_tasks(pipeline, progress, options)
 
@@ -298,12 +290,11 @@ def _ensure_localhost_no_proxy():
 
 
 def _apply_task_run_env(task_id: int) -> None:
-    """把 scan_tasks.options_json.run_env 应用到本进程环境（2026-11-03，jsc-leakfix-r17）。
+    """把 scan_tasks.options_json.run_env 应用到本进程环境。
 
     背景：SAST_AI_DESER_YSOSERIAL 这类**按次运行**的危险能力开关原来只能通过进程环境
     传给后端；submit 脚本上设了 env，但真正跑扫描的是常驻 runner/后端派生的本进程，
     环境根本没带过去 ⇒ payload_library._deser_binary 恒判「开关未开」⇒ 反序列化族
-    整族 payload_unavailable（jsc 607 实测 4 条 spec 因此零重放）。
     现在任务级 options_json.run_env（{KEY: VALUE}）在 runner 启动时注入 os.environ，
     全部 env 门控能力随任务走，与启动方式（后端/submit 脚本）解耦。
     安全性：这类开关默认关闭（如 ysoserial 会在目标执行命令），仍由 payload_library
@@ -358,7 +349,6 @@ def main() -> int:
         config.set("agents.d2.hitl.approval_mode", str(args.approval_mode or "off"))
         allowlist = [item.strip() for item in str(args.tool_allowlist or "").split(",") if item.strip()]
         config.set("agents.d2.hitl.tool_allowlist", allowlist)
-        # 2026-09-24：透传经批准的动作类别，闸门据此放行（此前该键只有读取端，永远为空）。
         act_allowlist = [item.strip() for item in str(args.act_allowlist or "").split(",") if item.strip()]
         config.set("agents.d2.hitl.act_allowlist", act_allowlist)
         result = run_benchmark(
@@ -421,10 +411,8 @@ def main() -> int:
         except Exception as _ae:  # 告警失败绝不阻断任务收尾
             print(f"[Q9] 差值告警计算失败（不影响任务收尾）：{_ae}", file=sys.stderr)
         final_report_data = (result.get("final_report") or {}).get("report", {})
-        # 2026-10-22（假失败修复①：内存尖峰）：payload 里的 findings(=report.vulnerabilities)
         # 实测可达 14MB，progress_snapshot 再叠 1MB+，原来用
         # `json.dumps(..., indent=2)` 会在内存里同时持有「对象图 + 缩进美化后的巨型字符串」
-        # （约 3 倍放大），run 446 就在这一步被 OOM 硬杀：final_report 已落盘、
         # task_result.json 却压根没写出来，runner 见 returncode!=0 判 failed。
         # 现改为：①progress_snapshot 只留 stage_results/timestamp（无消费方读全量副本）；
         # ②用 json.dump 直接流式写文件，不再构造整串。
@@ -443,7 +431,6 @@ def main() -> int:
             "current_stage": _current_stage(pipeline),
             "prepared_runtime": result.get("prepared_runtime") or {},
             "stage_results": result.get("stage_results") or progress_snapshot.get("stage_results") or {},
-            # 2026-10-25（20.3.4 阶段耗时埋点）：把 CLI 已算好的各阶段耗时写进 task_result.json。
             # 此前 result 里有 phase_times，但构造 payload 时没带 ⇒ 落库后查不到任何阶段耗时，
             # 「总耗时里 A1+A2+D2 只占 53%，剩下 46.9% 在哪」无法回答。
             # 纯观测字段，不影响任何判定与产物口径。
@@ -479,7 +466,6 @@ def main() -> int:
             _lock_path = output_dir / f"scan_task.{args.task_id}.lock"
             os.close(_lock_fd)
             try:
-                # 2026-10-22：同 _acquire_singleton_lock，锁清理走原生删除旁路，
                 # 避免撞 safe-delete 垫片的每 turn 删除限额（触顶会直接杀进程）。
                 from src.core.progress_logger import _force_delete_file
                 _force_delete_file(str(_lock_path))

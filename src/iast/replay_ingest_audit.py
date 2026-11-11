@@ -48,7 +48,6 @@ def reconcile_replay_ingest_gap(db, task_id: int) -> Dict[str, Any]:
     gap / recovery_ratio / alert / severity / tolerance / reason），并视情况把告警写进
     scan_task_events（event_type='replay_ingest_gap'），保证不静默。
 
-    口径（2026-10-26 修正）：
     - 发出重放数优先取 **replay_attempts 行数**（观察层：每次重放落一行，含 bypass 变体
       与 oracle 探测臂），这是「真正发出的 HTTP 重放次数」的准确口径；
       次取 scan_tasks.replayed_count（该列在当前 schema 中**并不存在**，旧实现直接查它
@@ -85,7 +84,6 @@ def reconcile_replay_ingest_gap(db, task_id: int) -> Dict[str, Any]:
     alert = False
     severity = "ok"
     reason = ""
-    # 硬告警：发了重放却零事件 → 探针几乎必然丢事件（run 40 的 /log4j 重放事件全丢成 no-arrival）。
     if replayed > 0 and iast_event_count == 0:
         alert = True
         severity = "hard"

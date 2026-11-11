@@ -28,7 +28,6 @@ _PROVIDER_COST_PER_1K = {
     "glm": 0.001,
     "zhipu": 0.001,
     "anthropic-compatible": 0.001,
-    # 2026-09-14：agnes-ai 文本模型当前免费，成本记为 0（仅为观测口径，不影响调度）。
     "agnes": 0.0,
     "openai-compatible": 0.0,
     "offline-heuristic": 0.0,
@@ -110,7 +109,6 @@ class ModelGateway:
 
     @staticmethod
     def _resolve_api_key(provider: str) -> str:
-        # 2026-09-17：智谱 GLM（glm-4-flash 等，走 anthropic-compatible 网关）的凭据
         # 支持两个环境变量名——项目前缀 SAST_AI_GLM_API_KEY 优先，兼容历史 GLM_API_KEY。
         # 多个候选按序取第一个非空，避免「配了 key 但因变量名不对静默回落离线」。
         env_names = {
@@ -186,9 +184,8 @@ class ModelGateway:
         Doubao/MiniMax). We import lazily so that the offline path never requires the
         provider SDKs, and so this module has no import-time side effects.
 
-        2026-09-19 修正（C2 落地时暴露）：原实现调用 ``client.complete(prompt)``，但所有
         provider 客户端暴露的是 ``create_message``，并没有 ``complete`` 方法 —— 该分支恒抛
-        AttributeError，并被 complete() 的 fail-open 兜底静默吞掉，表现为「配了 API key
+        AttributeError，并被 complete 的 fail-open 兜底静默吞掉，表现为「配了 API key
         却永远走离线」。现改为调用真实接口，并回传流式埋点（ttfb_ms / chunk_count）。
         """
         from src.agents import a2_ai_agent  # lazy import; optional dependency surface
@@ -208,7 +205,6 @@ class ModelGateway:
         return text, telemetry
 
 
-    # 2026-09-17 落地（统一 LLM 调用层）：A2 / AP 此前各自拼 provider 顺序与降级链
     # （a2_intelligent_agent._init_client），与 ModelGateway 形成两套实现、两套埋点。
     # 现在把「provider 归一 + 降级链构造」收敛到网关，A2/AP 只调用本工厂；
     # 内部仍复用 a2_ai_agent._make_client，保留 config 驱动的 base_url / model，行为不变。
@@ -278,11 +274,11 @@ class ModelGateway:
         tasks: list,
         max_workers: int = 4,
     ) -> list:
-        """并发批处理（2026-09-17 落地）：一批 (purpose, prompt) 并发送出，返回同序结果。
+        """并发批处理：一批 (purpose, prompt) 并发送出，返回同序结果。
 
         用线程池而非引入 asyncio/aiohttp：现有 provider 客户端都是同步 requests，
         线程池即可把「N 个文件串行等 LLM」变成并发，不引入新依赖、不改单次调用语义，
-        失败沿用 complete() 的 fail-open（回落到离线）。
+        失败沿用 complete 的 fail-open（回落到离线）。
         """
         if not tasks:
             return []
@@ -311,7 +307,6 @@ def resolve_llm_config(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     只有 ``{'api': {...}}``（没有 ``llm`` 段），``api/dependencies.py`` 干脆不传。
     这些形态下 ``gateway_from_config`` 取不到 ``llm.provider`` → 判成
     ``offline-heuristic`` → 该节点的 LLM 通路**恒离线且不报错**。
-    2026-09-19 实测：I2 裁决器（i2-adjudication）在 D2 facade 路径与 API 路径上
     都是 offline-heuristic，即这条 AI review 链路从未真正跑过。
 
     规则：**传入值优先，缺失才回落根配置（config.yaml）**。所以：
@@ -358,14 +353,13 @@ def gateway_from_config(cfg: Optional[Dict[str, Any]] = None,
     - 若配置里既没有 api_key 也没有对应环境变量，则自动回落离线，
       平台不报错、可测试。``ollama`` 属免鉴权 provider，不计入此判定。
 
-    2026-09-19 修正：旧实现无条件从 ``anthropic_compatible`` 段取
     base_url/api_key/model，于是 ``llm.provider`` 写 agnes / qwen / ollama 时，
     凭据与端点仍是智谱 GLM 的 —— 实测 ``llm.provider: agnes`` 得到
     base_url=https://open.bigmodel.cn/api/anthropic + GLM key，请求必然鉴权失败，
-    再被 ``complete()`` 的 fail-open 静默降级成离线响应。表现为「配了 key、
+    再被 ``complete`` 的 fail-open 静默降级成离线响应。表现为「配了 key、
     provider 也不是 offline，但 A1 语义/I2 裁决实际一直在用离线兜底」。
 
-    调用方不传 cfg（或 cfg 为空）时，等价于 ``ModelGateway()`` -> 离线确定性模式。
+    调用方不传 cfg（或 cfg 为空）时，等价于 ``ModelGateway`` -> 离线确定性模式。
 
     ``offline_handler`` 可选：离线时用它产出确定性文本。传了它之后，本构造器就等价于
     「在线走真实 provider / 离线走既有确定性兜底」的完整形态 —— 这是

@@ -17,7 +17,6 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 本机绝对路径：只匹配「具体开发机」痕迹，不误伤 `D:/Users/...` 这类
 # 说明性示例和 `D:\Users\x\Foo.java:118` 这类测试用的非法路径字面量。
 ABS_PATH_RES = [
     re.compile(r"[A-Za-z]:[/\\]+Users[/\\]+dell", re.I),
@@ -25,7 +24,6 @@ ABS_PATH_RES = [
     re.compile(r"Desktop[/\\]+SDL[/\\]+", re.I),
     re.compile(r"[A-Za-z]:[/\\]+WorkBuddy", re.I),
 ]
-# 配置文件里的盘符绝对路径几乎总是开发机残留（IDE 安装目录、靶场路径）。
 # 范围限定 config/ 下的 yaml，且跳过标注为示例的行，避免误伤文档性取值。
 CONFIG_DRIVE_PATH = re.compile(r"[A-Za-z]:[\\/][A-Za-z0-9_.\-]{2,}[\\/]")
 CONFIG_PATH_OK = ("example", "placeholder", "示例")
@@ -78,7 +76,6 @@ def _tracked() -> list[str]:
 def _pending() -> list[str]:
     """尚未进索引、但 `git add -A` 会收进去的文件。
 
-    2026-11-06：旧门禁只扫 tracked，当轮新增的 README / docs / 测试 / 配置 /
     issue 模板全部绕过检查；发布时它们同样是干净 clone 的一部分。改为一并扫描，
     已忽略的运行时产物（app.db、logs、.pytest_tmp_*）不在此列。
     """
@@ -226,7 +223,7 @@ def _local_import_gaps(files: list[str]) -> list[tuple[str, str]]:
 def main() -> int:
     tracked = _tracked()
     pending = _pending()
-    # 与 check_oss_hygiene 自身的 candidates() 同口径：只看磁盘上真实存在的文件。
+    # 与 check_oss_hygiene 自身的 candidates 同口径：只看磁盘上真实存在的文件。
     # 否则文件移动后 git ls-files 里的旧路径会被当成待检查项，产生假违规。
     files = [f for f in dict.fromkeys(tracked + pending)
              if os.path.isfile(os.path.join(ROOT, f.replace('/', os.sep)))]

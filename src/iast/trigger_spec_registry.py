@@ -4,7 +4,6 @@
 驱动 I1 监听 / D2 校验 / I2 裁决；并在验证阶段按 workspace + 漏洞 hash 加载这些 spec。
 
 该模块是离线 CLI 入口与实时后端路径（scan_task_runner → run_benchmark）共用的唯一登记实现，
-避免出现「双入口各自登记 / 不登记」导致 ws 的 trigger_specs 为空、D1 无靶可重放的事故。
 """
 
 import json
@@ -26,7 +25,6 @@ from src.infrastructure.db import Database
 
 logger = logging.getLogger(__name__)
 
-# OWASP Benchmark 用例类名（/xss-00/BenchmarkTest00047 → BenchmarkTest00047）。
 _BENCHMARK_CASE_RE = re.compile(r"(BenchmarkTest\d+)")
 
 # 可安全「追加同名候选」的参数位置。header/cookie 类不在其中 —— 见下方函数说明。
@@ -40,16 +38,13 @@ def append_benchmark_case_param(
     route: str,
     canary: str,
 ) -> List[Dict[str, Any]]:
-    """OWASP Benchmark 约定「反射参数名 == 用例类名」时的参数候选补全。
+    """当反射参数名与用例类名一致时，补全参数候选。
 
-    /xss-00/BenchmarkTest00047 真正读的是 ``getParameter("BenchmarkTest00047")``。
-    抽参器抽错时会给出 ``'param'`` / ``'name'`` / ``''`` 之类的兜底名（r81 实测 321 条
-    spec 里 36 条：param 20 / name 10 / 空 6）。**只**带错名字重放 ⇒ servlet 走「找不到
-    参数」的提前返回分支（响应体原文 ``getQueryString() couldn't find expected parameter
-    'BenchmarkTest00047' in query string.``）⇒ 不写响应体、不碰 sink ⇒ 零事件、零 arrival。
+    **只**带错名字重放 ⇒ servlet 走「找不到参数」的提前返回分支（响应体原文
+    ``getQueryString couldn't find expected parameter
 
     修法是**追加**用例名候选，而不是替换 —— 替换会弄坏 Referer 类用例：00013/00144 走
-    header 注入、参数名 'Referer' 本就是对的（实测可正常反射），把 query 参数改成用例名
+    header 注入、参数名 'Referer' 本就是对的，把 query 参数改成用例名
     反而让它失去注入点。故只对 query/body/form 类追加，header/cookie 类保持原样。
 
     非 Benchmark 路由（route 里没有 BenchmarkTest\\d+）直接原样返回，对通用链路零影响。
@@ -107,7 +102,7 @@ def _derive_poc_chain(family, route, method, pname, location, sink_file, sink_li
 
 
 def _build_attack_context_with_warning(vuln_dict, a1_ev, family, vhash):
-    """B：构造攻击上下文，并在 spec 无真实攻击 payload 时显式告警（而非静默登记）。
+    """B：构造攻击上下文，并在 spec 无真实攻击 payload 时显式告警。
 
     转换本身已完整（select_attack_payloads → attack_payloads → register_trigger_spec 落入
     attack_payloads_json 列），故此处只负责「空 payload 不静默」：
@@ -141,7 +136,6 @@ def _build_attack_context_with_warning(vuln_dict, a1_ev, family, vhash):
 
 
 # 业务逻辑类目归一（真源见 src/core/exploit_spec.py 的 DIFFERENTIAL_PROOF_FAMILIES + 别名表，
-# 2026-09-03 合并 P1–P5 五套判据）。仅把「确属业务逻辑」的类目映射回规范名，非业务类目
 # （sql/deserialization/ssrf 等）一律返回空，使这些 spec 在 D2 走 canary 污点重放而非业务差分重放。
 # _BL_CATEGORIES 直接引用规范集；D1 重放路由特例 idor→bola 单独保留
 # （business_logic.verify 仅 8 类，无 idor；IDOR 在 D1 层与 BOLA 同路由）。
@@ -256,7 +250,6 @@ def _resolve_business_category(category: str, family: str, vuln_dict: Dict[str, 
     return category
 
 
-# [TEMP-MARKER-R10] 验证加载版本：扫描子进程导入本模块时写一次戳，用于确认 P0-2 修复代码
 # （_resolve_business_category 第 2 版）实际被加载。验证完成后删除。
 def _write_resolve_marker():
     try:
@@ -343,12 +336,11 @@ def _resolve_business_endpoint(
 
 
 def _victim_identifiers_from_accounts(accounts: Any) -> List[str]:
-    """从账户发现产物抽取受害者标识（③来源，R23-3 修复）。
+    """从账户发现产物抽取受害者标识。
 
     规则：
     - 显式哨兵优先：含 role=attacker/victim 的账户时，仅 victim 账户贡献其
       username/email 等标识；attacker 账户恒剔除。
-    - 无显式哨兵（如 target-mall 真实产物只有 admin/user 角色）：以「最低特权角色」
       账户为攻击者（列表首位），其余为受害者候选；其中 subject 与 role 同名的
       「角色名账户」（如 admin/admin）视为角色占位而非真实受害者，剔除，避免把
       角色名当受害者标识污染 D1 差分判定。
@@ -460,7 +452,7 @@ def _derive_victim_identifiers(
 
 
 def _load_discovered_accounts(db: Any, workspace_id: Any) -> List[Dict[str, Any]]:
-    """从 dast_accounts 加载本 workspace 的账户发现产物（③来源，R23-3 修复）。
+    """从 dast_accounts 加载本 workspace 的账户发现产物。
 
     返回已展开 metadata 的账户列表（含 subject / role / username 等），供
     _victim_identifiers_from_accounts 派生受害者标识。任何异常安全降级为 []。
@@ -494,7 +486,7 @@ def _load_discovered_accounts(db: Any, workspace_id: Any) -> List[Dict[str, Any]
 
 
 def persist_a1_evidence_to_findings(db: Any, a1_evidence: Any, vhash: str, task_id: Any) -> int:
-    """注册期补偿写入 a1_evidence（R23-1 修复③）。
+    """注册期补偿写入 a1_evidence。
 
     限定 task_id 且只补空值（a1_evidence 为空 / NULL / '{}'），绝不覆盖收尾
     replace_for_task 写入的权威证据。返回受影响行数（诊断用）。无匹配行或入参
@@ -515,9 +507,7 @@ def persist_a1_evidence_to_findings(db: Any, a1_evidence: Any, vhash: str, task_
         return 0
 
 
-# ── 收尾回填：trigger_specs → findings.verification_decision（2026-10-13，bug④）──
 #
-# 断链现象（r88 run 333= pathtraver-1）：trigger_specs / vuln_blackboard 上已有 8 条
 # `confirmed_exploitable`（case 级 6 个真漏洞），但报告 vulnerabilities 里同 case 的 vuln
 # 的 verification_decision.verification_status 仍是 `unconfirmed` ⇒ 前端与对账都读不到确认态，
 # 6 个真漏洞被算进漏报。
@@ -616,10 +606,10 @@ VICTIM_FROM_POOL = "VICTIM_FROM_POOL"
 
 
 def _normalize_victim_resource_id(value: Any, family: Any) -> str:
-    """登记期咽喉点（R23-4）：victim_resource_id 归一。
+    """登记期咽喉点：victim_resource_id 归一。
 
     - 具体值（非空且非纯空白）→ 原样转字符串返回（A2 LLM 给的具体 id 优先，绝不覆盖）；
-    - 差分证明族缺值 → 补 VICTIM_FROM_POOL 哨兵（登记期「就绪标记」，使 spec 能进 D2 主线）；
+    - 差分证明族缺值 → 补 VICTIM_FROM_POOL 哨兵；
     - 非差分族缺值 → 保持空（注入族走 canary 重放，绝不被塞入差分就绪哨兵）。
     """
     if value is not None and str(value).strip():
@@ -630,7 +620,7 @@ def _normalize_victim_resource_id(value: Any, family: Any) -> str:
 
 
 def _account_identifiers(acc: Any) -> List[str]:
-    """从账户字典抽取强身份指纹（R23-4(c) 假确认防线）。
+    """从账户字典抽取强身份指纹。
 
     候选标识取自顶层字段与 metadata 子对象的并集，再交由 filter_identity_markers 过滤：
     短数字 uid/id 这类低区分度值一律丢弃，避免响应体里恰好出现的数字被误判为
@@ -720,7 +710,6 @@ def _no_route_reattribution(vuln_dict, discovered_routes):
     raw = str(vuln_dict.get("raw_json") or "")
 
     # CVE-2022-22978：配置类合成可重放 PoC 路由。
-    # §4.3（2026-09-20 修复）：兼容两条 A1 产出通道——
     #   ① 内置硬编码规则产出 type="CVE-2022-22978"；
     #   ② active skill 规则（rule_expression 强制通道）产出 type="Broken Access Control"、
     #      sink/id="cve-2022-22978"（raw 含该 id）。
@@ -753,7 +742,7 @@ def resolve_endpoint_full(
     code_root: Optional[str] = None,
     discovered_routes: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """单一入口解析真相源（批次 2 落地）。
+    """单一入口解析真相源。
 
     把「core resolve_trigger_endpoint + 越权真实路由纠正(point 4) + 业务族端点推导(#1)」
     合成一个确定性解析器，供两处投影共用，消除此前通道 A（trigger_specs.target_endpoint，
@@ -807,7 +796,7 @@ def resolve_endpoint_full(
     _PRIVESC_CATS = ("vertical_privesc", "cross_module_privesc")
 
     # —— point 4：越权真实路由纠正（仅越权类目）——
-    # A2 对垂直越权等常幻觉出不存在的端点（如 /ops/user/delete，实测 405），而真实管理端点
+    # A2 对垂直越权等常幻觉出不存在的端点，而真实管理端点
     # （/admin/users 等）只存在于 discovered_routes（SAST ground truth）。当解析出的 route
     # 不在 discovered_routes 中、且存在命中 admin 语义的真实路由时，用真实路由覆盖，避免 D1
     # 重放打到幻觉端点而永远 405。非越权或已命中真实路由时不干预。
@@ -848,9 +837,8 @@ def resolve_endpoint_full(
                 category, route, category,
             )
 
-    # —— 注入族空参数兜底（R16）——
     # 注入族 spec 登记要求 route + param 齐备（is_injection_family 分支），而 A2 的 LLM 参数提取
-    # 存在方差：常只给路由不给参数（实测 /products keyword SQLi 被归因成空 param，vhash 漂移）。
+    # 存在方差：常只给路由不给参数。
     # 此前 param 为空即判 unresolvable → auto_register 跳过登记 → 该漏洞永远进不了 D1 重放，
     # 也就永远拿不到 Fix B 的离线确认。此处用 entry_discovery 的真实 request_params（SAST ground
     # truth）补齐，不猜测、不静默编造：只有该路由确有登记参数时才回填。
@@ -881,8 +869,6 @@ def resolve_endpoint_full(
     resolved["param_location"] = location
     resolved["param_name_source"] = param_name_source
     resolved["category"] = category
-    # —— MyBatis mapper 的 `${}` 参数路径：覆盖一切反查（2026-11-03）——
-    # 若依 5 条 in_scope 真值的 mapper 全是 `${params.dataScope}`，而 controller 签名反查
     # 给出的是 `parentId` / `username` / 空。投 `parentId=<payload>` 时 mapper 的
     # `params.dataScope` 拿不到值 ⇒ SQL 根本没被注入，但查询照常执行、探针在 mapper 处
     # 命中 ⇒ 状态成 `sink-reached`，看起来「到了 sink」，5 条真值全漏。
@@ -899,7 +885,6 @@ def resolve_endpoint_full(
     _norm = _norm_family(vuln_dict)
     if route and (pname or not is_injection_family(_norm)):
         resolved["resolvable"] = True
-    # 2026-10-02（发难清单 Q3）：解析产物显式状态化，绝不静默。
     #   parsed  = 路由+参数齐备（resolvable），可正常登记重放；
     #   unknown = 解析器有输入但没把握（resolution_failure 已给出 missing_route /
     #             missing_param_injection / unresolved 具体原因），登记层据此 skip 并落
@@ -915,7 +900,7 @@ def resolve_endpoint_full(
 
 
 def summarize_parse_status(resolutions: List[Any]) -> Dict[str, Any]:
-    """聚合解析状态分布（2026-10-02 Q3），并按 20% 阈值给出解析器盲区告警判定。
+    """聚合解析状态分布，并按 20% 阈值给出解析器盲区告警判定。
 
     输入为 resolve_endpoint_full 产物列表（或含 parse_status 键的 dict）；
     返回 {"parsed": n, "unknown": n, "empty": n, "unknown_ratio": x, "unknown_alert": bool}。
@@ -938,7 +923,7 @@ def summarize_parse_status(resolutions: List[Any]) -> Dict[str, Any]:
 
 
 def _should_clear_specs_on_rerun(before: int, input_rows: int, min_ratio: float = 0.5) -> bool:
-    """闭环二次回灌「是否允许整批清库」的判定（2026-10-07，r62 pathtraver-1 事故）。
+    """闭环二次回灌「是否允许整批清库」的判定。
 
     二次回灌的语义是「先 DELETE 本 task 全部 spec，再按本次输入整体重登记」，其正确性
     **完全依赖输入是全量**。历史实现只校验了「输入非空」这一半，于是出现了：
@@ -946,7 +931,7 @@ def _should_clear_specs_on_rerun(before: int, input_rows: int, min_ratio: float 
     skipped 计数（静默丢失，含 33 条真值 TP，召回 100%→54.2%）。
 
     判据：输入条数明显小于已有 spec 数（默认 < 50%）即判定为收窄子集，拒绝清库。
-    输入条数取的是**未去重的上界**（每条漏洞都算，实际能登记出来的只会更少），
+    输入条数取的是**未去重的上界**，
     因此判断天然偏保守——宁可不清库（退化为安全的增量更新），也绝不误删。
 
     :param before: 清库前本 task 已有 spec 条数
@@ -1014,12 +999,10 @@ def spurious_no_sink_at_registration(code_root: str, vuln_file: str, family: str
 
     零误杀边界：``spurious_no_sink`` 只对 sql_injection / command_execution / xss /
     securecookie / ldapi / xpathi 生效；path_traversal 与 trustbound 显式不判
-    （Benchmark 真用例与安全例都含 FileInputStream / setAttribute，会误杀）。
+    （真用例与安全例都可能含 FileInputStream / setAttribute，会误杀）。
     文件解析不出、读取失败、族未登记 ⇒ 一律 fail-open 返回 False（不动）。
 
-    ``framework_sink=True`` 时直接放行（2026-11-03）：该 finding 由框架 sink 规则命中，
-    与 ``_SINK_PATTERNS`` 的通用族 API 是两套判据，互相否证属错配。实测若依
-    ``JobInvokeUtil.java:37``（反射型 RCE）路由能解析、却被本门禁剔除。
+    反射型 RCE 只调用 ``Class.forName`` / ``Method.invoke``，也会被本门禁剔除。
     """
     if framework_sink:
         return False
@@ -1027,7 +1010,7 @@ def spurious_no_sink_at_registration(code_root: str, vuln_file: str, family: str
         return False
     try:
         from src.iast.property_evidence import spurious_no_sink
-    except Exception:  # noqa: BLE001  判据不可用时不阻断登记
+    except Exception:
         return False
     p = _resolve_vuln_file(code_root, vuln_file)
     if not p or not os.path.isfile(p):
@@ -1055,13 +1038,11 @@ def auto_register_from_a2(
 
     - 与 enable_a3 / enable_verification 完全解耦：只要传入 a2_results 即登记，验证开关只决定
       D1 是否消费 spec，不决定是否登记（spec 始终可查可重放）。
-    - Q3：解析 (param_name, route, method, location) 统一走 resolve_trigger_endpoint——
       结合 A2 假说 + entry_discovery 真实路由 + A1 静态调用链证据 + 源码注解解析，精度高于原
       guess_parameter_name 正则猜测（全部属 SAST 静态，非猜测）。
-      注：原「探针观测请求面（iast_request_params）」一档已于 2026-09-01 移除——探针从不发送
       request_observed，该档恒为空且已被 Tier0 真实路由取代，保留只会造成误映射。解析现完全由
       resolve_trigger_endpoint 的 SAST 静态档承担。
-    - parameter_name / route / method 任一无法解析时，跳过该漏洞（不静默登记无效 spec），
+    - parameter_name / route / method 任一无法解析时，跳过该漏洞，
       并计数 skipped，使「0 条登记」可被明确归因（空 code_root + 无观测面 + A1 缺字段），而非静默失败。
 
     返回 (registered, skipped)。
@@ -1086,7 +1067,6 @@ def auto_register_from_a2(
         "route_family_dominated": "同路由同文件已有根因注入族，属性/配置族 spec 让位（登记级仲裁）",
     }
 
-    # 2026-10-02（Q3）：解析状态计数（parsed/unknown/empty），收尾按占比告警。
     _parse_status_counts: Dict[str, int] = {}
 
     _db_path = os.environ.get("SAST_AI_DB_PATH", "data/app.db")
@@ -1103,7 +1083,7 @@ def auto_register_from_a2(
         logger.warning("[A2->TriggerSpec] task_id=%s 找不到所属 workspace，跳过登记", task_id)
         return 0, 0
 
-    # §186：code_root 优先 workspace.target_path（代码根），回退 session.code_path，保证
+    # code_root 优先 workspace.target_path（代码根），回退 session.code_path，保证
     # resolve_endpoint_from_source 始终基于真实代码根解析 (param_name, route, method)。
     try:
         _ws = db.execute("SELECT target_path FROM workspaces WHERE id=?", [ws_id], fetchone=True)
@@ -1122,7 +1102,7 @@ def auto_register_from_a2(
             session_code_path = (_first.get("code_path") or "") if isinstance(_first, dict) else ""
     except Exception:
         session_id = None
-    # §186：优先 workspace.target_path，回退 session.code_path
+    # 优先 workspace.target_path，回退 session.code_path
     code_root = ws_target_path or session_code_path
 
     # §canary-唯一性：本次登记批次共享一个 run_nonce（4 位十六进制），使本任务本轮生成的
@@ -1146,17 +1126,14 @@ def auto_register_from_a2(
     skipped_spurious = 0
     total_a2 = 0
     reasons: List[Dict[str, str]] = []
-    # 2026-11-03（jsc-leakfix-r17）：路由级族仲裁批内账本（后处理在登记循环外统一做）。
     _batch_route_specs: List[tuple] = []
     # (c) 上游去重：本批次已登记的 (family, route) 集合（含跨 scan_result 的全部输入）。
-    # 默认关闭（本轮实证去重会系统性丢弃「可注入」冗余票，L2 -9 用例），env 显式开启才生效。
+    # 默认关闭，env 显式开启才生效。
     _SPEC_DEDUP_ROUTE_ENABLED = os.environ.get("SAST_AI_SPEC_DEDUP_ROUTE", "") == "1"
     _seen_family_route: set = set()
-    # —— 闭环二次回灌：先清本 task 全部 spec，再整体重登记（2026-09-28 落地）。
     #
     # 旧实现按 (task_id, vhash) 逐条删旧 spec，前提是「回灌前后 vhash 不变」。但 i2 反馈会
     # 修正 family/type（如 ldapi 从 xpath-injection 纠回 ldap-injection），vhash 随族名变化，
-    # DELETE 就一条都删不掉 → 旧 spec + 新 spec 叠加：run 24 实测 187(first_pass)
     # + 233(second_pass) = 420 条 spec 落在 184 个端点上（2.28 条/端点），D1 重放与 D2
     # 对账被同一漏洞的多份陈旧副本灌满，既拖慢又污染计数。
     # 改为「整批清 + 整批重登记」，spec 集合恒等于本次登记输入，不再有残留副本。
@@ -1165,9 +1142,8 @@ def auto_register_from_a2(
     # 守卫：输入为空时拒绝清库（宁可保留旧 spec，也不能把重放目标清空）。
     # 第一点 A：拓宽登记输入源。除 A2 假说外，把 A1 等其它阶段的 findings（含业务逻辑假说、
     # 已带 a1_evidence.target_endpoint 的漏洞）也纳入登记候选；解析得出 (route, param) 即通过，
-    # 解析不出仍按 skipped_unresolved 跳过（不静默登记无效 spec）。去重按 vhash 兜底，避免重复。
+    # 解析不出仍按 skipped_unresolved 跳过。去重按 vhash 兜底，避免重复。
     # 注意：这行必须早于下方 second_pass 清库块——清库判据要读 _all_results 的规模，
-    # 2026-09-28 曾把它写在清库块之后，second_pass 必然抛 UnboundLocalError，
     # 闭环被 benchmark_cli 的 except 吞成 {"error": ...}，第二轮 D2 重验与 spec 回灌全部静默丢失。
     _all_results: List[Any] = list(a2_results or []) + list(extra_results or [])
     _second_pass_cleared = 0
@@ -1177,9 +1153,7 @@ def auto_register_from_a2(
                 "SELECT COUNT(*) AS c FROM trigger_specs WHERE task_id = ?", (task_id,), fetchone=True
             )
             _before = int((_before or {}).get("c") or 0)
-            # —— 规模守卫（2026-10-07，r62 pathtraver-1 事故）——
             # 二次回灌是「先清库再整体重登记」。注释要求输入必须是全量，但此处原先只实现了
-            # 「输入非空」这一半，没有规模校验。实测 run 226（pathtraver-1）：清库前 156 条 spec、
             # 本轮只登记出 52 条 ⇒ 未参与回灌的漏洞被永久清除，且不进任何 skipped 计数
             # （静默丢失；含 33 条真值 TP，召回 100%→54.2%，-45.8pp）。
             # 补齐规模守卫：输入条数（未去重上界，只会比实际可登记数更大，故判断偏保守、
@@ -1200,8 +1174,7 @@ def auto_register_from_a2(
                     task_id, _input_rows, _before, _min_ratio * 100,
                 )
             else:
-                # 2026-10-24（upsert）：不再 DELETE 整表。改为就地更新（按 task_id + vhash），
-                # 这样 spec id 稳定 ⇒ replay_attempts 不再出现孤儿（改前 458 实测 49%），
+                # 这样 spec id 稳定 ⇒ replay_attempts 不再出现孤儿，
                 # verification_status 也不会被清空 ⇒ 闭环第二轮只需重放变更项。
                 logger.info(
                     "[A2->TriggerSpec] 闭环二次回灌：upsert 模式，保留 task=%s 的历史 spec %d 条"
@@ -1213,9 +1186,7 @@ def auto_register_from_a2(
                 "[A2->TriggerSpec] task=%s 二次回灌清库失败（跳过清库，按旧逻辑登记）：%s",
                 task_id, _clr,
             )
-    # 注册期进度心跳（2026-10-17 修复）：TriggerSpec 登记阶段 1857 条 spec × ~1.5s/条
     # ≈ 45+ 分钟全程不写 scan_progress.json，task_runner 的心跳看门狗
-    # （STUCK_HEARTBEAT_SECONDS=2700s）把正常推进的任务误判卡死强杀（run 363 事故：
     # 终止瞬间仍在以 1.5s/条注册 spec）。每 10s 刷新一次进度文件，喂看门狗 + 前端可见。
     _reg_output_dir = ""
     try:
@@ -1229,8 +1200,6 @@ def auto_register_from_a2(
     except Exception:
         _reg_output_dir = ""
     _reg_progress_path = os.path.join(_reg_output_dir, "scan_progress.json") if _reg_output_dir else None
-    # 注意：_input_rows 仅在 second_pass 分支内定义，此处必须独立计算（2026-10-17 修复：
-    # 原写法 second_pass=False 时 UnboundLocalError 打挂整次注册——run 364 第一次注册
     # 因此崩溃被 except 吞掉，spec 全部改由闭环 second_pass 产出）。
     _reg_total = sum(len(getattr(_sr, "vulnerabilities", []) or []) for _sr in _all_results)
     _reg_done = 0
@@ -1261,7 +1230,7 @@ def auto_register_from_a2(
             # §统一链路：D1 重放覆盖全部「可解析出端点+参数」的 A2 假说，不再限定
             # a21_selected=True（原 gate 依赖 is_canonical，java-quote 等靶场 A2 未标 canonical
             # 导致 0 条登记、D1 永无靶可打）。防错由下方 parameter_name/route 合法性校验兜底
-            # （解析不出则跳过，不静默登记无效 spec），因此放宽此处不会注入到应用不读取的位置。
+            # 因此放宽此处不会注入到应用不读取的位置。
             vuln_dict = vuln.to_dict() if hasattr(vuln, "to_dict") else dict(vuln)
             # 杠杆一：spec 注册端先 canonicalize 再算 vhash，与 finding 落库端 enrich_finding_hash
             # 走同一归一路径（NAMING_STANDARDS 簇一/二/三/四），保证同漏洞两端 vhash 一致，消除假孤儿。
@@ -1280,7 +1249,6 @@ def auto_register_from_a2(
                 )
                 if _existing:
                     if second_pass:
-                        # 2026-10-24（upsert）：不再删旧插新。register_trigger_spec 内部按
                         # (task_id, vhash) 就地更新，id 保持不变 ⇒ replay_attempts 归因不断；
                         # 触发字段真变了它会自行重置该条确认态。这里直接继续往下走。
                         logger.debug("[A2->TriggerSpec] 二次回灌命中已有 spec（task=%s vhash=%s），走 upsert",
@@ -1295,7 +1263,6 @@ def auto_register_from_a2(
             family = (exploit_spec.get("payload") or {}).get("payload_family") or _norm_family(vuln_dict)
             # —— 证据纠族：基于路由/源文件/sink 确定性证据纠正 family，覆盖 LLM/A2 误判。
             # 须位于 vhash 计算(675)之后、register 之前，否则族名回流会污染 vuln_hash 致哈希绑定断裂。
-            # §4.3（2026-09-20 修复）：纠族用的 route 必须含「合成路由」——配置类弱点
             # （CVE-2022-22978 的 WebSecurityConfig.java）本身没有真实 HTTP 路由，resolve_endpoint_full
             # 才会合成 /black_path%0a/xx。若只拿原始 entry.route（空），auth_bypass 的路由针
             # "black_path"/"cve-2022-22978" 永远不命中，族名纠不回 auth_bypass，spec 对账进不了
@@ -1315,15 +1282,12 @@ def auto_register_from_a2(
                 logger.info("[A2->TriggerSpec] 证据纠族 %s -> %s（rule=%s, evidence=%s）",
                             family, _corr["family"], _corr.get("rule"), _corr.get("evidence"))
             family = _corr["family"]
-            # —— 族名归一收口（2026-09-26 F4 后精确率整改①）：spec 落库前走唯一归一入口，
             # 把「弱哈希算法/weak-hash/weak-hash-algorithm」这类同概念多写法收敛为单一规范键。
-            # 此前 spec.family 原样落库，同一族最多裂成 4 种写法（run 10 实测 25+ 种），
             # AP 分族计数与基准真值匹配全部错配。必须在 vhash 之后（不回改哈希）。
             _fam_norm = normalize_family(family)
             if _fam_norm and _fam_norm != family:
                 logger.info("[A2->TriggerSpec] 族名归一 %s -> %s（spec 落库收口）", family, _fam_norm)
                 family = _fam_norm
-            # 2026-10-30（本轮实证）：登记阶段「跨族无 sink 即捏造」终局门禁。
             # 为什么必须在这里：A2 常产出 type=unknown 的 finding，族是在**这里**由
             # correct_family_by_evidence / normalize_family 推断出来的（01586/01661 就是
             # 「A2 说 unknown → 这里纠成 sql_injection → 文件里连 SQL 关键字都没有」）。
@@ -1333,7 +1297,6 @@ def auto_register_from_a2(
             if code_root and family:
                 try:
                     _vf_dbg = str(vuln_dict.get("file") or getattr(vuln, "file", "") or "")
-                    # 2026-11-03：框架 sink 命中豁免本门禁（判据不同源，见函数注释）。
                     # a1_ev 在本循环里到下方才赋值，这里就地取，避免顺序耦合。
                     _fw_hit = bool(((vuln_dict.get("a1_evidence")
                                      or getattr(vuln, "a1_evidence", None) or {})
@@ -1356,10 +1319,9 @@ def auto_register_from_a2(
                             "[A2->TriggerSpec] 跨族无 sink 门禁剔除 vhash=%s family=%s file=%s",
                             str(vhash or "")[:12], family, _vf_abs)
                         continue
-                except Exception as _sp_exc:  # noqa: BLE001  fail-open：门禁异常不阻断登记
+                except Exception as _sp_exc:
                     logger.debug("[A2->TriggerSpec] 跨族无 sink 门禁跳过：%s", _sp_exc)
             canary = CanaryFactory.build(family, run_nonce=run_nonce)
-            # —— Q3：结合 A2 假说 + entry_discovery 真实路由 + A1 静态调用链证据 + 源码注解解析
             # (route, method, param_name, location)，取代原 guess_parameter_name 正则猜测。
             # 优先级：entry_discovery 真实路由 > A1 静态候选 > 源码注解解析（均属 SAST 静态，非猜测）。
             # 任一关键项（param_name / route）无法解析都不静默登记无效 spec。
@@ -1382,7 +1344,6 @@ def auto_register_from_a2(
                 vuln, a1_ev,
                 code_root=code_root or None, discovered_routes=discovered_routes,
             )
-            # 2026-10-02（Q3）：解析状态显式计数（parsed/unknown/empty），
             # unknown 占比超阈值在收尾统一告警——解析盲区必须可见，不许静默。
             _ps = str(resolved.get("parse_status") or "")
             _parse_status_counts[_ps] = _parse_status_counts.get(_ps, 0) + 1
@@ -1391,10 +1352,8 @@ def auto_register_from_a2(
             route = resolved.get("route", "")
             method = (resolved.get("method") or "GET").upper()
             location = resolved.get("param_location") or "query"
-            # —— 单一真相源收口（2026-09-21，任务②）：通道 A(target_endpoint=route) 与 通道 B
             # (exploit_spec.entry.route) 必须一致。resolve_endpoint_full 在 auto_register 阶段复算时，
             # 因 vuln.exploit_spec.entry.route 已被 pre_resolve 写入、且 A2 结构化 entry 候选优先级更高，
-            # 两次调用会选出不同路由（run 26 实测 10 条漂移，如 CVE spec 7363：target_endpoint=/cors、
             # entry.route=/black_path）。此处以通道 A 解析结果为权威，把 route 写回 vuln.exploit_spec.entry，
             # 使存储 spec 的 raw_json 中 entry.route == target_endpoint，彻底消除漂移。route 不参与 vhash
             # （vuln_hash.py 任务③），故不影响 hash 关联；target_endpoint 即 D1 重放权威端点，保持不变，零回放回归。
@@ -1402,7 +1361,6 @@ def auto_register_from_a2(
                 _e = vuln_dict["exploit_spec"].get("entry")
                 if isinstance(_e, dict):
                     _e["route"] = route
-                    # 2026-11-05（I1 参数映射漂移，jsc 622 spec 238032/238042/238072 实证）：
                     # 通道 A（trigger_specs 的 param_name / param_location 列）由 resolve_endpoint_full
                     # 解析，D1 重放真正用的是它；但通道 B（raw_json.exploit_spec.entry）此前只回写
                     # route，parameter_name/location 停留在 A2 阶段被 idor/ssrf 分支抹掉的空串。
@@ -1452,16 +1410,13 @@ def auto_register_from_a2(
             if (not _no_param_cat or pname) and pname and not is_valid_param_name(pname):
                 _reject_reason = "invalid_param_name"
             elif not route:
-                # E-2 定向回填（2026-09-28 批准）：missing_route 拒绝前，对漏洞文件自身做
                 # @WebServlet 自注解兜底（配置类/sensitive 类 finding 常驻自包含 servlet，
-                # A2 假说不给 route 但文件自身就是入口——run 28 真漏报 BenchmarkTest02677/02393）。
                 # 这是确定性回填（代码级 ground truth），绝不触发 A2 全量重跑。
                 _self_ep = None
                 try:
                     from src.core.param_resolver import servlet_self_endpoint
                     # (b)：_vuln_file 是相对 code_root 的路径，servlet_self_endpoint 内部直接
                     # Path.read_text——从后端 CWD 解析必然失败返回 None，E-2 兜底对全部相对路径
-                    # 条目静默失效（run 31 实测 36 条 true_miss 全是 BenchmarkTest*.java，绝对路径
                     # 传入即解析出路由）。这里必须先拼 code_root 再解析。
                     _self_src = str(_vuln_file or "")
                     if _self_src and code_root and not os.path.isabs(_self_src):
@@ -1503,7 +1458,7 @@ def auto_register_from_a2(
                     "reason_label": _SKIP_REASON_LABELS.get(_reject_reason, _reject_reason),
                     "param_name": pname,
                     "route": route,
-                    # 随 reason 携带 file（登记期内存现值）。missing_route_watch 此前运行期查
+                    # 随 reason 携带 file。missing_route_watch 此前运行期查
                     # findings 表必然查空（findings 仅收尾由 replace_for_task 重写），case/file 全空、
                     # 102 条全部塌进 cross_file——归属字段必须在这里就地给出。
                     "file": _vuln_file,
@@ -1512,9 +1467,6 @@ def auto_register_from_a2(
             # 走到此处 route 已通过 is_valid_route + 非探针守门，replayable 恒为 1。
             replayable = 1
 
-            # —— (c) 上游去重（2026-09-28 落地；**本轮实测后默认关闭**）——
-            # 原设想「同 (family, route) 重复假说对 D1 零增量」。run 32 实证推翻：
-            # 9 个 xss TP 用例在 run 31 各有两条同族同路由同参数 spec，先登记那条重放
             # 0 事件（canary 不可注入/请求未达），后登记那条必 2 事件 confirmed——
             # 重复 spec 是确认层的冗余票（两条假说载荷形态不同，恰一条可注入）。
             # 去重保首条 = 9/9 系统性保住坏票，L2 召回 -9 用例。故默认关闭；如需开启
@@ -1555,7 +1507,6 @@ def auto_register_from_a2(
                     "location": location,
                     "value": canary,
                 })
-            # 2026-10-12（r81 实证）：OWASP 约定「反射参数名 == 用例类名」。抽参器抽错时
             # （'param'/'name'/''）只带错名字重放 ⇒ servlet 走「找不到参数」的提前返回分支
             # ⇒ 零事件。追加用例名候选（**追加不替换**：Referer 类用例是 header 注入、
             # 实测可用，替换会弄坏）。详见 append_benchmark_case_param 说明。
@@ -1595,7 +1546,6 @@ def auto_register_from_a2(
                 "expected_sink_line": int(vuln_dict.get("line") or getattr(vuln, "line", 0) or 0),
                 "representative_request_params": params,
                 "poc_chain": poc_chain,
-                # 2026-10-23（绕过能力落地）：净化器建模与绕过判定随 spec 落库。
                 # 此前 filter_spec_json / bypass_state 两列在真实跑批里恒空（空转），
                 # 因为登记端从未写入——A2 也没产出结构化净化器信息。
                 # 注意：normalize_exploit_spec 只保留 schema 内定义的分组键，顶层自定义键
@@ -1611,7 +1561,6 @@ def auto_register_from_a2(
                 **_attack_ctx,
             })
             registered += 1
-            # 2026-11-03（jsc-leakfix-r17）：路由级族仲裁的批内账本（后处理在循环外统一做，
             # 因为同一批里「先登记 csrf、后登记 deserialization」的顺序不可预知）。
             _batch_route_specs.append((
                 str(route or "").strip().lower(),
@@ -1619,10 +1568,9 @@ def auto_register_from_a2(
                 str(family or "").strip().lower(),
                 str(vhash or ""),
             ))
-    # —— 路由级族仲裁（2026-11-03，jsc-leakfix-r17）——
     # A2 常在同一 (route, file) 上同时产出「根因注入族」与「属性/配置族」（csrf/cors 等）
     # 的 spec；属性族后续会被同端点真实注入 sink 的探针事件**跨族确认**成确认级误报
-    # （jsc 607 实测：/xstream、/xxe/*、/file/upload、/cors 上的 csrf ×4，红线误报 19.4%）。
+    # 。
     # 与 framework_sinks._arbitrate_families 规则 1 同源：同 (route, file) 存在注入族
     # （priority < 40）⇒ 删除本批次登记的属性族（priority >= 40）spec。
     # 属性族在没有兄弟注入族时照常登记（/csrf/post 只有 csrf 族 → 保留，走 oracle 通道）。
@@ -1697,7 +1645,6 @@ def auto_register_from_a2(
     for _r in reasons:
         _k = _r.get("reason", "unknown")
         _by_reason[_k] = _by_reason.get(_k, 0) + 1
-    # 2026-10-02（Q3）：解析盲区必须可见——unknown 占比超 20% 显式告警。
     _ps_summary = summarize_parse_status(
         [{"parse_status": k} for k, v in _parse_status_counts.items() for _ in range(v)]
     )
@@ -1729,7 +1676,6 @@ def auto_register_from_a2(
 def attach_rep_params(sd: Dict[str, Any]) -> Dict[str, Any]:
     """把 DB 列 ``representative_request_params_json`` 解析到内存键 ``representative_request_params``。
 
-    2026-10-18（r106 实证）：D1 replay 读的是内存键（list），DB 只有 JSON 列。此前无映射 ⇒
     rep 循环恒空转 ⇒ param_name 为空的 A2 spec 完全没有注入点（trustbound 00668/00670/00671/
     01546 等 11 个真 TP 因此空 key 落库、被误判 absent）。原地补齐，返回同一个 dict。
     """
@@ -1773,7 +1719,6 @@ def load_trigger_specs_by_workspace(ws_id: Optional[int], task_id: Optional[int]
         for s in rows:
             sd = dict(s)
             sd["flow_type"] = derive_flow_type(sd.get("family") or sd.get("category") or "")
-            # 2026-10-18（r106 实证）：DB 列 representative_request_params_json → 内存键
             # representative_request_params（D1 replay 只读后者）。缺映射会让空 param_name 的
             # A2 spec 完全无注入点。详见 attach_rep_params 的说明。
             attach_rep_params(sd)
@@ -1786,7 +1731,7 @@ def load_trigger_specs_by_workspace(ws_id: Optional[int], task_id: Optional[int]
 
 
 def _audit_orphan_deletions(task_id: Optional[int], orphans) -> None:
-    """孤儿 spec 删除留痕（2026-10-31，P3-1）。
+    """孤儿 spec 删除留痕。
 
     为什么必须留痕：本轮删了 12 条 spec，只留下一行「已清理 12 条」的日志，
     事后只能靠「specs 109→97」这个数字倒推是哪 12 条、属于哪些族。
@@ -1825,7 +1770,6 @@ def _audit_orphan_deletions(task_id: Optional[int], orphans) -> None:
 def reconcile_orphan_specs(task_id: Optional[int], dry_run: bool = False) -> int:
     """#B 数据卫生：删除本 task 中「全局都查无对应 finding」的孤儿 trigger_spec。
 
-    §Q3(c) 修正口径：findings 按 vulnerability_hash_v2 **全局**去重（同一漏洞在 task-1 写了 finding 后，
     task-4 重扫同代码不会再写 finding 行，仅 task-1 持有该 hash 的 finding）。因此判定孤儿必须按
     **全局** vulnerability_hash_v2 匹配，不能再用 ``f.task_id = ts.task_id`` 限定同 task——否则会把
     「finding 仅存在于更早 task」的本 task 合法 spec 误删（表现为 A2 登记 5 条、跑完流水线变 3 条，
@@ -1853,29 +1797,22 @@ def reconcile_orphan_specs(task_id: Optional[int], dry_run: bool = False) -> int
             cond = "WHERE ts.task_id=?"
             params = [task_id]
         del cond, params  # 改用下方双键判定（不再走 vhash 单键 SQL JOIN）
-        # §双键判定（2026-09-10 R19）：此前只用 vhash 单键 LEFT JOIN，而 vhash 把
         # exploit_spec.entry.route 纳入 hash 组件，_pre_resolve_a2_endpoints / plan_pocs 会改写
         # entry.route → 注册端 spec.vhash ≠ finding.vhash，于是"真有 finding、只是 hash 漂移"的
-        # 合法 spec 被判孤儿删除（实测 run 27 由 144 剪到 66、run 32 由 149 剪到 71，各删约 78 条，
         # 包含已由路由兜底填好 /marketing/preview 的 #8 SSTI spec）。
         # 现改为双键：vhash ∪ stable_vuln_key（后者只吃 file/line/type/code 源坐标，免疫 route 漂移）。
-        # 任一命中即非孤儿。这是历史事故的同类根因，见 src/core/vuln_hash.py 关于
         # "reconcile_orphan_specs 判孤儿静默删除（AP 段 81 条真 POC 被删）"的记载。
-        # §Q3(c) 修正：findings 按 vulnerability_hash_v2 全局去重，同一漏洞在 task-1 写了 finding 后，
-        # task-4 重扫同代码不会再写 finding 行（仅 task-1 有）。原实现用
         # ``f.task_id = ts.task_id AND f.vulnerability_hash_v2 = ts.vulnerability_hash_v2`` 判定孤儿，
-        # 会把「finding 仅存在于更早 task」的本 task 合法 spec 误删（表现为 A2 登记 5 条、跑完流水线变 3 条）。
+        # 会把「finding 仅存在于更早 task」的本 task 合法 spec 误删。
         # 正确口径：只要该 vulnerability_hash_v2 在 findings 表里**任何 task** 存在，spec 就非孤儿——
         # 漏洞是真实的，重放目标有效，不得剪掉（尤其不得剪掉 D1 待重放的 spec）。
         # 仅当全局都查无此 hash 的 finding 时才视为真孤儿（A2 假说未被持久化为 finding）予以清理。
         import json as _json
 
-        # R19：双键判定所需的最小字段。spec 侧取 raw_json（完整 vuln）+ 落库的 sink 坐标兜底；
         # finding 侧取列 + raw_json。两端都算"稳定键变体"取并集，规避 type 表示形态差异。
         _spec_sql = (
             "SELECT id, task_id, vulnerability_hash_v2, raw_json, expected_sink_file, "
             # family / target_endpoint 供孤儿审计留痕：只记 file+line 的话，
-            # 事后复盘看不出「删掉的是哪个族的 spec」（本轮首次留痕就踩了这个）。
             "expected_sink_line, family, target_endpoint FROM trigger_specs"
         )
         if task_id is None:
@@ -1901,9 +1838,7 @@ def reconcile_orphan_specs(task_id: Optional[int], dry_run: bool = False) -> int
         def _stable_variants(file_v, line_v, code_v, type_candidates):
             """稳定键并集：每个 type 候选都同时算「强键(file+line+code)」与「弱键(file+code, 行号置 0)」。
 
-            弱键（2026-09-22 ②-4）用于兜底「行号漂移」：spec 注册端与 findings 落库端的行号可能
             来自不同来源（静态报点 vs 回填），强键会因此失配而被误判孤儿删除——孤儿删除是
-            **不可逆剪枝**（历史事故：AP 段 81 条真 POC 被删），宁可多留不可错删，故这里接受双键并集。
             """
             if not _stable_vuln_keys:
                 return set()
@@ -1929,7 +1864,6 @@ def reconcile_orphan_specs(task_id: Optional[int], dry_run: bool = False) -> int
             if f.get("vulnerability_hash_v2"):
                 f_vhash.add(str(f["vulnerability_hash_v2"]))
             fr = _raw_of(f)
-            # 2026-11-01（P3）：聚合阶段被吸收的成员也属于「有对应 finding」。
             # 报告装配把同族同行多条收敛成一条 canonical，其余进 supporting_nodes，
             # findings 表只落 canonical 行；若不把 absorbed_vhashes 计入，
             # 被吸收成员的 spec 会被当孤儿删掉（本轮删了 16 条）。
@@ -1964,11 +1898,9 @@ def reconcile_orphan_specs(task_id: Optional[int], dry_run: bool = False) -> int
             if s_stable & f_stable:
                 continue  # 稳定键命中：路由漂移的合法 spec，保留
             orphans.append(s)
-        # 2026-10-31（P3-1 两段式）：先把「由本 task A1 规则直接产出」的 spec 摘出来。
         # 依据：`a1_evidence.framework_sink=True`（或 source=a1-framework-sinks）说明这条 spec
         # 来自确定性静态规则，不是 A2 的臆造。此时「findings 表里找不到」只说明**下游丢条**
-        # （本轮实测：framework 的 deserialization 命中没进 final_report），
-        # 不能据此把 spec 删掉——否则等于让下游的 bug 反噬上游的正确结果。
+        #         # 不能据此把 spec 删掉——否则等于让下游的 bug 反噬上游的正确结果。
         kept_by_a1 = []
         for s in list(orphans):
             try:
@@ -2037,7 +1969,7 @@ def bind_specs_to_findings(task_id: Optional[int], dry_run: bool = False) -> int
             return 0
         # 一次性取本 task 全部 findings 的 (vuln_hash -> id) 映射，避免逐条 SELECT findings。
         # 关键修正：findings 表自历史回灌后已无 trigger_spec_detail 列（D1/D2/报告均以
-        # trigger_specs.target_endpoint 为干净端点真源，见 MEMORY §2），原实现读/写该列会抛
+        # trigger_specs.target_endpoint 为干净端点真源，见 MEMORY ），原实现读/写该列会抛
         # no such column 并中断整函数，导致 finding_id 永不为回写。本函数现在只做 spec↔finding 的
         # hash 关联与 finding_id 回写，完全不触碰 findings 其它列，保证绑定在主路径上稳定生效。
         fmap = {}

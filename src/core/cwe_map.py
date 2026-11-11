@@ -1,16 +1,12 @@
-"""族分类 → CWE 对齐（E12，2026-10-26）。
+"""族分类 → CWE 对齐。
 
 ## 为什么做
 
-我们内部用的族名（sql_injection / path_traversal / weak_hash …）是从 **OWASP Benchmark
 的目录布局**长出来的：`/sqli-00/`、`/crypto-00/` 这类路由段既是真实 URL，也是族标签。
 两个后果：
 
-1. **跨靶场不可迁移** —— 换到 Juliet / 真实项目，目录族不存在，族名口径就断了；
 2. **报告口径绑定靶场** —— 对外交付时说「sql_injection」不如说「CWE-89」通用。
 
-CWE 是业界通用语言，且 OWASP Benchmark 的真值 CSV **本身就有 CWE 列**
-（`BenchmarkTest00001,pathtraver,true,22`），所以对齐是「有真源可依」的，不是自创体系。
 
 ## 本模块职责
 
@@ -107,8 +103,6 @@ def case_to_cwe_from_csv(csv_path: str) -> Dict[str, str]:
     """从 expectedresults CSV 建 case → "CWE-nn" 映射。
 
     兼容两种表头：
-      - 无表头：`BenchmarkTest00001,pathtraver,true,22`（Benchmark 原生格式）
-      - 有表头且含 cwe 列：按列名取（Juliet 转换器输出格式）
     """
     out: Dict[str, str] = {}
     if not csv_path or not os.path.isfile(csv_path):

@@ -67,13 +67,12 @@ _RULE_FAMILY_MAP = (
 def _map_rule_to_family(rule_id: str, message: str) -> str:
     """CodeQL rule_id → 平台族（canonical snake_case）。
 
-    2026-11-01（P1）：**先查 `config/codeql_family_map.yaml`**，命中即返回；
     未命中才走下面的子串表；再未命中返回 `unmapped`（不再猜显示名）。
     原因：族名不认识 ⇒ D2 没有证明模板 ⇒ spec 结构性停在 unconfirmed
-    （本轮实测 21 条原生名 spec 里 17 条零确认）。
+    。
     """
     # 空 rule_id 不是「未登记的 CodeQL 规则」，是**根本没有规则**（LLM 研判残项）。
-    # 若也返回 unmapped，会污染族空间并冒充映射缺口（本轮实测 8 条）。
+    # 若也返回 unmapped，会污染族空间并冒充映射缺口。
     # 约定：空 rule_id → 返回空串，由调用方决定丢弃或另给族。
     if not str(rule_id or "").strip():
         return ""
@@ -99,7 +98,7 @@ def _map_rule_to_family(rule_id: str, message: str) -> str:
 def _map_rule_to_type(rule_id: str, message: str) -> str:
     """漏洞类型名。与 `_map_rule_to_family` 同源，保证 type 与 family 不再分叉。
 
-    历史坑：这里原来的兜底是 ``tail.replace("-", " ").title()``，
+    历史坑：这里原来的兜底是 ``tail.replace("-", " ").title``，
     于是 `java/log-injection` 变成 `Log Injection` 并作为 type 落库，
     再流到 `trigger_specs.family`，下游族路由全空。
     """
@@ -114,8 +113,6 @@ class A1CodeQLSemanticAgent:
         # resolve_llm_config：保证局部投影配置也能拿到 llm 段（详见该函数注释）
         self.gateway = gateway_from_config(resolve_llm_config(self.config))
         self._codeql = CodeQLAdapter(codeql_bin=self.config.get("codeql", {}).get("bin_path"))
-        # 2026-11-01：CodeQL 失败原因必须能被上层读到。
-        # 事故：A1 只拿到「空结果」，service 只能记 codeql_status=build_failed_or_empty，
         # 而 create_database 其实返回了具体错误（构建命令 stderr / finalize 失败原因），
         # 全被这一层丢掉了 ⇒ 每轮都在猜「是查询包不行还是构建不行」。
         self._last_codeql_reason = ""
@@ -228,7 +225,6 @@ class A1CodeQLSemanticAgent:
         - 在线（配置了 LLM）：交给 LLM 做去重/误报裁剪/业务上下文标注；
         - 离线：确定性映射（rule_id → 漏洞族/类型），并做同文件同规则去重。
 
-        2026-10-20（r114 实证）：LLM 返回空（本地 ollama 无模型/超时）时**必须降级**
         到确定性映射——否则 4452 条 CodeQL 告警被整批丢弃，A1 永久 fallback heuristic。
         """
         if self.gateway.is_offline:
@@ -293,7 +289,7 @@ class A1CodeQLSemanticAgent:
         out: List[Vulnerability] = []
         _dropped_no_type = 0
         # LLM 经常把 rule_id 漏掉（只回 file/line），于是族判定拿不到规则身份，
-        # 落库成 `unmapped`（本轮实测 8 条，其中 1 条还是唯一被重放确认的 SQLi）。
+        # 落库成 `unmapped`。
         # 修法：按 (file, line) 回填原始告警的 rule_id —— 告警本来就在手上，不该丢。
         _by_pos: Dict[Tuple[str, int], List[Dict[str, Any]]] = {}
         for _a in alerts or []:
@@ -314,7 +310,7 @@ class A1CodeQLSemanticAgent:
                     _recovered += 1
             # 族/类型三级回退：LLM 给的 family → LLM 给的 type → rule_id 映射表。
             # 三者全空说明这条研判项没带任何漏洞身份（只有 file/line），
-            # 落库只会变成一条 `unmapped` 噪声（本轮实测 8 条，全部同文件已有其它 finding）。
+            # 落库只会变成一条 `unmapped` 噪声。
             _fam = (str(item.get("family") or "").strip()
                     or str(item.get("type") or "").strip()
                     or _map_rule_to_type(item.get("rule_id", ""), ""))

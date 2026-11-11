@@ -26,12 +26,10 @@ LANGUAGE_EXTENSIONS = {
     "xml": [".xml", ".xhtml", ".xsd"],
     "properties": [".properties", ".conf", ".config"],
     "shell": [".sh", ".bash"],
-    # 模板层（2026-09-10 新增，块4 #17/#18）：Thymeleaf/Freemarker/Velocity 的 XSS sink
     # （th:utext）在模板里、不在 Java 里。此前 .html 不在白名单 → 模板从不进扫描集 →
     # java_rules.yaml 里写了 th:utext pattern 也永不命中。
     # 风险：放开 .html 会把前端静态资源全量拉进扫描集、撑爆 A2 的 per-file LLM。
     # 故 FileScanner 对 template 组额外做「内容判定」：必须含模板引擎标记才收录（见
-    # _is_engine_template）。target-mall 实测仅多收 13 个模板文件。
     "template": [".html", ".htm", ".ftl", ".vm"],
 }
 

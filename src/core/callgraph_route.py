@@ -1,19 +1,13 @@
-"""调用图反查路由：util 类里的 sink → 顺着 callers 找到 controller 的入口路由（2026-11-02）。
+"""调用图反查路由：util 类里的 sink → 顺着 callers 找到 controller 的入口路由。
 
 ## 为什么需要
 
 `sink` 常常落在**工具类**里，而工具类没有 `@RequestMapping`：
 
-    JobInvokeUtil.invokeMethod()      ← RuoYi 定时任务 invokeTarget 注入的 sink
-    HttpUtils.request()               ← jsc 的 SSRF 工具方法
-    SecurityUtil.checkSSRF()          ← jsc 的 SSRF 校验方法
 
 `route_resolver` 只按「sink 所在文件/类」找路由，工具类必然 `None`。实测：
 
-- 若依 `JobInvokeUtil.java:37`（`Class.forName(beanName)`）→ `resolve_route_for_finding` 返回 `None`
-  ⇒ 真值表里**唯一一条 in_scope 的 command_execution**（`/monitor/job/add`+`/monitor/job/run`）
   一条候选都没有。
-- 同一机制也解释了 jsc 的 `urlwhitelist`（3 条 spec 全 `no-arrival`）与 `websecurityconfig`。
 
 ## 做法
 
@@ -44,8 +38,6 @@ def _rel(p: Any) -> str:
 def _under(code_root: Any, p: Any) -> str:
     """把任意形态的路径归一成「相对 code_root、正斜杠、小写」。
 
-    2026-11-02 实杀：`_rel` 不剥 code_root 前缀，于是
-    `trigger_specs.expected_sink_file` 是**绝对路径**时（RuoYi/jsc 都是），
     `_rel(绝对路径)` 与索引里的 `_rel(相对路径)` 永远不相等 ⇒ 查不到所属函数 ⇒
     调用图反查和两步桥**静默失效**。必须按 code_root 剥前缀。
     """
@@ -55,7 +47,6 @@ def _under(code_root: Any, p: Any) -> str:
         s = s[len(root) + 1:]
     elif re.match(r"^[A-Za-z]:/", s) or s.startswith("/"):
         # 只有「绝对路径且不在 root 下」才从 /src/ 截断。
-        # **相对路径不能截**：RuoYi 的 `ruoyi-quartz/src/main/java/...` 一旦被截成
         # `src/main/java/...` 就和索引里的键对不上，且拼不出真实磁盘路径。
         low = s.lower()
         i = low.find("/src/")
@@ -144,9 +135,8 @@ def route_via_callers(code_root: Optional[str], sink_file: Any, sink_line: Any,
 
     # 3) BFS 找 caller 里的入口
     #
-    # **唯一性闸门（关键）**：工具方法常被多个端点复用，例如 jsc 的
     # `HttpUtils.request` 同时被 `/ssrf/request/vuln` 与 `/ssrf/request/sec` 调用。
-    # 随便挑一个 caller 会把 sink 登记到错误端点（sec 是安全实现，登记上去就是误报）。
+    # 随便挑一个 caller 会把 sink 登记到错误端点。
     # 因此只在「同一深度上恰好只有一个不同路由」时才采用；有歧义就返回空，交回上层。
     lower = {str(k).lower(): k for k in idx}
     frontier: List[Tuple[str, int]] = [(best_key, 0)]
@@ -195,17 +185,14 @@ def _split_entry(entry: Any) -> Tuple[str, str, str]:
     return parts[1], parts[0], parts[0]
 
 
-# ── 两步桥：写入口 → 存储 → 触发时执行（2026-11-02）────────────────────────
 #
 # 有些 sink 不是由请求直接触发的，而是「先写进存储，再由调度器/队列取出来执行」：
 #
 #   POST /monitor/job/add   → 写入 sys_job.invoke_target（用户可控）
-#   POST /monitor/job/run   → 调度器 → JobInvokeUtil.invokeMethod → Class.forName(...)
 #
 # 静态调用图里 `invokeMethod` 的 caller 是 Quartz 的 `doExecute`，**没有 HTTP 入口**
-# ⇒ 上面所有路由解析策略都失败 ⇒ 真值表里唯一一条 in_scope 的 command_execution 零候选。
 #
-# 这里换一条路：从 sink 读的字段名（`getInvokeTarget()` → `invokeTarget`）
+# 这里换一条路：从 sink 读的字段名（`getInvokeTarget` → `invokeTarget`）
 # 反查**谁在写它**（`setInvokeTarget(`），那个写方法的 HTTP 入口就是「第一步」的入口。
 # 产出的路由语义是「先调这个写接口，再调触发接口」，由 spec 的 prerequisites 标注。
 
@@ -228,7 +215,6 @@ def route_via_writer(code_root: Optional[str], sink_file: Any, sink_line: Any) -
 
     1. **setter 调用点**：`setInvokeTarget(` 有显式调用 ⇒ 它的 caller 里找 http_entry。
     2. **按实体类型找写入口**：若 setter 是框架（Jackson/MyBatis）在运行时调的、
-       静态没有调用点（RuoYi 的 `@RequestBody SysJob` 就是这种），
        则从 sink 函数的形参类型（`SysJob`）出发，找**参数里带该类型且有 http_entry** 的方法。
 
     策略 2 是关键：它把「谁把用户输入塞进了这个实体」变成「谁接收这个实体」，
@@ -261,7 +247,6 @@ def route_via_writer(code_root: Optional[str], sink_file: Any, sink_line: Any) -
         if ln <= line and ln > own_line:
             own_key, own_line, own_meta = key, ln, meta
     # 读文件要用**索引里的真实相对路径**：`_under` 在剥不到 code_root 前缀时
-    # 会从 `/src/` 截断，把模块前缀（`ruoyi-quartz/`）丢掉 ⇒ 拼出来的路径不存在。
     _real_rel = str(own_meta.get("file") or norm)
     full = os.path.join(str(code_root), _real_rel.replace("\\", os.sep).replace("/", os.sep))
     code = _read_source(full)
@@ -296,7 +281,6 @@ def route_via_writer(code_root: Optional[str], sink_file: Any, sink_line: Any) -
     # 策略 2：按实体类型找写入口（setter 由框架运行时调用时用这条）
     #
     # **必须按「写」优先排序**：同一个实体往往有 list / query / export / add / edit / run
-    # 一堆入口，随便取第一个会拿到只读接口（实测 RuoYi 先取到 `/monitor/job/list`）。
     # 两步桥要的是「用户输入进入存储」的那一跳，所以 add/insert/save/create 优先，
     # 其次 run/trigger/execute（触发），只读接口大幅降权。
     _JDK = ("string", "int", "long", "boolean", "double", "float", "list", "map",

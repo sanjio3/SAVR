@@ -1,4 +1,4 @@
-"""证据阶梯唯一真相源（M1，2026-10-20）。
+"""证据阶梯唯一真相源。
 
 背景：证据判定散在三处，口径漂移会导致「报表说 S4、闸门说不合格」的自相矛盾：
   - ``src/core/sink_value_gate.py::judge_sink_value`` —— 底层，返回 at_sink/absent/no_event；

@@ -32,7 +32,7 @@ import java.util.function.Supplier;
  * entirely; they now carry the data-flow scope.
  *
  * <p>Restore discipline: a pooled thread is returned to exactly the state it had before the
- * task ran ({@link TaintStore#detachThread()} when it was unbound), so a tainted request can
+ * task ran ({@link TaintStore#detachThread} when it was unbound), so a tainted request can
  * never bleed into the next task that reuses the thread. The originating request's归集 shadow
  * is deliberately NOT dropped here — that request is still running on its own thread.
  */
@@ -151,7 +151,7 @@ public final class AsyncContext {
     }
 
     /**
-     * Immutable capture of the data-flow scope of the submitting thread. {@code capture()}
+     * Immutable capture of the data-flow scope of the submitting thread. {@code capture}
      * returns null on an untainted thread so a clean request pays no wrapper at all.
      */
     private static final class Scope {

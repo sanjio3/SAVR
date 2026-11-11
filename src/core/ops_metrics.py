@@ -1,4 +1,4 @@
-"""Operations dashboard aggregation (G12, 第四版 §2.6/§6.4).
+"""Operations dashboard aggregation (G12, 第四版 /).
 
 Pure functions over lists of records (findings / autonomy actions / fix-feedback
 / instances) that compute the ROI-style operating metrics: denoise rate, false-

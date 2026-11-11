@@ -5,7 +5,7 @@
 平台此前的「确认」严重依赖自家 IAST 探针能看到 sink 实参。两个结构性缺陷：
   1. **换靶场即失效**：真实客户目标没有我们的探针，判据全部落空；
   2. **对象型 sink 永远看不见**：`new FileInputStream(file)` / `MessageDigest.getInstance(alg)`
-     的实参是对象/数组，探针拿不到字符串（458 实测 49% 的 attempt 是 marker_only）。
+     的实参是对象/数组，探针拿不到字符串。
 
 本模块换判据：**判「有没有产生效果」，而不是判「sink 里有没有 payload」**。
 响应体差异 / 时延差 / 文件内容签名 / 反射，全部是黑盒可观测量，与探针无关。
@@ -13,9 +13,9 @@ IAST 从此降级为「放大器」：有探针时提升置信度，没探针时
 
 ## 三个层次
 
-- `build_probes()`：按族生成探测臂（纯数据，不发请求）；
-- `evaluate_passive()`：对**已经发过**的响应做零成本判定（xss 反射 / 路径穿越文件签名）；
-- `judge()`：把多臂观测聚合成 `exploitable / not_exploitable / inconclusive`。
+- `build_probes`：按族生成探测臂（纯数据，不发请求）；
+- `evaluate_passive`：对**已经发过**的响应做零成本判定（xss 反射 / 路径穿越文件签名）；
+- `judge`：把多臂观测聚合成 `exploitable / not_exploitable / inconclusive`。
 
 ## 纪律
 
@@ -35,7 +35,6 @@ from typing import Any, Dict, Iterable, List, Optional
 
 # 支持 oracle 的族（canonical 名）
 #
-# 2026-10-31 扩展（java-sec-code 全链路实证）：原 4 族只覆盖「值原样传到 sink」的形态。
 # 真实项目里大量漏洞的「值在 sink 处已被转换」——SSRF 变成 URL 对象、重定向变成
 # Location 头、CORS 变成响应头回显、CRLF 被拼进 header。这类用「canary 原文匹配」
 # 永远判不出来，只能用**黑盒可观测行为**判：看响应头有没有回显、看有没有注入成功。
@@ -43,14 +42,10 @@ from typing import Any, Dict, Iterable, List, Optional
 ORACLE_FAMILIES = (
     "sql_injection", "command_execution", "path_traversal", "xss",
     "url_redirect", "cors", "crlf_injection", "ssrf",
-    # 2026-11-05：WebSocket 命令执行端点（jsc 622 spec 237906/237997/238010）。
     # 命令 stdout 走 WebSocket 帧、不进 HTTP 响应体，必须单独归一走两步投递。
     "websocket_cmd",
-    # 2026-11-06（jsc 625 实测）：这两族此前完全没进 ORACLE_FAMILIES，
-    # canonical_family() 返回空串 ⇒ D1._run_family_oracle 在 638 行早退，
-    # build_probes 产出 0 条探测臂。qlexpress.java / xstreamrce.java /
-    # deserialize.java / shiro.java 四个真值点因此永远拿不到行为证据。
-    # 两族的判据都是黑盒可观测量（表达式求值结果回显、反序列化阴阳对照），
+    # canonical_family 返回空串会导致族 oracle 早退，build_probes 产出 0 条探测臂。
+    # 这两族的判据都是黑盒可观测量（表达式求值结果回显、反序列化阴阳对照），
     # 不依赖探针插桩，也不依赖任何靶场的路径/参数命名。
     "expression_injection",
     "deserialization",
@@ -71,15 +66,13 @@ _ALIASES = {
     "path": "path_traversal",
     "xss": "xss",
     "cross_site_scripting": "xss",
-    # 2026-10-31 新增 4 族（响应头 / 连接行为可观测）
     "url_redirect": "url_redirect",
     "open_redirect": "url_redirect",
     "open-redirect": "url_redirect",
     "unvalidated_redirect": "url_redirect",
     "urlredirect": "url_redirect",
-    # 2026-11-05（D1 投递，jsc 622 spec 238042 实证）：url 白名单绕过族此前
     # 未登记 ⇒ canonical_family 返回空串 ⇒ _run_family_oracle 早退，该族
-    # 族级探测臂根本不投（实测 238042 只有 3 条主重放、零 100+ 探测臂），
+    # 族级探测臂根本不投，
     # 而 technique_oracle.url_whitelist_location 判据一直在等 Location 证据。
     # 语义与 url_redirect 同源（把外部 URL 投进去看 Location 是否回显），
     # 复用已验证的 redirect 探测臂即可。判据只看「Location 是否反射载荷 host」，
@@ -97,13 +90,11 @@ _ALIASES = {
     "header_injection": "crlf_injection",
     "ssrf": "ssrf",
     "server_side_request_forgery": "ssrf",
-    # 2026-11-05：WebSocket 命令执行。刻意**不**把 command_execution 指向它——
     # 普通 cmdi 端点仍走 delay 臂；族提升由 D1 在 spec 指向 WebSocket sink 时显式完成。
     "websocket_cmd": "websocket_cmd",
     "websocketscmdendpoint": "websocket_cmd",
     "websocket_cmd_endpoint": "websocket_cmd",
     "websocket_command_execution": "websocket_cmd",
-    # 2026-11-06：表达式注入（QLExpress / SpEL / MVEL 等表达式引擎）与
     # 反序列化（Java 原生 / XStream / 文本型链）。刻意只收「引擎执行用户串」
     # 与「把用户字节喂给反序列化器」两类语义，不把 jndi_injection 等误收进来。
     "expression_injection": "expression_injection",
@@ -119,13 +110,12 @@ _ALIASES = {
     "xstreamrce": "deserialization",
 }
 
-# 判定阈值（集中在此，便于按实测校准）
+# 判定阈值
 SIMILAR_THRESHOLD = 0.98      # 剥值归一后相似度低于此 ⇒ 判定「响应有实质差异」
 LEN_DELTA_RATIO = 0.05        # 长度差超过 5% 也算实质差异
 LEN_DELTA_ABS = 40            # 且至少 40 字符，避免小响应抖动
 DELAY_THRESHOLD_MS = 2000.0   # 时延差 ≥ 2s 判命令执行（探针命令固定 sleep 4s）
 
-# 2026-10-31：新增 4 族的行为探测常量。
 # 外部域名用 RFC2606 保留域（example.com 的子域），保证「不可能真的被访问成功」，
 # 因此只要它出现在响应头里，就一定是应用把用户输入原样回显了 —— 这是通用判据，
 # 与任何靶场的路径/参数命名无关。
@@ -145,7 +135,6 @@ _SSRF_ERROR_HINTS = (
     "拒绝", "连接失败", "无法连接", "未知主机",
 )
 
-# 2026-11-05（jsc 622 spec 237906/237997/238010）：WebSocket 命令执行端点。
 # `/websocket/cmd?path=<ws_path>` 动态注册一个 WebSocket 端点，随后连上该端点发一条消息，
 # 端点把消息当 shell 命令执行并把 stdout 通过 WebSocket 帧回显。这类端点有两个结构性差异：
 #   1. 命令注入参数根本不在 HTTP 层（param_name 为空是合理的），D1 的 no_param 守门会误杀；
@@ -219,7 +208,6 @@ class ArmResult:
     elapsed_ms: float = 0.0
     error: str = ""
     note: str = ""
-    # 2026-10-31：响应头。url_redirect / cors / crlf_injection 三族的正向信号
     # 全在响应头里（Location 回显、ACAO 回显、注入的自定义头），不看头就判不了。
     headers: Dict[str, str] = field(default_factory=dict)
 
@@ -255,9 +243,6 @@ _SQLI_FALSE_NUM = "1 AND 1=2"
 
 # 路径穿越候选阶梯：从近到远。
 #
-# 2026-10-26 事故修复：原来第一条候选是 Tomcat 自己的
-# `../../webapps/benchmark/WEB-INF/web.xml`。但 Benchmark 的 pathtraver 族里有**写入型**
-# 用例（BenchmarkTest00002/00028/00045 用 `new FileOutputStream(fileTarget)`，默认截断），
 # 探测 payload 打进去会把这个 web.xml **截断成 0 字节** ⇒ 靶场下次重启时
 # `SAXParseException: Premature end of file`，Context[/benchmark] 启动失败。
 # 实测：471 跑到 23:43 时 web.xml 被清零，整轮扫完后靶场再也起不来。
@@ -265,15 +250,12 @@ _SQLI_FALSE_NUM = "1 AND 1=2"
 # 修法：改用**专用签名文件**（由 launcher 创建并置只读），探测它可以读、但不能被写坏；
 # 即使被写坏也只影响 oracle 自身，不会破坏靶场。
 _PATH_CANDIDATES = (
-    # 2026-10-26（二次修正）：签名文件必须放在 **webapp 之外**。
     # 曾经放在 WEB-INF/ 下并置只读，结果是：Windows 只读文件让 Tomcat 的
     # ExpandWar.deleteDir 删不掉目录 ⇒ `ContextConfig.beforeStart 上下文[/benchmark]
-    # 的异常修复 docBase` ⇒ 上下文起不来（实测 09:10 靶场全 404）。
+    # 的异常修复 docBase` ⇒ 上下文起不来。
     # 移到 TOMCAT 根（webapps 同级）后：不在解包目录内，重解包不碰它；
-    # 也不必设只读，即使被写入型 pathtraver 截断，坏的也只是这个签名文件。
     # 路径基准：TESTFILES_DIR = user.dir(=tomcat/bin) + testfiles/ ⇒ ../../ 即 tomcat 根。
     ("../../oracle-sig.txt", "oracle_sig"),
-    # 2026-10-31（java-sec-code 实证）：**不能只依赖 launcher 预置的签名文件**。
     # Spring Boot 这类以 `java -jar` 启动的目标没有 testfiles 目录，
     # `oracle-sig.txt` 必然不存在 ⇒ 所有穿越臂都返回「文件不存在」，误判成「没打通」。
     # 实测该靶场 /vul 端点响应 `File doesn't exist or is not a file.`，即端点无防护、
@@ -296,9 +278,8 @@ _PATH_CANDIDATES = (
     ("../../../../../../../../etc/passwd", "passwd"),
     ("../../../../../../../../Windows/win.ini", "win_ini"),
     ("..\\..\\..\\..\\..\\..\\Windows\\win.ini", "win_ini"),
-    # 2026-11-05：绝对路径候选（Windows）。java-sec-code 以 `-jar` 启动，进程 cwd
     # 取决于看门狗被拉起时的目录，相对候选（pom.xml / ../../../etc/passwd）经常
-    # 解析不到文件 ⇒ oracle 臂全返回 "File doesn't exist"（实测 622）。绝对路径经
+    # 解析不到文件 ⇒ oracle 臂全返回 "File doesn't exist"。绝对路径经
     # `Paths.get` 直接解析、不受 cwd 影响，且 C: 系统盘上 `hosts` 必然存在，
     # 故能稳定读到内容并触发 base64 签名确认。用正斜杠（Java 在 Windows 下接受）。
     ("C:/Windows/System32/drivers/etc/hosts", "win_hosts"),
@@ -309,12 +290,10 @@ _FILE_SIGNATURES = {
     # 专用签名文件的内容标记（launcher 负责创建）
     "oracle_sig": ("SAST_ORACLE_SIG_V1",),
     # 保留：历史 arm 可能仍带这个 note（测试与回放数据），签名照旧识别
-    "web_xml": ("<web-app", "OWASP Benchmark"),
+    "web_xml": ("<web-app", "</web-app>"),
     "passwd": ("root:x:0:0", "root:*:0:0"),
     "win_ini": ("[fonts]", "[extensions]", "for 16-bit app support"),
-    # 2026-11-05：绝对 Windows 路径候选的签名（hosts 文件在 C: 系统盘必然存在）。
     "win_hosts": ("127.0.0.1 localhost", "localhost name resolution", "# localhost name resolution"),
-    # 2026-10-31：项目自身文件（通用，任何 JVM 项目都有其一）
     "pom_xml": ("<project", "<artifactId>", "<modelVersion>"),
     "gradle_build": ("plugins {", "dependencies {", "repositories {"),
     "npm_package": ('"name"', '"version"', '"dependencies"'),
@@ -331,13 +310,10 @@ _CMDI_DELAY = (
     ("FOO=ping -n 5 127.0.0.1", "env_assign"),
 )
 
-# SQL 时间盲注探测弹（2026-11-05，jsc 622 实证补齐）。
 #
 # 为什么必须有它：sql_injection 的探测臂此前只有「布尔真假对」+「阴性对照」，
 # judge 也只有布尔差分一条判据。但真实靶场里布尔对**结构上无法产生差异**的场景很常见：
-#   - 空库：select ... where x='<payload>' 无论真假都返回 0 行（jsc 622 /sqli/jdbc/vuln）；
 #   - 报错被吞：端点 catch(SQLException){log} 后返回空串，布尔对都是空响应；
-#   - 认证重定向：所有重放统一 302 空体（jsc 622 实测 8 条 attempt 全 302、耗时 3-29ms）。
 # 这三类下 judge 只能落到 boolean_same（inconclusive），sqki 恒漏报。
 #
 # 时间盲注是唯一不依赖「响应内容」的可观测量：payload 里带 SLEEP(3)，
@@ -357,7 +333,6 @@ _SQLI_DELAY = (
     ("'; WAITFOR DELAY '0:0:3'-- ", "sqli_sleep_mssql"),
 )
 
-# ── 2026-11-06 新增两族：表达式求值 / 反序列化阴阳对照 ──────────────────
 #
 # 共同约束：这两族的端点都把**整个请求体**当输入（QLExpress.vuln1 用
 # WebUtils.getRequestBody(req) 读表达式，XStreamRce.parseXml 用同一个工具读 XML），
@@ -373,7 +348,6 @@ _EXPR_ARITH_EXPECT = "777"
 
 # 反序列化臂走阴阳对照：阴臂投一个确定不是序列化对象/XML 的串，阳臂投主载荷
 # （D1 传到 build_probes 的 primary_value，即 ysoserial gadget 或文本型链）以及
-# 一条通杀的合法 XStream 对象 XML。jsc 活靶场实测：
 #   /xstream                    合法对象 XML → 200 "xstream"；垃圾串 → 500 StreamException
 #   /deserialize/rememberMe/vuln  gadget → 200 "Are u ok?"；AAAA → 500
 #   /shiro/deserialize           AES 包装弹 → 200；AAAA → 200 "decrypt error"
@@ -385,8 +359,7 @@ _DESER_ERROR_HINTS = (
     "streamexception", "streamcorruptedexception", "invalidclassexception",
     "objectinputstream", "readobject", "decrypt error", "rememberme cookie",
     "cannot be cast", "deserializ", "xstream", "serialization",
-    # 2026-11-06（jsc 627 实测）：文本型解析器（fastjson 等）在控制器里
-    # catch 异常后 return e.toString()，HTTP status 仍是 200。只看 status>=400
+    # catch 异常后 return e.toString，HTTP status 仍是 200。只看 status>=400
     # 会把「阴臂明确解析失败」误判成「阴臂也被接受」→ negative_control_accepted，
     # 把 626 已确认的 Fastjson.java 冲成 unconfirmed。异常文本本身就是失败证据。
     "jsonexception", "syntax error", "parseobject", "jackson",
@@ -440,8 +413,6 @@ def build_probes(family: Any, *, payload: str = "", servlet_name: str = "",
             nam = [Probe("bool_true", _SQLI_TRUE_QUOTE, channel="name", note="quote_true@name"),
                    Probe("bool_false", _SQLI_FALSE_QUOTE, channel="name", note="quote_false@name")]
         out = val + (nam if name_ok else [])
-        # 2026-11-05：布尔对在空库 / 报错被吞 / 认证重定向场景下天然一致，
-        # 必须再补时间盲注臂，否则这些 spec 永远落在 boolean_same（jsc 622 实证）。
         # 放在布尔臂之后：judge 先看便宜的布尔差分，无差异才看延时（代价从低到高）。
         for pl, tag in _SQLI_DELAY:
             out.append(Probe("delay", pl, note=tag))
@@ -468,19 +439,16 @@ def build_probes(family: Any, *, payload: str = "", servlet_name: str = "",
             # 名注入型：参数名就是 payload，值填 servlet 名（servlet 按「值==自己名字」挑参数）。
             out.append(Probe("reflect", _XSS_PROBE, channel="name", note="name_channel"))
         # 反射型 XSS 的经典入口不止「声明的那一个参数」：Referer / User-Agent 常被直接回显。
-        # 实测 BenchmarkTest00013 的 param 取自 `request.getHeaders("Referer")`，而 spec 把参数名
         # 登记成了 servlet 名 ⇒ 只投声明通道永远打不中。这两条是通用兜底，不是靶场特判。
         for hdr in _XSS_EXTRA_HEADERS:
             out.append(Probe("reflect", _XSS_PROBE, channel="header", note="hdr:" + hdr))
         return out
 
-    # ── 2026-10-31 新增 4 族：值在 sink 处会被转换，只能看黑盒行为 ──
 
     if fam == "url_redirect":
         # 注入一个不可能被真实访问的保留域名，看它是否出现在 Location 里。
         # 通用性：任何「把用户输入直接拼进跳转目标」的实现都会中；有白名单校验的实现不会。
         out = [Probe("redirect", _ORACLE_EXTERNAL_URL, note="external_host")]
-        # 2026-11-06（jsc 624）：白名单型跳转端点会拦掉保留域名，但主重放里的
         # 「解析歧义型绕过弹」可能正好通过白名单并被原样写进 Location。只投保留域
         # 会让这类端点恒为 no_location，等于拿不到它本可提供的正向证据。
         # 再投一发主载荷做对照：保留域不跳 + 主载荷跳 ⇒ 白名单被绕过，判据可判定。
@@ -593,16 +561,15 @@ def bodies_differ(a: str, b: str) -> bool:
 
 
 def _find_signature(body: str, tag: str) -> str:
-    # 目标普遍会把文件内容做 HTML 转义再回显（Benchmark 的 ESAPI.encodeForHTML ⇒ `&lt;Server`），
-    # 必须先解实体再匹配签名，否则永远读不到 `<Server`。
+    # 目标可能把文件内容做 HTML 转义再回显（例如 `&lt;Server`），
+    # 必须先解实体再匹配签名，否则永远读不到原始标签。
     raw = html.unescape(str(body or ""))
     low = raw.lower()
     for sig in _FILE_SIGNATURES.get(tag, ()):  # type: ignore[arg-type]
         if sig.lower() in low:
             return sig
-    # 2026-10-31（java-sec-code 实证）：还有一类目标把读到的文件**整段编码**后再回显 ——
-    # 实测 `/path_traversal/vul?filepath=pom.xml` 返回 19328 字符的 base64，
-    # 直接匹配 `<project` 永远失败，于是「明明读到了文件」却被判成没读到。
+    # 目标可能把整个文件以 base64 回显，此时直接匹配 `<project` 永远失败，
+    # 于是「明明读到了文件」却被判成没读到。
     # 这不是靶场特例：base64/hex 回显在真实系统里很常见（下载接口、图片转 base64 等）。
     # 故对「看起来像编码」的响应再做一次解码匹配，且只在长度合理时尝试（避免大响应卡住）。
     dec = _try_decode_text(raw)
@@ -758,7 +725,6 @@ def _time_delay_reason(arms: List[ArmResult], baseline_ms: float = 0.0) -> str:
 def judge(family: Any, arms: List[ArmResult], baseline_ms: float = 0.0) -> Dict[str, Any]:
     """把多臂观测聚合成结论。
 
-    判定纪律（2026-10-24 定，宁可 inconclusive 不可误判）：
       - `exploitable` 只由**正向信号**触发（布尔差异 / 时延 / 文件签名 / 原样反射）；
       - `not_exploitable` 只在**主动净化证据**下给出（payload 被转义回显）；
       - 其余一律 `inconclusive` —— 「没打通」不等于「不存在」，黑盒没有否定证据的能力。
@@ -853,7 +819,6 @@ def judge(family: Any, arms: List[ArmResult], baseline_ms: float = 0.0) -> Dict[
         return base
 
     if fam == "sql_injection":
-        # 2026-11-05：时间盲注先判——它是唯一不依赖「响应内容」的硬观测，
         # 空库 / 报错被吞 / 302 统一重定向时布尔对必然一致，只有它能定案。
         # 无 delay 臂（历史数据 / 内嵌库无 sleep）时本段自动跳过，完全回落到
         # 原布尔判据，对既有用例零回归。
@@ -944,7 +909,6 @@ def judge(family: Any, arms: List[ArmResult], baseline_ms: float = 0.0) -> Dict[
         base.update(signal="no_reflection", reason="响应体未见 payload（不反射）")
         return base
 
-    # ── 2026-10-31 新增 4 族：只认「响应头/响应体里的黑盒正向信号」 ──
 
     if fam == "url_redirect":
         arms_r = [a for a in (arms or []) if a.arm == "redirect" and _ok(a)]
@@ -955,7 +919,6 @@ def judge(family: Any, arms: List[ArmResult], baseline_ms: float = 0.0) -> Dict[
             loc = a.header("Location")
             if not loc:
                 continue
-            # 2026-11-06（jsc 624）：原判据只认保留域名 `sastai-oracle.example.com`。
             # 白名单绕过型端点把**注入的绕过 URL 原样**写进 Location（例如
             # `http://evil.com\@www.joychou.org/a.html`），这同样是「用户输入直达
             # 跳转目标」的硬证据，却因不含保留域名被判 location_constrained 而漏掉。

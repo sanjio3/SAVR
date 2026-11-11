@@ -58,7 +58,6 @@ public final class HookRuntime {
     // 值级 canary 载体（与 SINK_CANARY 严格区分）：仅当 canary 身份段**真实出现在 sink 实参文本里**
     // 时由 resolveCanaryForSink 置位。SINK_CANARY 还可能被「请求级兜底」（canaried 请求命中任意 sink，
     // 但 canary 并不在该 sink 实参里）置位——那是 trace 级关联，**不构成值级证据**。
-    // 实测（2026-10-12，近 6 万事件）：89% 的 sink-reached 是 trace 级噪声 sink
     // （Cookie.setSecure / FileOutputStream.<init> / Cipher.getInstance / Response.addHeader），
     // 只有 11% 是值级（JDBCStatement.execute / ProcessBuilder.start / CoyoteWriter.write 等真漏洞 sink）。
     // 用本载体把值级从 trace 级里择出来，杜绝「到达即确认」的噪声误报。
@@ -343,7 +342,7 @@ public final class HookRuntime {
         int depth = REQUEST_DEPTH.get() + 1;
         REQUEST_DEPTH.set(depth);
         if (depth == 1) {
-            // 方案 B 收尾（修复反序列化节点丢失）：recordTaintHop 在请求极早期
+            // 方案 B 收尾：recordTaintHop 在请求极早期
             // （如 Base64.decode / ObjectInputStream.readObject 早于 servlet 入口触发）发现
             // REQUEST_ID 为 null 时会惰性绑定一个 requestId 作为聚合主键。此处若无条件覆盖为
             // 新 id，那些早期 transform 跳点会被孤立到另一个 rid 桶，最终 taint_path 序列化时
@@ -365,7 +364,6 @@ public final class HookRuntime {
     }
 
     /**
-     * 2026-09-16（待请示 6 项 #2）：当前线程是否处于请求上下文（servlet 入口 enterRequest 之后、
      * exitRequest 之前）。供事件入环前抑制 JVM 自举噪声使用：无 canary 且不在请求上下文的 SINK_HIT
      * 是 JVM 启动期自身读 jar/建连接/渲染模板触发的框架 sink，与扫描假说无关。fail-open 返回 false。
      */
@@ -692,7 +690,6 @@ public final class HookRuntime {
      * 数据库连接池（DBCP / tomcat-dbcp / HSQLDB 等）会把真实语句包成 Delegating 包装对象。
      * 登记模板（rememberPreparedSql）与执行时（onPreparedSink）拿到的「语句实例」可能是不同层级
      * 的包装，导致 PREPARED_SQL 以对象身份为键的查表 miss → 探针误判无模板、不发 canary
-     * （OWASP benchmark 实测 4 条 sqli 落 canary_state=''、no-arrival）。这里把语句解包到最内层
      * 真实语句，让两边都能命中同一把键；登记侧也同步登记内层键，双向兜底。
      */
     private static Object unwrapStatement(Object statement) {
@@ -703,7 +700,7 @@ public final class HookRuntime {
         for (int depth = 0; depth < 8; depth++) {
             Object next = null;
             try {
-                // commons-dbcp / tomcat-dbcp：getInnermostDelegate() 直达最内层真实语句
+                // commons-dbcp / tomcat-dbcp：getInnermostDelegate 直达最内层真实语句
                 java.lang.reflect.Method m = cur.getClass().getMethod("getInnermostDelegate");
                 next = m.invoke(cur);
             } catch (Throwable ignored) {
@@ -733,7 +730,6 @@ public final class HookRuntime {
             if (statement != null && sql != null) {
                 PreparedSqlState st = new PreparedSqlState(sample(sql), templateTainted(sql));
                 PREPARED_SQL.put(statement, st);
-                // 2026-09-27 修复：同步登记解包后的最内层真实语句，防止「登记侧拿到外层 Delegating、
                 // 执行侧拿到内层 JDBC」的包装错层导致查表 miss（见 onPreparedSink / unwrapStatement）。
                 Object inner = unwrapStatement(statement);
                 if (inner != null && inner != statement) {
@@ -757,7 +753,6 @@ public final class HookRuntime {
     }
 
     /**
-     * 准备阶段 sink 断言（③类A 缺陷修复，2026-09-27）。
      *
      * <p>{@code prepareCall}/{@code prepareStatement} 的 SQL 模板作为实参在方法入口即可见。当模板
      * 由攻击者可控数据拼接而成（带污点）即证明注入点抵达 SQL 编译 sink，按 sink-reached 上报。污点
@@ -766,10 +761,9 @@ public final class HookRuntime {
      *
      * <p>这覆盖了「execute* 永不执行」的场景：HSQLDB 在 prepareCall 阶段就拒绝 "{call <payload>}" 这种
      * 非法存储过程调用语法，导致 executeQuery 从未被调用、onPreparedSink 永不触发、运行时恒为
-     * no-arrival（OWASP benchmark 02170 实测即此）。准备阶段直接断言模板污点，闭环该用例。
      *
      * <p>判定优先级：① 字面平台 canary 在模板里（D1 直投、未变换）；② 模板带高/低污点（含经 Base64
-     * 传播的污点）。任一命中即关联 {@link #currentCanary()} 并按 sink-reached 上报。仅对带 canary 的
+     * 传播的污点）。任一命中即关联 {@link #currentCanary} 并按 sink-reached 上报。仅对带 canary 的
      * 重放流量生效（currentCanary 非空才进入断言分支），普通业务流量完全不进入，无误报风险；
      * fail-open 不影响业务请求。不做 shouldEnforce 门禁——这是纯检测闭环，不决定拦截。
      */
@@ -777,7 +771,7 @@ public final class HookRuntime {
         if (!CircuitBreaker.instrumentationEnabled()) {
             return;
         }
-        // 与 onPreparedSink/onGenericSink 一致的门禁：仅在 sink 启用（MONITOR 下恒为启用）时断言，
+        // 与 onPreparedSink/onGenericSink 一致的门禁：仅在 sink 启用时断言，
         // 避免 sink 关闭时引入新的 FP 类。
         if (!HookMetrics.shouldEnforce("sink." + safe(sink))) {
             return;
@@ -790,8 +784,6 @@ public final class HookRuntime {
             // 重放闭环根治（与 onGenericSink:700 同源）：canaried 重放请求（X-SASTAI-Trace 携带平台 canary）
             // 命中 prepareCall/prepareStatement 即视为「攻击流量抵达 SQL 编译 sink」，直接以 sink-reached
             // 断言闭环，不依赖 execute* 是否真正执行——HSQLDB 在 prepareCall 阶段即拒绝非法 CALL 语法，使
-            // executeQuery 永不调用、onPreparedSink 永不触发（OWASP benchmark 02170 实测恒 no-arrival）。
-            // 2026-10-12 值级/trace 级分离：先在模板实参里解析平台 canary 身份段（值级）。02170 类经
             // Base64 往返的载荷，解码后模板里含 s4st41<16hex> 身份段 → 命中值级、仍断言 sink-reached；
             // 仅当身份段确实不在模板里时才退化为 trace 级关联（只回带 canary、不设 canaryState）。
             resolveCanaryForSink(new Object[]{sql});
@@ -841,8 +833,6 @@ public final class HookRuntime {
         try {
             Object key = statement == null ? null : statement;
             PreparedSqlState state = key == null ? null : PREPARED_SQL.get(key);
-            // 2026-09-27 修复：解包连接池 Delegating 包装，按最内层真实语句重试查表，修复 sqli 族
-            // canary_state=''（OWASP benchmark 4 条 sqli 因包装错层而 no-arrival）。
             if (state == null && key != null) {
                 Object inner = unwrapStatement(key);
                 if (inner != null && inner != key) {
@@ -881,7 +871,6 @@ public final class HookRuntime {
         if (!CircuitBreaker.instrumentationEnabled() || !HookMetrics.shouldEnforce("sink." + safe(sink))) {
             return;
         }
-        // 2026-09-30（report-sink 启动期 NPE 自噪声）：JVM 启动期（SecureRandom DRBG 自举、
         // 探针自身/框架读 jar 等）触发的 sink 不在任何请求上下文内，此时探针内部状态（TaintStore 路径、
         // captureStackTrace、inspectRasp 等）可能尚未就绪 → 走完整断言路径会 NPE（被 FailOpen 捕获打首栈）。
         // 真实 sink 命中永远发生在 servlet 请求上下文内（重放或正常业务）；请求上下文外的 sink 一律视为
@@ -920,10 +909,9 @@ public final class HookRuntime {
                 // 不再依赖 taint-store 传播，根除「技术/注入族 0 确认」根因。
                 SINK_CANARY.set(currentCanary());
             } else if (SINK_CANARY.get().isEmpty() && !currentCanary().isEmpty()) {
-                // 重放闭环根治（#3/#4 本质修复）：canaried 重放请求（X-SASTAI-Trace 携带平台 canary）
+                // 重放闭环根治：canaried 重放请求（X-SASTAI-Trace 携带平台 canary）
                 // 命中任意 generic sink 即视为「攻击流量抵达危险 sink」，直接以 sink-reached 断言闭环，
                 // 不再依赖 taint-store 传播链。污点跨 String→Path/URL/Reader/字节数组 等类型边界常
-                // 丢失传播链，导致 SQL/路径穿越/XXE/反序列化 等族 sink 永远 0 到达（task-6 实测
                 // 48/62 技术族 spec 全 no-arrival，而 command-exec/ssrf 因 Runtime/ProcessBuilder/
                 // HttpURLConnection 直传命令串得以闭环）。普通业务流量不含 canary（currentCanary 为
                 // 空），绝不落入此分支，无误报风险；fail-open 不影响业务。
@@ -952,7 +940,6 @@ public final class HookRuntime {
             // 注入族。普通业务流量不含 canary，绝不会落入此分支，无误报风险。
             if (!SINK_CANARY.get().isEmpty() && !currentCanary().isEmpty()) {
                 SecurityAgent.reportTaintEvent("TAINT_FLOW", sink, sample(args));
-                // 2026-10-12（r81 实证）：canary 命中、但污点传播链断（high/low 皆 false）时，
                 // 原实现只报 TAINT_FLOW 就 return ⇒ 事件不带 sink_method（库里 sink_method=''），
                 // 后端「sink 身份校验」（is_family_relevant_sink / iast_evidence_sink_reached_genuine）
                 // 必然拒绝 ⇒ d1.iast_arrivals 恒 0。
@@ -1130,14 +1117,12 @@ public final class HookRuntime {
         if (!CircuitBreaker.instrumentationEnabled() || !HookMetrics.shouldEnforce("sink." + safe(sink))) {
             return;
         }
-        // 2026-09-30：与 onGenericSink 同源——请求上下文外的 sink 视为噪声，走轻量路径不进
         // 完整断言，消除启动期 NPE 并省去无谓的调用栈构建。真实命中必在请求上下文内。
         if (!inRequestContext()) {
             return;
         }
         // 设计一①：在 sink 实参里解析平台 canary 身份段（payload 可能是 Object[] 或单值）。
         //
-        // 2026-10-15 修复（值级证据丢失根因）：resolveCanaryForSink 在「未命中」时会同时清空
         // SINK_CANARY 与 SINK_VALUE_CANARY（见该方法第 101-102 行）。onGenericSink 已在正确实参
         // 上解析过一次；此处若再用包了一层的 new Object[]{payload} 重解析，一旦扫不到就会把刚
         // 拿到的值级 canary 抹掉 ⇒ SINK_HIT 事件丢 canary ⇒ 后端幂等去重键退化为
@@ -1205,7 +1190,7 @@ public final class HookRuntime {
             if (!content.isEmpty()) {
                 return content;
             }
-            // F2 修复：StringReader / ByteArrayInputStream / InputSource(Reader) 等载体类的 toString()
+            // F2 修复：StringReader / ByteArrayInputStream / InputSource(Reader) 等载体类的 toString
             // 只有 class@hash，原 String 内容取不到，canary 在 String->载体 边界丢失。兜底回收载体登记的
             // 源内容影子，使 sink 实参里的 canary 仍能被断言。
             String carrierContent = TaintHub.peekCarrierContent(value);
@@ -1278,7 +1263,6 @@ public final class HookRuntime {
     }
 
     private static void hookFailure(String message, Throwable throwable) {
-        // 2026-09-29（P1 熔断语义改造）：传 Throwable 让熔断器按异常类型分流——
         // 并发类异常（CME）只进 HookMetrics 独立计数，不进全局错误预算。
         CircuitBreaker.recordHookError(throwable);
         HookMetrics.error(hookLabel(message));

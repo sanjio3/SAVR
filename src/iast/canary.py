@@ -1,6 +1,6 @@
 """双段 canary：生成（A2 侧 TriggerSpec）与匹配（摄取侧 I1）。
 
-canary 是什么？（设计依据 重构文档 3.16 / 7.2 方向B）
+canary 是什么？
 - 平台向被测应用的 HTTP 参数/请求体里注入一段「特殊污染标记字符串」，叫 canary
   （金丝雀）。它像煤矿里的金丝雀一样：只要它在应用的某个危险 sink（SQL 执行、
   命令执行、反序列化、表达式解析…）里被观测到，就证明「外部输入确实穿透到了危险
@@ -51,9 +51,7 @@ class CanaryStates:
 
 
 # ---------------------------------------------------------------------------
-# 单一真相源：canary 语义判据（2026-09-07 收口）
 #
-# 事故背景：sink_reached 恒 0。根因是两类散落各处的自造判据——
 #   ① 全等比较：trigger_specs.taint_marker 是「身份段 + 元字符段」完整串，而
 #      iast_events.canary 只有 22 字符身份段，`WHERE taint_marker = canary` 恒 0 命中。
 #   ② 漏掉探针态：`state == "sink-reached"` 把 sink-reached-probe（探针在 sink 现场
@@ -125,11 +123,11 @@ class CanaryFactory:
 
     @staticmethod
     def typed_for_param_type(family: str, param_type: str) -> str:
-        """§7.2 方向B：按 param_type 自动生成「合法形态带可搜索指纹」的 canary。
+        """ 方向B：按 param_type 自动生成「合法形态带可搜索指纹」的 canary。
         - numeric_id: 大随机整数 + 指纹后缀，过整数格式校验
         - url: /<fingerprint>/<rand> 合法路径形态，过 URL 格式校验
         - enum: enum_<fingerprint>，过枚举值校验
-        - default/其他: 退化为 typed()。
+        - default/其他: 退化为 typed。
         """
         fp = _fingerprint()
         if param_type == "numeric_id":
@@ -261,5 +259,5 @@ class CanaryMatcher:
         return best
 
     def match_best_of(self, samples: list) -> str:
-        """对一组样本（同一参数的多形态 canary 落地值）取最强态。"""
+        """对一组样本取最强态。"""
         return self.best_of([self.match(str(s)) for s in samples or []])

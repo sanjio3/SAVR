@@ -1,11 +1,9 @@
 """路径 C：聚焦提示词二次证明（chain proof second pass）。
 
-背景（2026-09-19 run 21 实测）
 ------------------------------
 ``proof_tier`` 由 ``_proof_complete`` 判定：reachable / attacker_control_proven /
 gate_bypass_or_satisfaction_proven / payload_shape_proven / success_signal_anchor_proven
 五项全真才是 ``chain_proven``，否则 ``broad_static``，并被 ``d2_zero_audit`` 标成
-``A2_PROOF_FAILURE``。run 21 的 156 条零确认里 122 条是这一类。
 
 ``evaluate_proof_obligations`` 是**纯规则**判定，它只能看结构化 A1 证据里有没有
 对应候选；很多族（尤其是业务族与「证据写在代码里但没被抽成候选」的条目）其实
@@ -75,7 +73,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # 模型给的依据少于这个字数就当作「没依据」，不接受 true
     "min_evidence_chars": 6,
     # 是否只处理「可达 + 攻击者可控」已证成的条目。
-    # run 21 实测：135 条 A2_PROOF_FAILURE 里满足该条件的为 0 条（缺的正是 route/参数证据，
     # 而它们本来就是待证项），把门设在这里等于让本阶段空转。故默认 False，
     # 真正的硬门槛是下面这条「必须有真实代码片段」——没有代码就没有判断依据。
     "require_reachable_and_control": False,
@@ -260,12 +257,11 @@ def parse_answers(text: str, missing_keys: List[str], *, min_evidence_chars: int
     if not isinstance(answers, dict):
         return {}, diag or "no-answers"
 
-    # 反「提示词回显」闸门（2026-09-20 实测发现）：
     # 8B 会把我提示词里的 "参数: url 位置: query" 原样抄进 evidence，看上去像给了依据，
     # 实际与代码无关（样本 URLWhiteList.java:12 的片段只有 import 行，模型照样判 true）。
     # 硬规则：evidence 必须至少包含一个**片段里真实存在的标识符**，否则判为无依据。
     # 这样既能挡住回显，也不误伤合法引用（如 "url" 确实出现在
-    # `String url = request.getRequestURL()` 里）。
+    # `String url = request.getRequestURL` 里）。
     tokens = _code_identifiers(snippet) if snippet else set()
 
     rejected_echo = 0

@@ -1,4 +1,4 @@
-"""扫描结果差分门禁（2026-09-20）。
+"""扫描结果差分门禁。
 
 规则提级流程声明为「staging → 跑 golden 回归 + D2 差分门禁 → 人工确认 → active」。
 其中 **golden 回归** 已由 ``src/core/rule_golden_gate.py`` 落地；**D2 差分门禁**此前同样没有实现 ——
@@ -99,7 +99,7 @@ def _model_mix(con: sqlite3.Connection, task_id: int) -> Dict[str, Any]:
 def _compare_model_mix(base: Dict[str, Any], cand: Dict[str, Any]) -> Dict[str, Any]:
     """判定两次扫描的模型画像是否可比。
 
-    两任务若跑在不同的 provider / 模型上，指标差异**不能归因于被测改动**（例如规则提级），
+    两任务若跑在不同的 provider / 模型上，指标差异**不能归因于被测改动**，
     此时差分门禁的结论无效 —— 必须显式指出，否则会得出错误归因。
     """
     if base["runs"] == 0 and cand["runs"] == 0:

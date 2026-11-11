@@ -1,4 +1,4 @@
-"""A2 Agentic 多轮闭环（2026-09-17 落地）。
+"""A2 Agentic 多轮闭环。
 
 为什么是「文本约定 + 本地回灌」而不是 provider 的 function calling：
   现有 provider 客户端族（src/agents/a2_ai_agent.py）的
@@ -30,7 +30,7 @@ _TOOL_LINE_RE = re.compile(r"^\s*TOOL:\s*(\{.*?\})\s*$", re.MULTILINE)
 
 
 def _tool_manifest() -> str:
-    # §4.2 三期：含外部 MCP 工具（mcp__<server>__<tool>）；无外部工具时与旧版一致。
+    #  三期：含外部 MCP 工具（mcp__<server>__<tool>）；无外部工具时与旧版一致。
     lines = [f"- {s['name']}：{s['description']}" for s in a2_tools.all_tool_schemas()]
     return "\n".join(lines)
 
@@ -68,7 +68,6 @@ def _tool_result_budget_chars(model: str) -> int:
     其余（local/small 及未知档，含 SAFE_FALLBACK）按画像 input_budget 的 10% 计并夹在
     [400, 2000]，避免多轮工具结果把受限上下文打爆。取不到画像时回落 2000，fail-open。
 
-    2026-09-19 修正：原实现用 `input_budget * 4`（4 字符/token）。本项目真实提示词实测
     只有 2.34~2.38 字符/token，该换算会把小模型的可用容量高估约 1.7 倍；改用
     estimate_tokens 的反函数口径（每 token 约 2 字符）折算，偏保守。
     """
@@ -118,7 +117,6 @@ def run_agentic_loop(
       - 工具结果回灌按模型画像做 token 预算，本地小模型收紧、云端放宽；
       - 超过 keep_rounds 的历史轮次被裁剪，保首条任务消息 + 最近若干轮。
     """
-    # §4.2 三期收口（2026-09-20）：启动时幂等加载外部 MCP server 并注册其工具。
     # 未配置 `mcp.enabled` 时零开销直接返回；接线异常一律吞掉（fail-open），
     # 外部进程不可控，绝不能因此阻断主扫描。
     try:

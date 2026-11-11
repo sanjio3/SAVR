@@ -9,7 +9,7 @@ def get_repo_root() -> Path:
 
 
 def get_external_tools_dir() -> Optional[Path]:
-    """外部工具目录（2026-10-27，开源准备）：第三方二进制不入库。
+    """外部工具目录：第三方二进制不入库。
 
     通过 ``SAST_AI_TOOLS_DIR`` 指定；未设置返回 None。
     解析顺序见 ``candidate_tool_paths``：外部目录优先，仓库内路径保留兼容。
@@ -29,9 +29,8 @@ def get_tools_dir() -> Path:
 def get_skills_dir() -> Path:
     """Agent 本地知识文档目录（SKILL.md/references/scripts），**不是**运行时检测 Skill。
 
-    注意区分（2026-09-19 §4.3 澄清）：本目录放「给 Agent 看的项目知识与固定流程」文档；
     运行时检测能力的 Skill（规则表达式 + 提示词片段，带 status/golden/gate）在
-    ``get_rules_dir()``（src/config/rules/*.yaml），由 core/rule_registry 消费。
+    ``get_rules_dir``（src/config/rules/*.yaml），由 core/rule_registry 消费。
     两者概念不同，勿混用。本函数保留供未来 Agent 知识加载使用（当前无调用方）。
     """
     return get_repo_root() / "src" / "agents" / "resources" / "skills"
@@ -126,7 +125,6 @@ def find_java_decompiler_jar(extra_search_dirs: Optional[List[Path]] = None) -> 
 
 
 # --- 黑盒工具（nuclei / ffuf / feroxbuster）---
-# 状态（2026-08-31 决议）：外部暴露面发现（ED）阶段已整体下线删除，以下三个解析器
 # **当前无任何调用方**，仅保留待后续复用（用户决定何时接入、接哪个阶段）。
 # 复用时的硬约束（沿用原 ED 阶段的边界要求）：
 #   * **禁止用于 D1**：D1 只按 A2 攻击计划（trigger_spec）严格执行重放，不得自行 fuzz、

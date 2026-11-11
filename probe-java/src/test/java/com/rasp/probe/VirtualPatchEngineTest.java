@@ -24,7 +24,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <ul>
  *   <li>规则坐标解析 + 可重定义白名单：纯单元，覆盖参数级/任意参数/调用级三种语法与
  *       JDK 核心类、bootstrap 类、final 类、接口的拒绝路径；</li>
- *   <li><b>活体 retransform</b>：真起 {@link ByteBuddyAgent#install()} 拿 Instrumentation，
+ *   <li><b>活体 retransform</b>：真起 {@link ByteBuddyAgent#install} 拿 Instrumentation，
  *       对已加载的 {@link PatchVictim} 做运行时 retransform，证明「BLOCKING 规则下发 →
  *       方法调用被真拦」以及「规则撤销 → reset 复原、方法恢复正常」。这是手册要求的
  *       「必须有明确织入机制，否则只是口号」的实证。</li>

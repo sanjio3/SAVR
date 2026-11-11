@@ -28,18 +28,14 @@ import java.util.concurrent.atomic.LongAdder;
 public final class HookMetrics {
     private static final Map<String, HookCounters> COUNTERS = new ConcurrentHashMap<>();
     private static final AtomicLong droppedEvents = new AtomicLong(0);
-    // 2026-09-16（待请示 6 项 #2）：被抑制的 JVM 自举噪声事件数（无 canary 且不在请求上下文的
     // SINK_HIT）。与 droppedEvents 分开计数，避免把「主动抑制」误报成「队列满丢弃」。
     private static final AtomicLong suppressedStartupNoise = new AtomicLong(0);
-    // 2026-09-21（Q1 全量落地）：被抑制的探针自写日志噪声事件数（tainted source value / sink
     // 含 "sec-agent.log" 标记，覆盖 TAINT_FLOW 主通道）。与 droppedEvents / suppressedStartupNoise
     // 分开计数，便于在运维视图区分「主动抑制的自噪声」与「队列满丢弃」「JVM 自举噪声」。
     private static final AtomicLong suppressedSelfLogNoise = new AtomicLong(0);
-    // 2026-09-30（残留中风险）：被 (canary, sink) 窗口去重抑制的重复重放事件数。与
     // droppedEvents / suppressedStartupNoise / suppressedSelfLogNoise 分开计数，便于在运维视图
     // 区分「主动去重的重放洪峰重复」与「队列满丢弃」「JVM 自举噪声」「探针自噪声」。
     private static final AtomicLong suppressedDedup = new AtomicLong(0);
-    // 2026-09-29（P1 熔断语义改造）：hook 并发类异常（ConcurrentModificationException 等）独立
     // 计数，不进全局熔断错误预算——它只影响单条 hook 调用（该条 fail-open），不代表基础设施
     // 过载，把它计入错误预算曾导致 D2 并发重放期 CME 风暴直接触发全局降级 passthrough、
     // 静默丢失整段证据窗口。
@@ -104,7 +100,6 @@ public final class HookMetrics {
         return suppressedStartupNoise.get();
     }
 
-    /** Record a probe self-log-write noise event suppressed before entering the ring (Q1, 2026-09-21). */
     public static void recordSuppressedSelfLogNoise() {
         suppressedSelfLogNoise.incrementAndGet();
     }
@@ -113,7 +108,6 @@ public final class HookMetrics {
         return suppressedSelfLogNoise.get();
     }
 
-    /** Record a replay-event duplicate suppressed by the (canary, sink) window dedup before entering the ring (2026-09-30 ). */
     public static void recordSuppressedDedup() {
         suppressedDedup.incrementAndGet();
     }
@@ -122,7 +116,6 @@ public final class HookMetrics {
         return suppressedDedup.get();
     }
 
-    /** Record a concurrency-class hook fault (CME etc.) — counted for observability only, never fed to the circuit breaker (2026-09-29 P1). */
     public static void recordConcurrentModError() {
         concurrentModErrors.incrementAndGet();
     }

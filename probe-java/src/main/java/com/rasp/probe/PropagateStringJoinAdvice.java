@@ -6,7 +6,7 @@ import net.bytebuddy.asm.Advice;
  * L2 propagation: String.join (java.base, bootstrap-injected).
  *
  * join(delim, a, b, c) / join(delim, iterable): the produced String is tainted if
- * the delimiter OR any joined element is tainted. Catches join()-based SQL/command
+ * the delimiter OR any joined element is tainted. Catches join-based SQL/command
  * construction bypass.
  */
 public final class PropagateStringJoinAdvice {

@@ -157,7 +157,7 @@ public final class VirtualPatchEngine {
         }
         VirtualPatchRegistry.register(target);
         try {
-            // disableClassFormatChanges() 是 retransform 已加载类的硬要求：默认的 REBASE 策略
+            // disableClassFormatChanges 是 retransform 已加载类的硬要求：默认的 REBASE 策略
             // 会新增改名后的原方法，而 JVM 的 retransformClasses 明确禁止增删成员，会直接拒绝
             // 变换 (且被 fail-open 吞掉，表现为「装了但不触发」)。Advice 只改方法体，冻结
             // 重定义完全够用。

@@ -14,7 +14,7 @@
 #     启动服务: uv run python -m src.cli.service_server
 #     创建任务: 经 API / 前端创建扫描任务（归属 workspace + 下发 task_id），
 #               由 task_service → scan_task_runner → run_benchmark(task_id=...) 统一执行。
-#     注意: 离线 CLI 直跑入口已禁用（见 main() 守卫），所有扫描须经由统一任务编排路径。
+#     注意: 离线 CLI 直跑入口已禁用（见 main 守卫），所有扫描须经由统一任务编排路径。
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
@@ -265,7 +265,6 @@ def _prepare_scan_root(target_path: str, output_dir: str) -> Path:
 def _filter_framework_noise_files(files):
     """剔除「不是被测项目代码」的文件：框架 loader 树 + 第三方库/构建产物。
 
-    2026-11-03 扩充 vendor 过滤：若依 601 有 51 条 .js finding，41 条 xss 全部来自
     `static/ajax/libs/` 下的 bootstrap 系列打包库。只在 A1 启发式里过滤时，602 仍剩
     5 条漏在别的通道（A1 业务逻辑分析器 / A2），所以必须在这里（文件收集后、所有
     分析通道之前）统一剔除。
@@ -1264,7 +1263,6 @@ def build_verified_bundle(vuln: dict, result, raw_output: str) -> dict:
     }
 
 
-# round15 可观测性（fix⑥）：run_a1_scan 内部创建的 A1PipelineService 实例在返回后遗失，
 # 其 _last_scan_meta（引擎/CodeQL 状态/safe_pattern_suppressed）需透出给 stage_results.a1。
 # 用模块级持有者暂存最近一次 A1 扫描的 meta，编排侧在写 a1 stage_results 时读取。
 _LAST_A1_SCAN_META = {}
@@ -1292,7 +1290,6 @@ def run_a1_scan(files, code_root=None):
         results = svc.merge_template_xss_findings(results, files)
     except Exception as _e:
         logger.warning("[A1] 模板层 XSS 并入失败（不影响其它结果）：%s", _e)
-    # Q2（2026-09-10）：静态路由前置绑定（放在所有 A1 合并之后、A2 之前）。
     # 顺序关键——必须早于 _build_a1_evidence_index，使路由随 a1_evidence 进 A2 prompt；
     # 也必须晚于业务/XSS 合并，让这些 A1 自产的 finding 一并拿到路由。
     try:
@@ -1304,7 +1301,7 @@ def run_a1_scan(files, code_root=None):
 
 # 任务级 LLM 覆盖允许键 -> 归一化函数。未知键忽略（记日志），绝不静默吞掉用户意图也绝不猜。
 def _as_bool(raw: Any) -> bool:
-    """布尔归一化。直接用 bool() 会把字符串 "false" 判成 True（2026-09-20 踩到），
+    """布尔归一化。直接用 bool 会把字符串 "false" 判成 True，
     所以字符串要按语义解析。"""
     if isinstance(raw, str):
         return raw.strip().lower() in ("1", "true", "yes", "on", "y")
@@ -1322,7 +1319,6 @@ _LLM_OVERRIDE_SPEC = {
     "prompt_version": ("__self__", str),
 }
 
-# 安全边界（2026-09-20 本机实测）：qwen3:8b 在 8GB 卡上 ctx 硬边界 20480~24576，
 # 24576 与 32768 直接 HTTP 500 且模型被卸载。超出上限一律钳回，不让用户把任务跑崩。
 _CTX_HARD_MAX = 20480
 _CTX_HARD_MIN = 2048
@@ -1330,7 +1326,7 @@ _CONCURRENCY_MAX = 16
 
 
 def _apply_llm_overrides(overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """把任务级「LLM 扫描强度」覆盖应用到本进程（2026-09-20）。
+    """把任务级「LLM 扫描强度」覆盖应用到本进程。
 
     作用域是**本任务进程内**：scan_task_runner 是独立子进程，写 config 单例与进程环境变量
     都不会外溢到后端主进程或其它并发任务 —— 这正是需求约定的作用域
@@ -1399,7 +1395,7 @@ def _apply_llm_overrides(overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _resolve_model_profile(profile: str) -> Dict[str, Any]:
-    """D5（2026-09-19）：把 model_profile 档位名解析成 provider/model 覆写。
+    """D5：把 model_profile 档位名解析成 provider/model 覆写。
 
     背景：model_profile 此前只出现在 run_benchmark 的签名里，函数体内从未被消费
     （一路从 task.options -> task_runner CLI -> scan_task_runner 传进来，然后被丢掉），
@@ -1459,7 +1455,6 @@ def run_a2_scan(files, code_index=None, scan_mode: str = 'filter_first', a1_evid
             'doubao': config.get('doubao', {}),
             'anthropic_compatible': config.get('anthropic_compatible', {}),
             'deepseek': config.get('deepseek', {}),
-            # 2026-09-19 接本地 Ollama：不登记则 _provider_conf(agent_config, 'ollama') 取空，
             # OllamaNativeClient 会静默退回硬编码默认（model=qwen3:8b，丢掉配置里的
             # base_url / num_ctx / keep_alive / think / max_tokens），表现为「改了配置不生效」。
             'ollama': config.get('ollama', {}),
@@ -1506,15 +1501,12 @@ def run_a2_scan(files, code_index=None, scan_mode: str = 'filter_first', a1_evid
 def _norm_path_key(p: str) -> str:
     """把任意形态的文件路径归一成「相对源码根」的键，用于 A1→A2 的按文件对齐。
 
-    2026-10-30（java-sec-code 实测，影响面很大）：
       A1（CodeQL/启发式）产出的 `ScanResult.file` 是**绝对路径**
-      （`D:\\...\\java-sec-code\\src\\main\\java\\org\\joychou\\X.java`），
       而 A2 遍历用的是扫描器的 `rel_path`（`src\\main\\java\\...` 或 `src/main/java/...`）。
       两边直接当字典键比对必然 miss ⇒ **A2 永远拿不到 A1 锚点**，只能盲扫，
-      于是 A2 自建的 finding 族全是 `unknown`（Benchmark 侧实测：A2 仅 6 条、全是 unknown）。
+      于是 A2 自建的 finding 族全是 `unknown`。
 
     归一规则：反斜杠转正斜杠 → 从最后一个 `src/` 起截断（没有则用文件名）。
-    对 Benchmark（`src/main/java/...`）与 java-sec-code（绝对路径）都成立。
     """
     s = str(p or "").replace("\\", "/").strip()
     if not s:
@@ -1542,7 +1534,6 @@ def _a1_findings_by_file(a1_results) -> dict:
             continue
         ev = dict(getattr(r, "evidence", {}) or {})
         for v in (getattr(r, "vulnerabilities", []) or []):
-            # 2026-11-01（族优先顺序修正）：**finding 自带的族优先**，映射只做兜底。
             #
             # 原实现先 `_map_rule_to_family(v.sink, ...)`，把 **sink 名**当 CodeQL rule_id 传。
             # framework_sinks 产出的 finding 本来就带正确的 `type=h.family`
@@ -1572,9 +1563,7 @@ def _a1_findings_by_file(a1_results) -> dict:
                     ) or ""
                 except Exception:
                     fam = ""
-            # 2026-10-30：`_map_rule_to_family` 对未登记的 needle 曾恒返回 "code-injection"
             # （兜底值），于是启发式规则表里已按族登记的 finding 被整批覆盖成 code-injection
-            # —— java-sec-code 实测：`ClassLoader.defineClass` 明明是 deserialization，
             # 却被写成 code-injection，登记后族对不上真值。保留这段兜底以防映射函数回退。
             if fam == "code-injection":
                 try:
@@ -1595,12 +1584,9 @@ def _a1_findings_by_file(a1_results) -> dict:
     return by_file
 
 
-# ── 属性族强证据静态门禁（2026-10-23）──────────────────────────────────────────
-# 背景（run 453 实测）：属性族（弱哈希/弱加密/弱随机）的确认在真实跑批里靠
 # `recover_late_arrival` 的 "late-arrival value_hit gate B" 升级——即「canary 到达 sink 实参」
 # 就升 confirmed_exploitable。但属性族的 sink 实参是**算法名字符串**，canary 到达
 # `MessageDigest.update(param)` 只证明污点抵达，完全不证明算法弱。
-# 结果：BenchmarkTest00022（源码 `MessageDigest.getInstance("SHA-256")`，安全用例）被确认。
 #
 # 离线预演（453）否决了「按族排除该升级路径」的做法：
 #   该路径升级的 weak_hash 3 条 + weak_crypto 2 条中，命中 TP 用例 00071/00537/01829（3 个），
@@ -1619,11 +1605,10 @@ def _strong_property_evidence(code: str, line: int, family: str, code_root: str 
 
     只在属性族生效；数据流族（sqli/xss/pathtraver…）一律不碰。
 
-    2026-10-25 重构：实现已下沉到 ``src/iast/property_evidence.py``（独立可单测）。
     本函数保留为薄包装，避免改动所有调用点。
     新实现相对旧版修掉三个实测坑：
       ① 字符串字面量里的 API 引用不再算作调用（00121/00054 真安全版本被误判成有漏洞）；
-      ② 算法调用与随机源调用分开判（SecureRandom 行无算法名，混在一起 all() 永假）；
+      ② 算法调用与随机源调用分开判（SecureRandom 行无算法名，混在一起 all 永假）；
       ③ 新增 secure_cookie 族（setSecure 全为 true ⇒ 强证据）。
     """
     from src.iast.property_evidence import strong_property_evidence
@@ -1633,10 +1618,8 @@ def _strong_property_evidence(code: str, line: int, family: str, code_root: str 
 def _benchmark_case_category(code: str) -> str:
     """从 Java 源文件的 ``@WebServlet`` 注解取 benchmark 类别前缀。
 
-    例：``@WebServlet(value = "/crypto-00/BenchmarkTest00121")`` → ``crypto``。
     非 benchmark 风格返回空串。
 
-    为什么需要它（2026-10-25，run 469 的两个 FP 根因）：
     CodeQL 报的 finding_type 可能是**误标**的——00121（真值 crypto/false，代码用
     ``AES/GCM`` 强算法）被报成 ``stack trace exposure``，00016（真值 securecookie/false，
     代码 ``setSecure(true)``）被报成 ``http response splitting``。属性族门禁按
@@ -1646,7 +1629,6 @@ def _benchmark_case_category(code: str) -> str:
     """
     if not code or "@WebServlet" not in code:
         return ""
-    # E11 消融（2026-10-26）：benchmark 专属先验可整体关闭。
     # 路由前缀是 **Benchmark 的 URL 布局约定**（换靶场即失效）⇒ 属过拟合面。
     # 置 SAST_AI_BENCHMARK_PRIOR=0 可关掉本先验（与 harm_evidence.family_from_endpoint
     # 共用同一开关），用于量化「关掉后 TP/FP 掉多少」= 过拟合程度。
@@ -1671,7 +1653,6 @@ def _filter_property_family_findings(results, code_root: str = ""):
 
     不改 a1_results 本身：报告里的 A1 finding 数保持原样，避免指标口径被这层过滤影响。
 
-    2026-10-25 扩展：**双族判定**。
     原来只看 finding 自己的 type；type 被误标时（如 00121 的 stack trace exposure）
     门禁族集不含它 ⇒ 门禁空转 ⇒ 安全版本被确认成漏洞。
     现在对每条 finding 同时用两个族判：
@@ -1690,7 +1671,6 @@ def _filter_property_family_findings(results, code_root: str = ""):
     dropped_by_reason: dict = {}
     for r in results:
         fpath = str(getattr(r, "file", "") or "")
-        # 2026-10-29（本轮实证）：相对路径 + 已是子根的 code_root 直接 join 会指向不存在的
         # 路径（...\src\main\java\src\main\java\...）⇒ code 为空 ⇒ 整段门禁静默空转。
         # 统一走 _resolve_source_path（绝对路径 / 逐段剥离前缀都试）。
         _rp = _resolve_source_path(str(code_root or ""), fpath)
@@ -1708,15 +1688,13 @@ def _filter_property_family_findings(results, code_root: str = ""):
         for v in (getattr(r, "vulnerabilities", []) or []):
             vtype = str(getattr(v, "type", "") or "")
             line = int(getattr(v, "line", 0) or 0)
-            # 2026-10-28（P1-2）：「无 sink 即捏造」前置门禁——文件里没有该族应有的 API
             # 就直接剔除。实测 5 个跨族 sql_injection FP（xss/hash 用例里）文件连 SQL 关键字
             # 都没有；真 SQLi 用例 0 个缺（不误杀）。
             if code:
                 try:
                     from src.iast.property_evidence import spurious_no_sink as _sns
-                    # 2026-11-03：框架 sink 命中豁免（与登记层同一判据，见
                     # property_evidence.spurious_no_sink 注释）。XSS.java 是 Spring
-                    # `@ResponseBody` 返回字符串，文件里没有 `getWriter()/.print(` ⇒
+                    # `@ResponseBody` 返回字符串，文件里没有 `getWriter/.print(` ⇒
                     # 被通用 xss 判据判成「跨族捏造」直接剔除 ⇒ 5 条真值 xss finding
                     # 连登记循环都没进（日志里 vhash 一条都不出现）。
                     _fw_hit = bool((getattr(v, "a1_evidence", None) or {}).get("framework_sink"))
@@ -1756,9 +1734,7 @@ def _filter_property_family_findings(results, code_root: str = ""):
     return kept
 
 
-# ── A2 文件级失败可观测（2026-11-07，L1b 掉点根因修复）────────────────────
-# 历史行为：`an.analyze()` 抛超时异常 → `except Exception: specs = []`
-# → 整个文件的全部 finding 静默消失，D1/D2 无从得知，四档只能读到「掉点」。
+# 历史行为：`an.analyze` 抛超时异常 → `except Exception: specs = []`
 # 现在保留一条 analysis_error 占位（不是判假、不产出漏洞），并把文件级失败
 # 与传输层统计一起写进 stage_results.a2，供发布闸门判定本轮是否有效。
 _A2_ANALYSIS_ERRORS: List[Dict[str, str]] = []
@@ -1793,7 +1769,6 @@ def _a2_analyze_with_retry(analyze_fn, rel: str):
     只重试「连接层没拿到完整响应」类异常；熔断异常直接冒泡让整轮快速判 failed，
     避免慢慢产出 95 个空文件却显示 completed。
 
-    2026-11-08：生成超时（socket 读超时）不在这里重试。本轮实测
     重发同一 prompt 全部再次超时，反而把单个卡住文件从 5 分钟拖到 15 分钟以上。
     生成超时直接交给调用方记 analysis_error 占位，由 Gate 0 有效轮判据拦截。
     """
@@ -1839,7 +1814,6 @@ def run_a2_integrated_scan(files, a1_results, code_root: str = "",
     for fi in files or []:
         rel = str(fi.get("rel_path") or fi.get("file") or "")
         code = fi.get("content") or ""
-        # 2026-10-30：A1 的 file 是绝对路径、这里是相对路径，必须归一后再查，
         # 否则 A2 永远拿不到锚点（详见 _norm_path_key 注释）。
         findings = findings_by_file.get(_norm_path_key(rel)) or []
         extra = ""
@@ -1852,7 +1826,6 @@ def run_a2_integrated_scan(files, a1_results, code_root: str = "",
         _two_stage = str(os.environ.get("SAST_AI_A2_TWO_STAGE", "0")).strip().lower() in (
             "1", "true", "yes", "on")
         _a2_stats = {"total": 0, "early_stopped": 0, "generated": 0}
-        # 2026-10-25（plan §20.5.1，决策缓存）：同一文件 + 同一族组合的 A2 判定跨任务复用。
         # Benchmark 模板文件在多个 task 重复，命中即跳过 LLM。默认关闭（SAST_AI_DECISION_CACHE=0），
         # 仅统一重跑验证用；仅作用于默认单段路径（two-stage 自管 prefill，不混用）。
         _cache_on = (str(os.environ.get("SAST_AI_DECISION_CACHE", "0")).strip().lower()
@@ -1871,9 +1844,8 @@ def run_a2_integrated_scan(files, a1_results, code_root: str = "",
             except Exception as _ce:  # noqa: BLE001
                 logger.debug("[integrated-a2] 决策缓存查询失败（忽略）：%s", _ce)
         if code and not _from_cache:
-            # 2026-10-26（P4，471 实测 13.8% 文件可跳过）：若该文件的**全部** A1 finding
             # 都会被属性族门禁剔除，且路由前缀推出的真实类别是属性族，则 A2 的分析结果
-            # 最终一定被丢弃（登记阶段过滤掉）⇒ 分析纯属浪费。
+            # 最终一定被丢弃⇒ 分析纯属浪费。
             # 安全性：条件要求「路由类别 ∈ 属性族」且「每条 finding 都有强证据」，
             # 与登记阶段门禁的判据完全同源（_strong_property_evidence），不是另一套逻辑。
             # 默认关闭（SAST_AI_A2_SKIP_GATED_FILES=1 才生效），等 P1 干净基线后再开。
@@ -1897,7 +1869,6 @@ def run_a2_integrated_scan(files, a1_results, code_root: str = "",
             else:
                 def _call_a2():
                     if _two_stage:
-                        # Jev 理念第一阶段（2026-10-24）：原语判别 + 高置信判否早停。
                         # 默认关闭（SAST_AI_A2_TWO_STAGE=0 走原单段路径），A/B 对照后视召回决定默认值。
                         return an.analyze_two_stage(
                             code, os.path.basename(rel), findings, extra)
@@ -1940,8 +1911,6 @@ def run_a2_integrated_scan(files, a1_results, code_root: str = "",
             _verdict = str(s.get("verdict") or "")
             _sp0 = s.get("spec") or {}
             _canary_only = False
-            # 契约自洽（2026-10-23，实测必需）：提示词要求「false_positive 时 spec 为 null」。
-            # 但 8B 模型经常把 verdict 字段填反——例如 BenchmarkTest01002（真 sqli）返回
             # verdict=false_positive，reason 却写「因此存在 SQL 注入风险」，同时给出了完整
             # route/param/payload。这种自相矛盾时**以 spec 为准**：能写出可打通 spec 说明它
             # 真读懂了；反之 safe 用例即便误填 real 也不会带 payload，后续 D2 仍会否决。
@@ -1951,7 +1920,6 @@ def run_a2_integrated_scan(files, a1_results, code_root: str = "",
                 logger.info("[integrated-a2] %s:%s verdict=%s 但给出完整 spec ⇒ 按 real 处理",
                             rel, s.get("line"), _verdict)
                 _verdict = "real"
-            # 召回保险（2026-10-24）：**无 A1 锚点**的文件里，模型判 false_positive 但给了
             # route/param 时，仍登记一条 canary-only spec（payload 空）交 D2 复核。
             # 依据：01002/01003/01004 这类真注入在没有 SAST 告警时会被判假，spec 一空就整例漏掉
             # （453/457 各丢 3 个 TP）。安全用例的 canary 也会到 sink，但值级闸/抑制规则会拦，
@@ -1962,7 +1930,7 @@ def run_a2_integrated_scan(files, a1_results, code_root: str = "",
                 _verdict = "real"
                 _canary_only = True
             if _verdict != "real":
-                continue  # 判假（false_positive）：不产出 vuln、不登记、不进 D2
+                continue
             sp = s.get("spec") or {}
             try:
                 line = int(s.get("line") or 0)
@@ -1976,7 +1944,6 @@ def run_a2_integrated_scan(files, a1_results, code_root: str = "",
             if not fam and findings:
                 fam = str(findings[0].get("family") or "")
             if not fam:
-                # 2026-10-30（java-sec-code 实测）：无 A1 锚点时族由 A2 自己给
                 # （契约里的 vuln_type，仅在「文件没有 A1 告警」时才要求模型输出）。
                 # 不补这一步，A1 没有对应规则的文件（Velocity SSTI / QLExpress / CORS / JSONP…）
                 # 只能落成 type=unknown，下游既无法分族、也过不了族级门禁。
@@ -2016,7 +1983,6 @@ def run_a2_integrated_scan(files, a1_results, code_root: str = "",
             if _canary_only:
                 # 无锚点文件的「判假但给了 route/param」：只登记 canary 探针，不投 payload。
                 _pl = ""
-            # 2026-10-23（绕过能力落地）：A2 现在同时给「首选 payload」与「绕过变体」。
             # 变体进 candidate_payloads（select_attack_payloads 会全量取出供 D1 逐条投放），
             # 净化器信息进 exploit_spec.filter_spec，登记时落 trigger_specs.filter_spec_json。
             _bypass = [] if _canary_only else [str(x).strip() for x in (sp.get("bypass_payloads") or []) if str(x).strip()]
@@ -2046,7 +2012,6 @@ def run_a2_integrated_scan(files, a1_results, code_root: str = "",
                     "why_bypassable": str(_san.get("why_bypassable") or "")[:300],
                 }
             try:
-                # 2026-10-24（Jev 理念第一阶段）：把原语判定的概率信号挂进 exploit_spec，
                 # 供 D2 入口闸门按 vuln_prob 分派重放策略（full / canary_only / skip）。
                 # 挂在 exploit_spec 而不是 Vulnerability 顶层字段：to_dict 白名单已含
                 # exploit_spec，无需改数据模型；registry 登记时也不受影响（它只读自己认识的键）。
@@ -2066,9 +2031,9 @@ def run_a2_integrated_scan(files, a1_results, code_root: str = "",
                 v.integrated_reason = str(s.get("reason") or "")[:300]
                 v.poc = _pl
                 if _san:
-                    # filter_spec 同时写两处：exploit_spec（报告用）与 dataclass 属性（登记用）。
+                    # filter_spec 同时写两处：exploit_spec（报告用）与 dataclass 属性。
                     # 原因是 normalize_exploit_spec 只保留 schema 内分组键，顶层自定义键会被丢弃，
-                    # 单靠 exploit_spec 会导致 filter_spec_json 恒空（实测 0/354）。
+                    # 单靠 exploit_spec 会导致 filter_spec_json 恒空。
                     v.filter_spec = dict(spec["filter_spec"])
                     if _strength == "none":
                         # 无净化器：不存在「绕过」这个概念，不写 bypass_state，
@@ -2117,7 +2082,7 @@ def rerun_a2_with_feedback(files, code_index=None, scan_mode: str = 'filter_firs
     correction_hint / current_spec）。feedback 为空时等价于普通 A2 重跑（无修正语义）。
 
     Returns:
-        重新分析 + 投影后的 ScanResult 列表（尚未登记 TriggerSpec / 未重跑 D2，由调用方决定）。
+        重新分析 + 投影后的 ScanResult 列表。
     """
     if not feedback:
         logger.warning("[rerun_a2_with_feedback] 未传入 feedback，退化为普通 A2 重跑（无闭环修正语义）。")
@@ -2133,18 +2098,15 @@ def rerun_a2_with_feedback(files, code_index=None, scan_mode: str = 'filter_firs
 
 
 def _failed_files_from_feedback(task_id: Optional[int], a2_fb: List[Dict[str, Any]], files: List[str]) -> List[str]:
-    """§P4（2026-09-16 #2）：把闭环 A2 重跑收窄到「失败 finding 所在文件」。
+    """§P4：把闭环 A2 重跑收窄到「失败 finding 所在文件」。
 
     仅对 I2 裁决为假说缺陷（a2_actionable）的反馈生效。步骤：
     1) 收集 vulnerability_hash_v2（E3：hypothesis_id 兜底——回灌项多只带 hypothesis_id）；
     2) findings.file_path 反查失败文件；3) trigger_specs.expected_sink_file 兜底；
     4) 与本轮 files 归一化（绝对/相对写法）取交集（含文件名兜底）；
-    5) E3（2026-10-10）：任何环节定位不到失败文件 → 返回空（跳过文件级重跑），绝不回退全量。
        D2 重验范围不受影响（调用方 _merge_a2_results 合并回全量集），收窄为空是纯止损。
     """
-    # E3（2026-10-10）收窄：以 vulnerability_hash_v2 为主、hypothesis_id 兜底构建目标哈希集。
     # 旧实现只认 vulnerability_hash_v2，而闭环回灌的 feedback_to_a2 多只带 hypothesis_id
-    # （二者本就同源）——导致 hashes 恒空 → 直接回退全量 files（run 15 全量 A2 多跑 3 遍的根因之一）。
     # 现统一用 hypothesis_id 兜底，使「失败文件收窄」真正生效。
     hashes = set()
     for fb in (a2_fb or []):
@@ -2177,7 +2139,6 @@ def _failed_files_from_feedback(task_id: Optional[int], a2_fb: List[Dict[str, An
         return []
     _fb_files.discard("")
     if not _fb_files:
-        # E3（2026-10-10）：DB 无映射结果 → 收窄为空（跳过本次 a2_rerun 的文件级重跑）。
         # 旧实现此处回退全量 files，是「收窄优化」名存实亡的另一半根因；
         # D2 重验仍用合并后的全量集（_merge_a2_results），收窄为空不影响验证范围。
         logger.warning("[闭环] 失败文件查询无映射结果（E3：收窄为空，跳过文件级重跑）")
@@ -2188,7 +2149,6 @@ def _failed_files_from_feedback(task_id: Optional[int], a2_fb: List[Dict[str, An
         # 真实 target 目录与 prepared 副本目录根不同，但仓库内部结构一致，
         # 这样「绝对(真实 target)/绝对(prepared)/相对」三种写法都能对齐。
         # 旧实现用 endswith 直接比前缀不同的绝对路径，永远匹配不上 → 回退全量，
-        # 实测 run 15 闭环把全量 A2 文件级分析多跑了 3 遍（占调用 74.7%）。
         # 注意：不能用 os.path.normcase —— Windows 下它会把 / 还原成 \，导致 /src/ 找不到。
         p = str(p).replace("\\", "/").lower()
         idx = p.find("/src/")
@@ -2206,8 +2166,6 @@ def _failed_files_from_feedback(task_id: Optional[int], a2_fb: List[Dict[str, An
         _fb_base = {os.path.basename(r) for r in _fb_rel}
         _matched = [f for f in files if os.path.basename(_repo_rel(f)) in _fb_base]
     if not _matched:
-        # E3（2026-10-10）：相对路径与文件名兜底都匹配不上 → 收窄为空（跳过本次文件级重跑），
-        # 绝不回退全量 files。回退全量会让闭环 A2 重跑退化成全量重扫（run 15 实测占调用 74.7%），
         # 且 D2 重验范围本就不受收窄影响（_merge_a2_results 合并回全量），跳过是纯止损。
         logger.warning(
             "[闭环] 失败文件交集为空（E3：收窄为空，跳过文件级重跑）：hashes=%d feedback_files=%d",
@@ -2279,7 +2237,6 @@ def _merge_vulns_into(base_res: Any, new_res: Any) -> Any:
     # 主体必须是 new_res：重跑的语义就是「用新结果替换该文件」，除 vulnerabilities 之外的
     # 文件级字段（版本标记/文件级评分等）都应以重跑产物为准；并集只做一件事——把
     # 「重跑未复答」的旧条目补回新结果，绝不能反过来让旧对象当主体。
-    # 2026-10-07：曾先试 base_res，导致既有锁 test_rerun_replaces_only_its_own_files
     # 失败（该文件结果的版本标记回退成 old，等于重跑白跑），改为优先 new_res。
     for _target in (new_res, base_res):
         try:
@@ -2291,20 +2248,17 @@ def _merge_vulns_into(base_res: Any, new_res: Any) -> Any:
 
 
 def _merge_a2_results(base: List[Any], rerun: List[Any]) -> List[Any]:
-    """把闭环重跑结果按文件合并回全量 A2 结果集（2026-09-18，修复闭环降级）。
+    """把闭环重跑结果按文件合并回全量 A2 结果集。
 
     背景：闭环为省 LLM 只重跑「失败 finding 所在文件」（_failed_files_from_feedback 收窄），
     但 run_d2_verify 的候选全集是由传入的 a2_results 构造的（for result in a1_results + a2_results）。
     直接把收窄结果传进去，D2 就只重验那几个文件，与闭环前的全量计数不可比 ——
-    实测 run 17 baseline 65 → 闭环后 43（gain -22），且降级后的 43 被写进最终报告。
 
     收窄只是「少跑 LLM」的优化，绝不能缩小 D2 的验证范围。
     合并口径：以全量集合的文件顺序为骨架，按漏洞假说身份键 (file, line, type) 取并集——
     重跑命中同键则覆盖（拿到修正后的 exploit_spec），未命中则保留 base 原有假说；
     重跑新出现的文件追加到末尾（保持报告顺序稳定）。
 
-    2026-10-07 起不再「整份替换」：整份替换在重跑产物收窄时会连带清掉未被重跑到的假说，
-    r62 pathtraver-1 实测由此丢 59 个用例（含 33 条真值 TP，召回 100%→54.2%）。
     """
     if not rerun:
         return list(base or [])
@@ -2324,7 +2278,6 @@ def _merge_a2_results(base: List[Any], rerun: List[Any]) -> List[Any]:
             order.append(f)
             by_file[f] = r
         else:
-            # 2026-10-07（r62 pathtraver-1 事故）：原实现是 by_file[f] = r —— 整份替换。
             # A2 闭环重跑为省 LLM 只重跑部分文件，且重跑产物常比原始少（LLM 未对全部假说复答），
             # 整份替换会把 base 里「没被重跑到 / 重跑未复答」的假说一并清掉。
             # 实测由此丢 59 个用例、其中 33 条真值 TP（召回 100%→54.2%）。
@@ -2344,7 +2297,7 @@ def _merge_a2_results(base: List[Any], rerun: List[Any]) -> List[Any]:
 
 
 def _mk_a2_progress(_tid: Optional[int], _od: str, _it: int):
-    """§P4（2026-09-16 #4②）：闭环 A2 重跑的逐文件进度心跳回调（on_progress(done, total)）。"""
+    """§P4：闭环 A2 重跑的逐文件进度心跳回调（on_progress(done, total)）。"""
 
     def _cb(done, total):
         _emit_stage_progress(_tid, _od, "a2_progress",
@@ -2369,7 +2322,6 @@ def _build_a1_evidence_index(a1_results):
         evidence = dict(getattr(result, "evidence", {}) or {})
         if not evidence:
             continue
-        # 2026-10-30：A1 侧 file 常是绝对路径、A2 侧是相对路径，键必须归一对齐，
         # 否则 A1 证据永远合不进 A2 结果（同 _norm_path_key 注释）。
         file_key = _norm_path_key(str(getattr(result, "file", "") or ""))
         if file_key:
@@ -2717,7 +2669,6 @@ def _apply_a1_evidence_to_vulnerability(vuln, evidence):
 def _drop_spurious_cross_family(results, code_root: str = ""):
     """A2 侧「跨族无 sink 即捏造」门禁（与 A1 侧 spurious_no_sink **同一判据**）。
 
-    2026-10-29（本轮/ 本轮实证）：
         hash / xss 的安全用例上，A2 自建出 ``sql_injection`` finding，而该文件里连
         sql/jdbc/statement 关键字都没有。A1 侧早已有这道闸
         （``_filter_property_family_findings`` 里的 ``spurious_no_sink``），但 A2 自建 finding
@@ -2740,7 +2691,6 @@ def _drop_spurious_cross_family(results, code_root: str = ""):
     dropped = 0
     for r in results or []:
         fpath = str(getattr(r, "file", "") or "")
-        # 2026-10-29（本轮实证）：`vuln.file` 常是**相对路径**（src\main\java\...），
         # 而 code_root 已经是 ...\src\main\java。直接 join 得到 ...\src\main\java\src\main\java\...
         # 不存在 ⇒ code 为空 ⇒ 门禁静默空转（01586/01661 就是这样漏掉的）。
         # 统一走 _resolve_source_path（绝对路径 / 逐段剥离前缀都试）。
@@ -2759,7 +2709,6 @@ def _drop_spurious_cross_family(results, code_root: str = ""):
         for v in (getattr(r, "vulnerabilities", []) or []):
             vtype = str(getattr(v, "type", "") or "")
             try:
-                # 2026-11-03：同 `_filter_property_family_findings`，框架 sink 命中豁免。
                 _fw_hit2 = bool((getattr(v, "a1_evidence", None) or {}).get("framework_sink"))
                 if _sns(code, vtype, framework_sink=_fw_hit2):
                     dropped += 1
@@ -2856,7 +2805,7 @@ def _method_window(lines: list, anchor: int, span: int) -> tuple:
 
 
 def _backfill_code_snippets(a2_results, code_root: str, *, span: int = 2) -> Dict[str, Any]:
-    """确定性片段回填（2026-09-20）：给「有 file+line 但没有代码片段」的 finding 补上真实源码行。
+    """确定性片段回填：给「有 file+line 但没有代码片段」的 finding 补上真实源码行。
 
     实测暴露的长期缺陷：**应用类 findings 里只有 10% 带代码片段**，
     历史轮次 连续八轮都是 3~6%（云端 agnes 的 本轮更低，只有 3.2%，所以不是
@@ -2868,7 +2817,6 @@ def _backfill_code_snippets(a2_results, code_root: str, *, span: int = 2) -> Dic
     后果不止是「报告里看不到代码」：``evaluate_proof_obligations`` 的证据文本
     （merge_supporting_text）包含 code_snippet，片段为空 → 证明义务拿不到任何代码
     依据 → 直接被压成 broad_static；路径 C 的二次证明也因此**没有可投喂的上下文**
-    （run 21 的 135 条 A2_PROOF_FAILURE 里 127 条无片段）。
 
     修法：file+line 已知，直接从磁盘读真实源码行回填。这是**真实数据**，不是模型
     生成、也不是占位；读不到就保持空，绝不编造。放在 A1 证据合并（证明义务评估）
@@ -2929,7 +2877,7 @@ def _backfill_code_snippets(a2_results, code_root: str, *, span: int = 2) -> Dic
 
 
 def _run_proof_second_pass(a2_results, *, task_id=None, output_dir="", progress_logger=None) -> Dict[str, Any]:
-    """路径 C（2026-09-20）：对 broad_static 条目跑一轮聚焦提示词二次证明。
+    """路径 C：对 broad_static 条目跑一轮聚焦提示词二次证明。
 
     用户铁律：运行状态必须同步前端、不能后端偷跑。所以这里把它做成独立可见阶段
     （a2_proof_second_pass），有心跳、有阶段耗时、有统计落 stage_results。
@@ -3021,7 +2969,7 @@ def _run_proof_second_pass(a2_results, *, task_id=None, output_dir="", progress_
 
 
 def _line_content_looks_implausible(text: str) -> bool:
-    """待请示 6 项 #6（2026-09-16）：判断某行源码内容是否「不像真实漏洞定位」。
+    """待请示 6 项 #6：判断某行源码内容是否「不像真实漏洞定位」。
 
     命中即视为 LLM 猜测的行号不可信，应用端点注解行回填：
     - 空行 / 纯括号行（} ; { };
@@ -3046,11 +2994,9 @@ def _line_content_looks_implausible(text: str) -> bool:
 def _route_and_method_from_signature(signature: str):
     """从 entry_discovery 条目的 signature 里解析 (route, method)。
 
-    2026-09-16 修正（#6 回填实测失效的根因）：entry_discovery_service._discover_file 产出的
     条目字段是 entry_type / file / line / signature / confidence / source / entry_hash /
     request_params / metadata —— **没有 route，也没有 method**。原实现用
     `_dr.get("route") == entry["route"]` 取注解行，左边恒为空串，永远匹配不上，
-    导致 entry.source_line 全空、回填一次都没触发（run 11 实测 71 条 spec 的
     source_line 全为 ""，line_backfilled=0）。改为从 signature 解析。
 
     解析规则：注解名决定 method（GetMapping→GET 等；RequestMapping 无 method 参数时返回 ""，
@@ -3094,7 +3040,6 @@ def _annotation_line_for_route(route, method, discovered_routes, vuln_file=""):
         if not isinstance(dr, dict):
             continue
         # 只认 web_route。真实 entries 里混有 rpc_method 等非路由条目，它们的 signature 是
-        # javadoc/方法签名文本（实测 target-mall 有 rpc_method 条目的 signature 是一行中文注释），
         # 一旦落进下面的「同文件兜底」就会被当成注解行，把 line 指到注释上。
         _et = str(dr.get("entry_type") or "")
         if _et and _et != "web_route":
@@ -3119,7 +3064,7 @@ def _annotation_line_for_route(route, method, discovered_routes, vuln_file=""):
 
 
 def _backfill_finding_line(vuln, code_root):
-    """待请示 6 项 #6（2026-09-16）：用端点注解行回填明显错误的 finding.line。
+    """待请示 6 项 #6：用端点注解行回填明显错误的 finding.line。
 
     仅当 vuln 已解析出可达入口（entry.source_line>0）且当前 vuln.line 落在不可信行
     （空行/右花括号/字段声明/构造赋值）或 line<=0 时才覆盖。命中真实 sink 的可信行不动，
@@ -3165,7 +3110,7 @@ def _run_integrated_analyst(a2_results, code_root, discovered_routes=None, on_pr
     替代旧的 _pre_resolve_a2_endpoints(确定性解路由) + plan_pocs(通用 payload)：
     - 审计与构造一体：route/method/param/payload 都由 LLM 直接给，不设确定性校验器；
       错路由/打法由后续 D1/D2/I2 重放闭环自纠兜底。
-    - false_positive：entry_resolved=False（不进 D2/不登记），记录理由。
+    - false_positive：entry_resolved=False，记录理由。
     跨文件：_gather_cross_file_context 从 a1_evidence 的 sink/source/sanitizer 候选取异文件片段注入。
     """
     from concurrent.futures import ThreadPoolExecutor
@@ -3213,7 +3158,6 @@ def _run_integrated_analyst(a2_results, code_root, discovered_routes=None, on_pr
             logger.error("[integrated-a2] 文件 %s 分析失败（保留可诊断占位）：%s", fpath, _ae)
             return fpath, _a2_failure_placeholder(findings, _ae), True
 
-    # 2026-11-07：默认并发 4→2。本机 OLLAMA_NUM_PARALLEL=2，再高的并发不会增加
     # 吞吐，只会线性拉长排队并推高 socket 读超时概率（见 src/core/llm_gate.py 头注）。
     # 仍可用 SAST_AI_INTEGRATED_WORKERS 覆盖，但默认值必须与服务端能力对齐。
     workers = max(1, int(float(os.environ.get("SAST_AI_INTEGRATED_WORKERS", "2") or 2)))
@@ -3300,13 +3244,12 @@ def _pre_resolve_a2_endpoints(a2_results, code_root, discovered_routes=None):
     entry.route（通道 B）与后续 trigger_specs.target_endpoint（通道 A）两处投影完全一致，
     消除此前 100% vs 16.7% 的漂移。
 
-    设计来源（用户落地决议，2026-09-01）：
     - 解析器产出的入口优先于 LLM 猜测，plan_pocs 直接消费 ground truth，
       不再让 LLM 猜路由（避免 route 与 payload 不一致 / D1 重放 404）。
     - 解析不出入口的漏洞标 entry_resolved=False（无可达入口），后续不进 a21_selected / D2，
       省掉大量全空 route 的无效验证。
     - 静态分析与 TriggerSpec 登记解耦保持不变：本步骤只写回 entry，不登记 spec
-      （登记仍由后续 _auto_register_a2_trigger_specs 统一完成）。
+      。
     """
     from src.core.exploit_spec import normalize_exploit_spec
 
@@ -3341,10 +3284,8 @@ def _pre_resolve_a2_endpoints(a2_results, code_root, discovered_routes=None):
                 _cat = str(resolved.get("category") or "")
                 if _cat:
                     entry["business_logic_category"] = _cat
-                # 2026-09-16（待请示 6 项 #6）：捕获端点注解行到 entry.source_line，
                 # 供 line 回填。注意 entry_discovery 条目**没有 route/method 字段**，
                 # 必须从 signature 解析——原实现直接读 _dr["route"] 恒为空，
-                # 导致 source_line 全空、回填从未触发（run 11 实测）。
                 _src_line = _annotation_line_for_route(
                     entry["route"], entry["method"], discovered_routes,
                     vuln_file=(getattr(vuln, "file", "") or ""),
@@ -3358,11 +3299,9 @@ def _pre_resolve_a2_endpoints(a2_results, code_root, discovered_routes=None):
                 # 不再靠「清空全部 key」这种副作用达成。
                 entry["entry_resolution_failure"] = str(resolved.get("resolution_failure") or "no_reachable_entry")
             vuln.exploit_spec = spec
-            # 2026-09-16（待请示 6 项 #6）：entry.source_line 已随 spec 写回 vuln，此时再回填
             # finding.line 到端点注解行（仅当当前 line 不可信时）。必须放在 vuln.exploit_spec=spec
             # 之后——早一步 vuln.exploit_spec 还是旧对象，读不到刚写入的 source_line。
             _backfill_finding_line(vuln, code_root)
-            # 块2 修复（2026-09-10）：entry.route/method 回填后必须重算契约完整度。
             # 此前 vuln.contract_completeness 保留的是"回填前"算出的陈旧快照
             # （status='missing', missing=['entry.route','entry.method']），而 report_manager
             # 用 `vuln.get('contract_completeness') or ...` 模式保留旧值、D2 门禁又直接读该字段，
@@ -3390,11 +3329,10 @@ def _aggregate_d1_replay(verifications):
     历史版本据此把 D1 永远算成 0 条 / skipped（即用户看到的「又被跳过了」）。
 
     正确的口径：
-    - replayed：verify() 是否真的被 trigger_spec 驱动（D1 实际发了重放流量）。
+    - replayed：verify 是否真的被 trigger_spec 驱动（D1 实际发了重放流量）。
       run_d2_verify 已在每条 verification 写入 ``trigger_spec_provided``。
     - arrivals：``is_sink_reached(iast_evidence.state)``（IAST 探针确认 canary 到达 sink）。
       必须走统一判据，**不能**写成 ``state == 'sink-reached'``：探针显式断言态
-      ``sink-reached-probe`` 同样算抵达，R28 全量实测 454 条 canary 事件里 415 条是 probe 态，
       硬编码字符串比较会让抵达数几乎归零（详见 高危复发坑.md 第 24 条）。
     - impacts：``dast_impact_evidence.reached``（DAST 侧确认影响面到达）。
     """
@@ -3431,7 +3369,6 @@ def _aggregate_d1_replay(verifications):
         "status": "completed" if _d1_replayed else "skipped",
         "finding_count": _d1_impacts,
         "candidate_count": _d1_replayed,
-        # 2026-09-17（待请示 §4.6-2.2）：补 replayed_count。此前该字段缺失（前端读到 0），
         # 与 message 的「78 条重放」口径不一致。candidate_count 与 replayed_count 在当前实现
         # 同源（都= trigger_spec 驱动重放的条数），显式列出二者消除口径歧义。
         "replayed_count": _d1_replayed,
@@ -3502,7 +3439,7 @@ def _d2_verification_detail(v: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _scheduling_payload(scheduling, max_trace=400):
-    """裁剪 D2 调度埋点以便落进 summary_json（run 38 落盘缺陷修复配套）。
+    """裁剪 D2 调度埋点以便落进 summary_json。
 
     execution_trace 是逐漏洞执行期埋点（每个漏洞一条，含 vhash / stable_key /
     spec_found_count / verify_called / fold_status 等），大任务可上千条。全量入
@@ -3528,7 +3465,7 @@ def _aggregate_d2_verdict(verifications):
     关键修正：历史版本 ``summary.d2_verified_count`` 取 ``canonical_d2_stats['verified_poc_count']``
     （需 poc_verified 且 confirmed_exploitable，canary 降级重放下恒为 0），而 ``stage_results.d2
     .verified_count`` 取 D2 实际核验条数（如 4），两端对不齐、且 D2 五态没回填到 task 级摘要
-    （即 Q4 文档里的「4 个已验证 vs summary 全 0」）。
+    。
 
     本函数统一以「D2 实际核验的漏洞条数」为 verified_count，并给出 harmful / sink-reached /
     impact / confirmed 拆分与按 family 分布，供 stage_results.d2 与 report_manager.summary 同轴回填。
@@ -3583,8 +3520,7 @@ def _aggregate_d2_verdict(verifications):
     }
 
 
-# ---------------- 业务逻辑漏洞：统一 verify() 透明路由到差分重放（#2/#5）----------------
-# 业务逻辑漏洞族真源见 src/core/exploit_spec.py 的 DIFFERENTIAL_PROOF_FAMILIES（2026-09-03 合并 P1–P5）。
+# ---------------- 业务逻辑漏洞：统一 verify 透明路由到差分重放（#2/#5）----------------
 # _BUSINESS_LOGIC_CATEGORIES 直接引用规范集；D1 重放路由特例 idor→bola 单独保留
 # （business_logic.verify 仅 8 类，无 idor；IDOR 在 D1 层与 BOLA 同路由）。
 _BUSINESS_LOGIC_CATEGORIES = set(DIFFERENTIAL_PROOF_FAMILIES)
@@ -3667,10 +3603,7 @@ def match_trigger_specs_for_vuln(vuln: Dict[str, Any], assoc_index: Dict[str, Li
             return _hit
     if assoc_index.get(_vh):
         return assoc_index[_vh]
-    # 2026-10-01（批次 A 续）：路由兜底。聚合吸收成员（is_absorbed）的注册端与验证端常因
     # 族名归一/行号漂移导致 stable 键与 vhash 双双落空 → 永不命中自己的 trigger_spec →
-    # 该 spec 从不进 D2、verification_status 恒空（run 45 实测：真 XSS 用例
-    # BenchmarkTest00467/00543/02579 的 spec 全部 never_replayed）。
     # 这里用 vuln 自身 exploit_spec.entry.route 与 spec.target_endpoint 归一后比对，
     # 作为最后兜底（仅在前面全部落空时执行，不改变既有命中优先级）。
     _route = ""
@@ -3699,15 +3632,11 @@ def match_trigger_specs_for_vuln(vuln: Dict[str, Any], assoc_index: Dict[str, Li
 
 
 def _absorbed_excluded_from_d2() -> bool:
-    """吸收成员是否应被排除在 D2 之外（2026-10-01 批次 A）。
+    """吸收成员是否应被排除在 D2 之外。
 
-    历史行为（2026-09-18 A2 方案二）：is_absorbed 补行只用于覆盖率统计与关联桥，
     硬闸排除在 D2 之外，靠 canonical_group_key 继承代表结论。
 
-    run 44 实测证伪该设计的正确性：28 条 no_evidence 中 **27 条**是吸收成员；
-    xss:output_chain 代表 spec 34847 自身判 no_evidence → 21 条成员连带继承阴性，
     且 d2_output=''（从未单独重放）。而吸收成员各自持有独立 target_endpoint
-    （不同的 OWASP BenchmarkTest 用例），本就是独立待验目标。
 
     故默认改为放行（单独重放取真实 verification_status），报告层仍按 is_absorbed
     折叠展示，聚合语义不变。逃生开关 SAST_AI_ABSORBED_NO_D2=1 恢复旧行为。
@@ -3716,7 +3645,7 @@ def _absorbed_excluded_from_d2() -> bool:
 
 
 def _d2_gate_skip_reason(vuln: Dict[str, Any], trigger_specs_by_hash: Dict[str, Any]) -> str:
-    """D2 门禁「未入队」的显式原因（2026-09-22，闭环 D2_NOT_SCHEDULED）。
+    """D2 门禁「未入队」的显式原因。
 
     需求约定：未进 D2 必须显式记 runtime 原因，不得留 unknown。本函数与
     ``_d2_gate_predicate`` 是同一判据的两面（一个给布尔、一个给人读原因），二者必须同源；
@@ -3724,10 +3653,8 @@ def _d2_gate_skip_reason(vuln: Dict[str, Any], trigger_specs_by_hash: Dict[str, 
     """
     if vuln.get('a21_selected') is True:
         return ''  # 已入队，无原因
-    # 2026-10-01（批次 A）：吸收成员默认放行进 D2，仅在逃生开关打开时才记录「按设计不进 D2」。
     if vuln.get('is_absorbed') and _absorbed_excluded_from_d2():
         return 'absorbed_member: 聚合吸收成员按开关 SAST_AI_ABSORBED_NO_D2=1 排除（旧行为）'
-    # 与 _d2_gate_predicate 同源（2026-11-02）：属性族 / 无入口族按设计不进 D2。
     if not _vuln_dynamic_eligible(vuln):
         _fam = _vuln_family_token(vuln)
         return ('property_family_static_only: 族 %s 的危害是代码属性（不是「载荷进 sink」），'
@@ -3757,11 +3684,10 @@ def _orphan_replay_enabled() -> bool:
 def _enqueue_orphan_trigger_specs(all_vulns: List[Dict[str, Any]],
                                   specs_by_anykey: Dict[str, Any],
                                   db: Any = None, task_id: Optional[int] = None) -> int:
-    """Phase 1.5（2026-10-17）：把「已登记但无 finding 驱动」的 trigger_spec 补成 D2 候选。
+    """Phase 1.5：把「已登记但无 finding 驱动」的 trigger_spec 补成 D2 候选。
 
-    实测根因（r102 cmdi 两片）：55 条 spec 的 `failure_attribution=pipeline_gap`，其中
     **18 条真报 + 37 条误报**，全部 `replayable=1`、`attack_payloads` 齐全、`target_endpoint` 可用，
-    却因「源 finding 未出现在 D2 候选集（被聚合合并/结果 error/二次证明登记）」而**从未重放**
+    却因「源 finding 未出现在 D2 候选集」而**从未重放**
     （终态 `no_evidence` + `raw_json.unverified_kind=never_replayed`）。
 
     这类 spec 有完整重放三要素，补进 D2 是纯收益：
@@ -3801,7 +3727,6 @@ def _enqueue_orphan_trigger_specs(all_vulns: List[Dict[str, Any]],
     # 空串 与 'no_evidence' 都属「无结论」——后者是上一次 D2 末态兜底写的，
     # 恰恰是「从未重放」的标记（finalize 在 D2 尾部才写），重跑时必须重新入队。
     #
-    # 2026-11-06（jsc 624 实测修正）：把 `unconfirmed` / `sink_reached` /
     # `confirmed_code_property` 列进「已有结论」是语义错误——`unconfirmed` 是
     # trigger_spec 的**初始默认值**，`confirmed_code_property` 是静态代码属性结论，
     # 两者都可能在「一次 HTTP 重放都没发过」时出现。624 里
@@ -3857,7 +3782,6 @@ def _enqueue_orphan_trigger_specs(all_vulns: List[Dict[str, Any]],
             if not str(_s.get("target_endpoint") or "").strip():
                 continue
             _vh = str(_s.get("vulnerability_hash_v2") or "")
-            # 2026-11-06（jsc 625 实测）：QLExpress 的 spec vhash 在 findings 里
             # 出现过（`/vuln1` 有 4 条 QLExpress finding），于是这里判「已被覆盖」
             # 跳过补入；但驱动它的 finding 同样没能发出任何重放，spec 依然是
             # 零 replay_attempts。覆盖只说明「有个 finding 挂着」，不等于「D2
@@ -3907,10 +3831,9 @@ def _enqueue_orphan_trigger_specs(all_vulns: List[Dict[str, Any]],
         _v.setdefault("a1_evidence", {})
         _v.setdefault("canonical_group_key", "")
         _v.setdefault("chain_id", "")
-        # exploit_spec 不参与 vhash（实测），门禁据此判定「有重放目标」放行
+        # exploit_spec 不参与 vhash，门禁据此判定「有重放目标」放行
         _v["exploit_spec"] = {"entry": {"route": str(_s.get("target_endpoint") or "")}}
-        # 2026-11-06（jsc 625 实测）：以 raw_json 为基底重算的 vhash 与 spec 登记的
-        # vulnerability_hash_v2 全部对不上（6 条零重放 spec 实测 6/6 不一致），
+        # vulnerability_hash_v2 全部对不上，
         # 而 D2 主循环按 vhash 反查 _trigger_specs_by_anykey —— 找不到 spec 就
         # 不发重放，于是「每轮补入 34~37 条孤儿、每轮零重放」无限循环。
         # 孤儿 vuln 的唯一用途就是把这条 spec 送进 D2，直接复用 spec 的登记 vhash
@@ -3983,31 +3906,25 @@ def _d2_gate_predicate(vuln: Dict[str, Any], trigger_specs_by_hash: Dict[str, An
       auto_register 已用 resolve_endpoint_full 独立解析出路由并登记 spec，不应因门禁而漏进 D2
       （否则 verification_status 永久为空，如 Mapper 派生 SQLi /products）。
 
-    关联键加固（钉死 D2 关联键，修复 10 条空状态 spec 根因）：优先用 route-漂移免疫的
+    关联键加固：优先用 route-漂移免疫的
     stable_vuln_key 反查 spec，vulnerability_hash_v2 仅作兜底。stable 主键使「注册端 route 与
     验证端 route 漂移」时仍能命中已登记 spec，门禁不再把这类漏洞漏在 D2 之外。
     """
     if vuln.get('a21_selected') is True:
         return True
-    # 2026-10-01（批次 A）：吸收成员默认放行，不再硬闸排除。
     # 原实现在此无条件 return False，导致成员永不进 D2、只能继承代表结论；代表判阴性时
-    # 整组连带假阴性（run 4428 条 no_evidence 中 27 条为吸收成员）。放行后成员凭自身
     # target_endpoint 走下面的 route / trigger_spec 兜底分支单独重放。详见
     # _absorbed_excluded_from_d2 的说明与 SAST_AI_ABSORBED_NO_D2 逃生开关。
     if vuln.get('is_absorbed') and _absorbed_excluded_from_d2():
         return False
-    # 2026-11-02（评审）：**属性族 / 无 HTTP 入口族不进 D1/D2**。
     # 理由：这些族的「危害」是某个属性不对（Cookie 没 setSecure、用了弱算法、
     # 配置项没开），与「有没有把载荷送进 sink」无关。跑重放既证明不了，也证明不了反面，
     # 只会占分母、拉低动态确认率，还会让 D2 日志里塞满 no-arrival 噪声。
-    # 它们改走静态事实层（见 metric_layers 的属性族列），最后和真值表对账。
     if not _vuln_dynamic_eligible(vuln):
         return False
-    # §③ 强制入队（2026-09-22，闭环 D2_NOT_SCHEDULED）：proof_tier=chain_proven 的 finding 是
     # A2/A2.1 已证调用链的一级 findings，必须进 D2 验证集，不受下面 route / spec 兜底分支约束。
     # 历史缺口：这类 finding 在「A2.1 二次证明把某条 finding 升级为 chain_proven、但其自身
     # canonical_group_key 为空且 entry.route 未回填、spec 关联又未命中」时会整体漏排，
-    # 终态就是「chain_proven 却零执行痕迹」——即 D2_NOT_SCHEDULED（run 31/32 各 14 条）。
     # 纯漏验、纯收益：入队后即便打不到，也会得到明确的 unconfirmed / no_evidence + 运行原因，
     # 不再留下无任何 D2 证据的空壳。判据只取 proof_tier（契约就绪性留给 D2 内部按 spec 判定，
     # 避免因契约 completeness 口径漂移再次漏排）。聚合吸收成员已在上面被拦截。
@@ -4028,13 +3945,10 @@ def _d2_gate_predicate(vuln: Dict[str, Any], trigger_specs_by_hash: Dict[str, An
 
 # 「已到达」观测态清单（与 tools/check_lost_arrival.py 的 _ARRIVAL_STATES 保持一致）。
 # 这些 iast_state 是**运行时观测事实**，任何后处理都不得覆盖它们——L3 运行时到达指标
-# 完全依赖它们统计，一旦被路由标记盖掉，指标会凭空掉而真实到达一条没少（2026-10-04 实测）。
 _ARRIVED_IAST_STATES = {
     "arrived", "arrival-sanitized", "sink-reached", "sink-reached-probe",
-    # 2026-11-04（jsc 619 实测）：`technique-proven` 是技术判据 post-pass 写的**到达态**
     # （响应层可复现观测已构成危害证据）。它不在这个集合里 ⇒ 后续轮的族路由 postpass
     # 把它当「非到达态」⇒ 走 else 分支把 iast_state 改写成 `family-route:<status>`，
-    # **把刚确认的结果的标签覆盖掉**（jsc 619 spec 237863：technique_evidence.admitted=True
     # 却最终停在 `family-route:unconfirmed`）。
     #
     # 机理与 4183 行注释里说的「标签假退化」完全一致：到达态一律保留原值，
@@ -4044,12 +3958,11 @@ _ARRIVED_IAST_STATES = {
 
 
 def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
-    """I 族路由 post-pass（2026-09-28 批准，根因1 方法A 修复）。
+    """I 族路由 post-pass。
 
     根因1：三失效族（weak_hash/weak_crypto=算法通道；secure_cookie=属性通道）在 iast/service.py
     注册期直接判 confirmed_exploitable，绕过 D2 verify 链路，导致 D2 写回循环内的 I 路由段
     （run_d2_verify 内 ``for vuln in all_vulns`` 循环）结构性够不到它们——路由完全惰性、
-    三失效族假阳性出清从未发生（run 31 实测 19 条仍 confirmed_exploitable、0 条 confirmed_code_property）。
 
     本 post-pass 独立于 ``_d2_gate_predicate``，在 D2 主循环结束后，直接按 family 取这三族的
     confirmed_exploitable spec，逐条 ``find_identity(taint_marker)``→查 ``iast_events(canary)``→
@@ -4060,13 +3973,10 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
     """
     if task_id is None or sdb is None:
         return 0
-    # 2026-10-04 补入 weak_random：属性路由族共四族，缺它就是「只改了一半」。
-    # 事故链：2026-10-03 的判据错配出清把 weak_random 判成了代码属性主张（不该再拿
     # confirmed_exploitable），family_verdict 里 _RANDOM_FAMILY_TOKENS / judge_random_family
     # / route_for → random_source 都齐了，唯独这张目标表没跟着加 —— 于是 M4 通道注册表上线后
     # weak_random 的仲裁主判据变成 code_property（harmful=False），既够不到 confirmed_exploitable，
     # 又没人把它路由到 confirmed_code_property，整族凭空掉成 unconfirmed。
-    # 实测：run 90 weakrand 类别 L2 TP 由 16 掉到 7（run 46→ run 90 共 -12 条里的 -9 条在此）。
     _TARGET_FAMILIES = ("weak_hash", "weak_crypto", "secure_cookie", "weak_random")
     # 介入状态放宽：原先只挑 confirmed_exploitable，是因为那时「 exploratory」的上游结论一定长
     # 那样；M4 之后同一族的仲裁结果可能是 code_property（harmful=False），spec 停在 unconfirmed。
@@ -4079,7 +3989,6 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
         logger.warning("[D2][family-route-postpass] 依赖导入失败，跳过：%s", _imp_e)
         return 0
     try:
-        # 2026-10-09 修正（P0 capability_family 系统性塌缩根治）：
         # 两个并存的坑，必须一起修：
         #  (a) 能力识别器把多能力**塌缩成单标签**，且命中即判族、不看能力点是否与污点主链相交
         #      —— OWASP 每个 servlet 都有 rememberMe Cookie 样板代码，被一律判成 secure_cookie，
@@ -4103,7 +4012,6 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
                 "FROM trigger_specs "
                 f"WHERE task_id=? AND {_where} "
                 "AND (verification_status IN ('confirmed_exploitable','confirmed_sink_control','unconfirmed','sink_reached') "
-                # 2026-10-19（r112）：capability=weak_random 的 confirmed_code_property 也要进候选——
                 # 这类状态的弱算法证据来自 SHA 样板（family 误判），由静态 RNG 判据复核后可抑。
                 "     OR (capability_family='weak_random' AND verification_status='confirmed_code_property'))",
                 (task_id, *_TARGET_FAMILIES, *_TARGET_FAMILIES), fetchall=True,
@@ -4151,9 +4059,7 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
             _fam = _cap
         else:
             _fam = _decl
-        # 2026-11-04（jsc 619 实测，spec 237863）：**技术判据已确认的 spec，族路由无权改判**。
         #
-        # 事故链：A1 的能力识别器把 XSS 端点 `/xss/stored/show` 同时标了
         # `capability_family='secure_cookie'`（该端点从 Cookie 读值 ⇒ 命中「样板 Cookie」
         # 误标，这是 M4 通道的已知问题）⇒ 它进了族路由的 capability 候选分支 ⇒
         # 族路由按 secure_cookie 判定，把**技术判据已确认**（technique_evidence.admitted=True、
@@ -4197,11 +4103,9 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
                 ) or []
             except Exception as _eq:
                 logger.warning("[D2][family-route-postpass] 事件查询失败 spec=%s：%s", _spid, _eq)
-        # §P2（2026-10-18）：算法/属性族「安全实现」正证据 → 写 suppressed。
         # 为什么必须这里补：family_route postpass 此前只改 verification_status，而对账口径
         # （owasp_run_shards L414）只认 suppressed_by_safe_verdict=0 过滤检出集合 ⇒ 单降 status
         # 对对账精确率零贡献（P3 在 safe_pattern 上踩过同一坑，L3396 有记）。P1b 离线复算
-        # （run 364/361/373）实测：纯正证据抑制 0 TP 用例丢失，hash FP -41、crypto FP -20 用例。
         # 纪律与值级闸一致：只认正证据（算法 sink 到达且算法名不弱 / Cookie flag 显式置 true），
         # 「什么都没观测到 / 参数未记录」一律 fail-open 不抑制；weak_random 无正安全证据可用，
         # judge_safe_implementation 恒返回 False，交由 fail-open 语义兜底。
@@ -4214,7 +4118,6 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
         except Exception as _se:
             logger.warning(
                 "[D2][family-route-postpass] 安全实现判定异常（不抑制）spec=%s：%s", _spid, _se)
-        # 2026-10-19（r111 weakrand 实证）：random_source 路由没有运行时正安全证据
         # （观测不到 Random ≠ 用了 SecureRandom），P2 恒 False ⇒ ~180 FP 无通道。
         # 但源码静态正证据是确定性的：weakrand-1/2 的 FP 中 139 个「只用 SecureRandom」，
         # 而 TP 全部「只用 java.util.Random / Math.random」，零交叉 ⇒ 静态判据可零损失落地。
@@ -4222,7 +4125,6 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
         if not _safe_impl:
             try:
                 from src.core.family_verdict import route_for as _route_for
-                # 2026-10-19（r112 weakrand 实测）：族误判纠正——A2 常因 servlet 里的
                 # rememberMe 样板代码（MessageDigest SHA）把 weakrand 用例标成 weak_hash，
                 # 于是走算法路由、SHA 命中弱算法 → confirmed_code_property（TP 主张，永不抑制）。
                 # 这里用 capability_family 兜一层：只要 capability 指向弱随机族，就仍做静态 RNG 判定。
@@ -4251,7 +4153,6 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
                             with open(_src_path, encoding="utf-8", errors="replace") as _fh:
                                 _src_text = _fh.read()
                             _rng_hit = _srs(_src_text)
-                            # E11 消融后续（2026-10-27）：同时记录**弱随机正证据**——
                             # 运行时事件不足时（A2 无先验 ⇒ spec 薄 ⇒ canary 未流经
                             # Random sink），源码里的不安全随机调用就是充分证据。
                             if not _rng_hit:
@@ -4275,9 +4176,8 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
         if (_safe_impl
                 and (str(_sp.get('verification_status') or '') != CONFIRMED_CODE_PROPERTY
                      or _allow_cp_override)):
-            # confirmed_code_property 是 TP 主张（弱算法/flag 缺失已实证），默认永不抑制；
+            # confirmed_code_property 是 TP 主张，默认永不抑制；
             # 唯一例外 _allow_cp_override：capability_family=weak_random 且源码仅用 SecureRandom
-            # （r112 实证 16 例，family 被 SHA 样板误判为 weak_hash）。
             # judge_safe_implementation 内部已按事件保护，这里按旧态再兜一层（双保险）。
             # 已被别的手段抑制过的 spec 不重复处理，保住既有 suppress_rule 归因（惰性查、
             # fail-open：列缺失的老库/最小夹具不阻塞）。
@@ -4309,7 +4209,6 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
             except Exception as _up_e:
                 logger.warning(
                     "[D2][family-route-postpass] 安全实现抑制写回失败 spec=%s：%s", _spid, _up_e)
-        # 2026-10-08 准入放开（修掉「修法写了没接通」）：第二个实参原先硬编码
         # 'confirmed_exploitable' 当「准入票据」，而 apply_family_route 内部对非该值一律拒绝
         # 介入 ⇒ M4 之后停在 unconfirmed 的代码属性族**永远进不了 judge_***。
         # 现在直接传本行 spec **当前的** verification_status，由 judge_* 自己用本族专属 sink
@@ -4320,7 +4219,6 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
         _cur_status = str(_sp.get('verification_status') or '')
         _new_status, _detail = apply_family_route(_fam, _cur_status, _events)
         _per = str((_detail or {}).get('positive_evidence_rule') or '')
-        # E11 消融后续（2026-10-27）：random_source 路由的**静态源码正证据**升格。
         # 474（blind 布局）实证：A2 无先验时 spec 变薄 ⇒ canary 未流经 Random sink
         # （00066 事件 78/6 → 4/0），运行时判据饿死 ⇒ 6 条 weak_random TP 丢失。
         # 「源码用了不安全随机源」是纯代码属性主张，源码即充分证据，不需要
@@ -4346,10 +4244,9 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
                     "[D2][family-route-postpass] 静态弱随机升格异常（不升格）spec=%s：%s",
                     _spid, _se2)
         if _new_status == _cur_status:
-            # 2026-10-16（P-D 补）：结论没变，但 judge 凭**本族专属 sink 事件**复证并给出了
             # 正向规则 ⇒ 只补 positive_evidence_rule 一列，不动 verification_status / iast_state。
             # 此前这里直接 continue，于是走 D2/M4 code_property 通道拿到 confirmed_code_property
-            # 的属性族 spec，规则永远为空（对应修复计划 §1.3「226 条为空」）——
+            # 的属性族 spec，规则永远为空——
             # 「本条确认由哪条族专属规则背书」无法回溯，judge 是否真跑过也无从验证。
             # 状态不变 ⇒ 不改写任何终态/归因线索，纯增量补事实，零回归。
             if _per and _has_per_col:
@@ -4362,11 +4259,9 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
             continue
         if _new_status != 'confirmed_exploitable':
             try:
-                # 2026-10-04：**到达证据不可被路由标记覆盖**。
                 # 本行原来无条件写 `iast_state = family-route:<status>`，而 weak_random 族
                 # 路由修好后 16 条 spec 全部从 confirmed_exploitable 改判，于是它们的
                 # `sink-reached-probe` 被改写成 `family-route:*`。L3 运行时到达指标正是按
-                # `iast_state='sink-reached-probe'` 统计的 ⇒ run 112 的 L3 凭空掉 16 条
                 # （67.9%→52.8% 的主要成因），而实际到达一条没少。**这是标签假退化。**
                 # 处置：到达态一律保留原值；路由结果只体现在 verification_status 上
                 # （它本身就记录了终态），非到达态才写 family-route 标记（保留原有归因线索价值）。
@@ -4413,10 +4308,7 @@ def _apply_family_route_postpass(task_id: Optional[int], sdb) -> int:
     return _n
 
 
-# —— 安全写法反例模式（G 第二步 A 路线，2026-09-28 批准落地）——
-# OWASP Benchmark 安全用例的主力形态：运行期走常量分支 / 取回安全值，但探针按请求级 canary
 # 记录 hook，于是 canary「到达」了本族真 sink（G 分析 A 类 36 用例的机理）。
-# run 28 全量 205 用例实证：族限定（数据流族）后 TP 误伤=0、FP 覆盖 14 用例。
 _SAFE_PATTERN_IF_CONST = re.compile(
     r'if\s*\([^;{}]*[+*%-][^;{}]*\)\s*(?:\{\s*)?(\w+)\s*=\s*"[^"]*"\s*;\s*'
     r'(?:\}\s*)?else\s*(?:\{\s*)?\1\s*=\s*(\w+)', re.S)
@@ -4430,8 +4322,7 @@ _SAFE_PATTERN_MAX_FILE = 200 * 1024  # 超大文件跳过（fail-open，防正�
 def _file_has_safe_pattern(content: str) -> bool:
     """源文件是否含「死分支常量 / 安全值覆盖 / 恒真 ternary / 常量 switch」安全写法反例。
 
-    2026-10-17（P3）：改调语义模块 safe_pattern_semantic.safe_pattern_type。
-    按「形状」补正则会把真漏洞误杀（实测 tern 14 / switch 18 / constcmd 22 条 TP）；
+    按「形状」补正则会把真漏洞误杀；
     只有对条件做数值求值，才能做到 64/102 FP 命中、0/126 TP 误伤（精确率 55.3%→76.8%）。
     """
     return _safe_pattern_hit(content) is not None
@@ -4447,14 +4338,12 @@ def _safe_pattern_hit(content: str) -> Optional[str]:
 
 
 def _apply_safe_pattern_postpass(task_id: Optional[int], sdb, code_root: Optional[str]) -> int:
-    """A2 安全写法反例否决 post-pass（G 第二步 A 路线，2026-09-28 批准落地）。
+    """A2 安全写法反例否决 post-pass。
 
-    G 分析 A 类（36 用例）：canary 真到达本族 sink，但靶场源码运行期走常量分支 /
     取回安全值——确定性 sink 判据治不了，唯有 L1 静态反例否决（最便宜）。
     仅对数据流族（route_for != algorithm/attribute，那两族归 I 路由通道管）的
     confirmed_exploitable spec 介入；源文件命中安全写法反例 → 降级 unconfirmed。
 
-    零误杀实证（run 28 全量 205 用例 + 真值表）：数据流族内 TP 命中安全模式 = 0，
     FP 命中 14 用例（cmdi 3 / sqli 4 / weakrand 2 / xss 2 / pathtraver 2）。
     fail-open：文件缺失 / 过大 / 解析异常一律跳过，绝不凭缺失证据改判。
 
@@ -4467,7 +4356,6 @@ def _apply_safe_pattern_postpass(task_id: Optional[int], sdb, code_root: Optiona
     except Exception as _imp_e:
         logger.warning("[D2][safe-pattern-veto] 依赖导入失败，跳过：%s", _imp_e)
         return 0
-    # 同款坑复查（2026-09-28 本轮实证）：不能用 LEFT JOIN findings 取 file_path——
     # findings 仅收尾由 replace_for_task 重写，D2 阶段查必空 → 全体 fail-open、veto 0 条。
     # spec 注册时 expected_sink_file = vuln_dict['file']（内存现值，注册期已落），直接取它；
     # findings 回查仅作离线补录兜底。
@@ -4519,7 +4407,6 @@ def _apply_safe_pattern_postpass(task_id: Optional[int], sdb, code_root: Optiona
             continue
         _spid = _sp.get('id')
         try:
-            # P3（2026-10-17）：必须同时写 suppressed_by_safe_verdict=1——对账只按此字段
             # 过滤检出集合，仅改 verification_status 对「按用例计数」的精确率无效。
             sdb.execute(
                 "UPDATE trigger_specs SET verification_status='unconfirmed', "
@@ -4541,10 +4428,9 @@ def _apply_safe_pattern_postpass(task_id: Optional[int], sdb, code_root: Optiona
 
 
 def _apply_source_location_postpass(task_id: Optional[int], sdb, code_root: Optional[str]) -> int:
-    """Phase 0a（2026-10-17）：按 servlet 源码确定性纠正 param_location。
+    """Phase 0a：按 servlet 源码确定性纠正 param_location。
 
     A2 的 param_location 常默认猜 query，而 servlet 实际从 header/cookie/body 取源
-    （实测 run 364 约半数 spec 的 param_location 与源码不符）→ D1 把 payload 注到
     query，servlet 却从 header 取 → payload 到不了 sink → 漏报（FN）。
     本 post-pass 在 D1 重放前，读源码判定真实源位置并纠正。
     """
@@ -4622,7 +4508,7 @@ def _load_code_index_for_task(task_id: Optional[int], output_dir: Optional[str] 
 
 def _apply_param_backfill_postpass(task_id: Optional[int], sdb, code_root: Optional[str],
                                    output_dir: Optional[str] = None) -> int:
-    """Phase 0b（2026-11-01，阶段 2）：D1 重放前补齐空的 param_name。
+    """Phase 0b：D1 重放前补齐空的 param_name。
 
     ## 为什么必须做
 
@@ -4731,7 +4617,7 @@ def _apply_param_backfill_postpass(task_id: Optional[int], sdb, code_root: Optio
 
 def _apply_binding_postpass(task_id: Optional[int], sdb, code_root: Optional[str],
                             output_dir: Optional[str] = None) -> int:
-    """Phase 0c（2026-11-02）：按形参**类型**纠正请求形态（location / content_type）。
+    """Phase 0c：按形参**类型**纠正请求形态（location / content_type）。
 
     ## 为什么必须做
 
@@ -4791,7 +4677,7 @@ def _apply_binding_postpass(task_id: Optional[int], sdb, code_root: Optional[str
             #   2. 位置来自 Phase 0b 的注解/字面量通道（`param_name_source=param_infer:*`），
             #      比如 `request.getHeader("Origin")` ⇒ header，比「按形参类型推」更确定。
             # 但 `body` + 空 content_type **不算**定死 —— 那正是 `MultipartFile` 被 A2 猜成
-            # body 的情形（实测 `/ooxml/readxlsx` 的 `file` 参数），必须让类型驱动升级成 multipart。
+            # body 的情形，必须让类型驱动升级成 multipart。
             continue
         try:
             b = infer_binding_for_spec(code_root, index,
@@ -4829,10 +4715,8 @@ def _norm_path(p):
 def _load_truth_file_keys() -> set:
     """装载真值表 file 列（小写归一化），用于迟到回补的「真值表内点」判定。
 
-    仅回补「确属目标已知漏洞端点」的 spec，避免把真值表外的 genuine-sink
     （如 tomcatfiltermemshell 写类文件）误升 confirmed_exploitable 触发红线。
 
-    本仓库不内置基准真值表：用户扫自己的靶场时通常也没有对应真值。需要这层保护时，
     用 ``SAST_AI_TRUTH_FILES`` 指定一个或多个 CSV（逗号或分号分隔，每条至少要有 ``file``
     列）；不给就返回空集，回补会被跳过——方向是保守的，少确认但不误升级。
     """
@@ -4860,7 +4744,7 @@ def _load_truth_file_keys() -> set:
 
 
 def _apply_confirm_gate_recheck(task_id: Optional[int], sdb, truth_points: Optional[set] = None) -> int:
-    """报告前复核被硬闸降级的 spec（2026-11-03）。
+    """报告前复核被硬闸降级的 spec。
 
     ## 为什么必须再复核一次
 
@@ -4873,11 +4757,7 @@ def _apply_confirm_gate_recheck(task_id: Optional[int], sdb, truth_points: Optio
 
     这里用与硬闸**同一套判据**重算一遍，只回补「现在确有真 sink 证据」的。
 
-    ## 2026-11-07 真值表口径收紧
-    迟到回补**只把真值表内点**升 `confirmed_exploitable`。真值表外但确有
     genuine/stack/oracle 证据的 spec 仅记 `sink_reached`（比 unconfirmed 更准确，
-    且不触发红线）。否则 jsc 的 tomcatfiltermemshell（写类文件 RandomAccessFile
-    是真 sink，但不在 31 点真值表内）会被误判 confirmed_exploitable，造成
     本轮红线 1/63 的伪失败。
     """
     if task_id is None or sdb is None:
@@ -4917,7 +4797,6 @@ def _apply_confirm_gate_recheck(task_id: Optional[int], sdb, truth_points: Optio
         genuine = any(_genuine(x, fam) for x in sfs)
         esf = str(r.get("expected_sink_file") or "").replace("\\", "/").rsplit("/", 1)[-1].lower()
         stack_hit = bool(esf) and any(esf in str(e.get("stack_trace") or "").lower() for e in evs)
-        # 2026-11-06（jsc 624）：迟到证据不只有 sink 事件，还有**响应层行为 oracle**。
         # 623 的三条 ssrf 靠碰巧落库的真 sink 事件回补，624 的 /ssrf/urlConnection/vuln
         # 明明 oracle=exploitable/error_reflect 却因没有可匹配的 stack_trace 永久丢失。
         # 这里补上 oracle 分支，判据与硬闸放行、_apply_oracle_upgrade 三处同源。
@@ -4926,7 +4805,6 @@ def _apply_confirm_gate_recheck(task_id: Optional[int], sdb, truth_points: Optio
             r.get("positive_evidence_rule"), r.get("expected_sink_file"))
         if not (genuine or stack_hit or _ora_sig):
             continue
-        # 真值表内点才升 confirmed_exploitable；表外 genuine-sink 只记 sink_reached，不触发红线。
         _esf_norm = _norm_path(r.get("expected_sink_file"))
         _in_truth = any(_k in _esf_norm for _k in truth_points)
         if _in_truth:
@@ -4951,7 +4829,6 @@ def _apply_confirm_gate_recheck(task_id: Optional[int], sdb, truth_points: Optio
             except Exception as _ue:  # noqa: BLE001
                 logger.warning("[confirm-gate-recheck] 写回失败 spec=%s：%s", r.get("id"), _ue)
         else:
-            # 真值表外：确有真实 sink 证据，但本端点不在已知漏洞清单内，
             # 不能声称 confirmed_exploitable（会污染红线），只记 sink_reached。
             _why = ("硬闸执行时 sink 事件尚未落库；事后复核确有真 sink 证据（%s），"
                     "但该端点不在本靶场真值表内，仅记 sink_reached（不升 confirmed_exploitable，避免红线误报）"
@@ -4982,7 +4859,7 @@ def _apply_confirm_gate_recheck(task_id: Optional[int], sdb, truth_points: Optio
 
 
 def _apply_two_step_mark_postpass(task_id: Optional[int], sdb) -> int:
-    """标记「两步桥」spec（2026-11-02，评审做法 1）。
+    """标记「两步桥」spec。
 
     ## 为什么
 
@@ -5034,13 +4911,12 @@ def _apply_two_step_mark_postpass(task_id: Optional[int], sdb) -> int:
 
 def _apply_filter_headers_postpass(task_id: Optional[int], sdb, code_root: Optional[str],
                                    base_url: str = "") -> int:
-    """Phase 0e（2026-11-02）：按过滤器源码补「前置请求头」。
+    """Phase 0e：按过滤器源码补「前置请求头」。
 
     ## 为什么需要
 
     有些应用在 `Filter` 里校验 `Referer` / `Origin`，缺了就直接 `return` 或 403。
     这时参数、编码、HTTP 方法全对，请求也**进不到业务代码** ——
-    jsc 的 `ReferFilter` 就是这一类（jsonp 族曾整族 no-arrival）。
 
     ## 做法
 
@@ -5063,7 +4939,6 @@ def _apply_filter_headers_postpass(task_id: Optional[int], sdb, code_root: Optio
         for _dp, _dn, _fn in os.walk(str(code_root)):
             _dn[:] = [d for d in _dn if d not in ("target", "build", "node_modules", ".git")]
             for _name in _fn:
-                # **必须连配置文件一起读**：jsc 的 referer 校验范围与白名单全在
                 # `application.properties` 里（`referer.uri=/jsonp/**`、
                 # `referer.host=joychou.org, joychou.com`），只读 .java 会退化成
                 # 「给所有路由塞同源 Referer」——那个值过不了 host 白名单，反而更糟。
@@ -5125,10 +5000,8 @@ def _apply_filter_headers_postpass(task_id: Optional[int], sdb, code_root: Optio
 def _build_endpoint_ownership_map(code_root: Optional[str]) -> Dict[str, str]:
     """建「端点 → 拥有该端点的源码文件 basename」映射。
 
-    2026-11-04：为 D2 技术判据 post-pass 的**归属校验**提供依据。
 
     ## 为什么需要
-    jsc 617 实测：`/cors/vuln/origin` 上挂了 3 条 cors spec，其中两条的
     ``expected_sink_file`` 指向 ``OriginFilter.java:48``。但 OriginFilter 是
     **白名单校验过的安全版**，且它的 ``@WebFilter(urlPatterns =
     "/cors/sec/originFilter")`` 根本不作用于 ``/cors/vuln/origin`` ——
@@ -5209,7 +5082,6 @@ def _family_sink_line_consistent(family: str, sink_file: str, sink_line: Any,
                                  code_root: Optional[str]) -> Optional[bool]:
     """校验 spec 声明的 sink 行是否与其族的 sink 语义相符。
 
-    2026-11-04（jsc 617 spec 237715 实测）：`/log4j` 的 token 参数同时喂给
     ``logger.error(token)``（JNDI sink，L20）与 ``return token``（XSS sink，
     L21）。A1 把 **xss 族** 的 spec 也登记在 L20 —— 但 L20 是 logger 调用，
     XSS 的响应写出点在 L21。⇒ 这条 spec 的「族 ↔ 行号」自相矛盾。
@@ -5285,7 +5157,7 @@ def _family_sink_line_consistent(family: str, sink_file: str, sink_line: Any,
 
 def _apply_technique_oracle_postpass(task_id: Optional[int], sdb,
                                      code_root: Optional[str] = None) -> int:
-    """按「注入技术」重判「到了 sink 但未确认」的 spec（2026-11-02）。
+    """按「注入技术」重判「到了 sink 但未确认」的 spec。
 
     ## 为什么需要
 
@@ -5319,30 +5191,24 @@ def _apply_technique_oracle_postpass(task_id: Optional[int], sdb,
         return 0
 
     try:
-        # 2026-11-04：旧条件 `NOT LIKE 'confirmed%'` 连 `confirmed_code_property`
-        # 一起排除了。但该状态是**静态代码属性确认**，在四档对账的 `rep_file`
-        # （真实重放/裁决）档里根本不算确认；jsc 617 的 4 条 cors 就是
         # `confirmed_code_property` + `confirm-gate:technique-proven`，ACAO
         # 明明反射了 canary 却永远没机会重判。
         # 放宽到「只要还不是 confirmed_exploitable 就重判」；属性/配置族由下面
         # 的 is_dynamic_eligible 挡住，不会误升级。fail-open 不变：judge_attempts
         # 判不了就原样保留。
         #
-        # 2026-11-04（第二版）：再加一条「端点归属」闸门。
-        # 实测 jsc 617：`/cors/vuln/origin` 上挂了 3 条 cors spec，其中 237696/237776
         # 的 expected_sink_file 指向 **OriginFilter.java:48**，而该端点实际由
         # **Cors.java:28** 处理。OriginFilter 是白名单校验过的**安全版**，且它的
         # `@WebFilter(urlPatterns = "/cors/sec/originFilter")` 根本不作用于
         # `/cors/vuln/origin`。⇒ 这两条 spec 是 A1 阶段的**归属错误**（把
         # filter 的 sink 挂到了 controller 端点上），若按响应层判据确认，
         # 会在真值集外多出 2 条 confirmed ⇒ 红线（重放确认误报率）从 10.5%
-        # 涨到 17.9%（_wb_sim_tiers.py 实测）。
+        # 涨到 17.9%。
         #
         # 因此：判据命中后，还要校验「该 spec 的 sink 文件确实拥有这个端点」。
         # 校验不通过 ⇒ 判为**归属错误**（不确认、不误报），保留原状态并写明原因。
         # 判据只认「可复现的观测」，归属校验只认「路由归属」这一确定性事实，
         # 两者都不引入概率/严重度阈值。
-        # 2026-11-06（jsc 629 掉点根因）：入口原先只捞 iast_state=sink-reached / confirm-gate:*，
         # 但 technique_oracle 的全部判据都是 HTTP 响应层可复现观测，本不依赖探针到达。
         # 629 的 jsonp spec 因探针抖动（iast_events 4863→4359）落成 no-arrival，
         # 明明 `alert(...)//` 原样回显、judge_attempts 离线复跑返回 True，却被这条筛选
@@ -5384,7 +5250,6 @@ def _apply_technique_oracle_postpass(task_id: Optional[int], sdb,
         fam = str(sp.get("family") or "")
         if fam and not is_dynamic_eligible(fam):
             continue
-        # 2026-11-04：归属校验。判据命中后，确认前先问一句
         # 「这条 spec 的 sink 文件真的拥有这个端点吗」。
         # False = 确定不拥有（A1 阶段把别的文件的 sink 挂到了这个端点上）⇒
         # 判为归属错误，不确认。None = 无法判定 ⇒ fail-open 放行。
@@ -5404,8 +5269,7 @@ def _apply_technique_oracle_postpass(task_id: Optional[int], sdb,
             except Exception:
                 pass
             continue
-        # 2026-11-04：族-行一致性校验。同一个 token 可以同时喂给多个 sink，
-        # A1 可能把某族登记在**别的族的 sink 行**上（如 xss 族登记在 logger 行）。
+        # A1 可能把某族登记在**别的族的 sink 行**上。
         # 这种 spec 的「族 ↔ 行号」自相矛盾 ⇒ 判据命中也不确认。
         _line_ok = _family_sink_line_consistent(
             fam, str(sp.get("expected_sink_file") or ""),
@@ -5438,13 +5302,11 @@ def _apply_technique_oracle_postpass(task_id: Optional[int], sdb,
         if not ok:
             continue
         try:
-            # 2026-11-04 根因修复：docstring 承诺「证据写进 raw_json.technique_evidence」，
             # 但旧实现只 UPDATE 了 4 个字段、根本没碰 raw_json。而紧随其后的
             # _apply_confirmation_gate 用 _confirm_gate_decide 复核时只认
             # raw_json.d2_evidence / dast_impact_evidence 里的结构化正向证据 ——
             # 于是判据命中 → 升 confirmed_exploitable → 硬闸读到空证据 →
             # 判 no_positive_evidence 降级 unconfirmed，并打上
-            # `confirm-gate:technique-proven`（jsc 617 的 /csrf/post、
             # /cors/vuln/origin 就是这个形态）。证据链在 post-pass 与硬闸之间断了，
             # 这是「每轮加判据却不见数字涨」的真因。
             #
@@ -5473,7 +5335,6 @@ def _apply_technique_oracle_postpass(task_id: Optional[int], sdb,
                 _dast = {}
                 _rj["dast_impact_evidence"] = _dast
             _dast["impact_observed"] = True
-            # 2026-11-06（收紧后的证据链补口）：_confirm_gate_decide 现在要求
             # impact_observed 必须另有结构化交叉支撑，裸布尔一律不算语义证据
             # （629 的 tomcatfiltermemshell 误报正是裸 D2 布尔）。技术判据命中的是
             # 「可复现的响应层观测」，把它投影成明确影响类型与观测摘要，让 post-pass
@@ -5512,7 +5373,7 @@ def _apply_technique_oracle_postpass(task_id: Optional[int], sdb,
 
 
 def _apply_spec_dedupe_postpass(task_id: Optional[int], sdb) -> int:
-    """Phase 0d（2026-11-02）：合并**完全重复**的 spec（同 endpoint + 同 sink 行 + 同族）。
+    """Phase 0d：合并**完全重复**的 spec（同 endpoint + 同 sink 行 + 同族）。
 
     ## 为什么必须做
 
@@ -5531,7 +5392,7 @@ def _apply_spec_dedupe_postpass(task_id: Optional[int], sdb) -> int:
       · **同位置同族但参数不同**不合并 —— 实测 592 有 4 组这种：`/vuln1` L26 一条参数
         `_body`、一条 `express`；`/deserialize/rememberMe/vuln` L50 一条空参数+query、
         一条 `rememberMe`+cookie。它们是「同一 sink 的不同污点源」，合并会把**能打通的那条**
-        压掉（第一版只按三要素去重，实测把 13 条已确认的压成了未确认）。
+        压掉。
 
     ## 保留哪一条
 
@@ -5601,7 +5462,6 @@ def _apply_spec_dedupe_postpass(task_id: Optional[int], sdb) -> int:
     return merged
 
 
-# —— Phase 2（2026-10-17）：值级 sink 实参闸 post-pass（本质修复）——
 #
 # 为什么这是本质：污点流的本质问题是「**污点值是否真的流到 sink**」。探针已经记录了 sink 的
 # 实际实参（`iast_events.source_value` / `evidence_json`），因此可以直接判定：
@@ -5611,18 +5471,14 @@ def _apply_spec_dedupe_postpass(task_id: Optional[int], sdb) -> int:
 # 有本质区别。
 #
 # 前置依赖：payload 必须真被注到 servlet 实际读取的源位置（Phase 0a `_apply_source_location_postpass`）。
-# 实测（r102 cmdi，源位置纠正到 100% 后）：at_sink 精确率 126/126=100%、absent 否决命中 113/117=96.6%；
 # 纠正前at_sink 只有 72.1%、absent 仅 54.3%——**说明值级闸之前不准的根因是注错源，不是判定错**。
 #
 # 否决口径：按**用例级聚合**——某 endpoint 的**全部** spec 都判 absent 才否决；任一 spec 判 at_sink
-# 即保留该用例（避免"重放保真残余"误杀真报，r102 实测误杀 TP=0）。no_event 一律不动（证据不足）。
 #
 # 开关：`SAST_AI_VALUE_GATE=0` 关闭；`SAST_AI_VALUE_GATE_FAMILIES` 逗号分隔扩展适用族
 # （默认只开已在真值上验证过的 command_execution，其余族等 Phase 1 关联干净后再放）。
 
-# 2026-10-18 收口：默认族从「仅 cmdi」扩到**全部已实证 0 误杀**的 6 族。
 #
-# 配置统一（2026-10-20）：适用族白名单收进 config/families.yaml，由 src.core.config_registry
 # 统一读取（环境变量 > yaml > 代码默认）。至此 families.yaml 不是死配置——cli/backend 都读同一处。
 try:
     from src.core import config_registry as _cfg
@@ -5650,10 +5506,8 @@ def _cfg_confirm_sink_fams(default) -> list:
 
 # 为什么必须改默认值：此前 6 族的值级闸只在 SAST_AI_VALUE_GATE_FAMILIES 显式给出时才跑，
 # 而扫描在 backend 进程内执行、读的是 backend 自己的 env —— 命令行 export 根本传不进去。
-# 结果 r106~r109 的精度提升全靠「跑完后在另一个 shell 里离线补跑 postpass」，
 # 真实扫描（走 API / 别的机器）拿不到，等于没落地。
 #
-# 依据（r109 七片全量 + 真值表交叉验证）：
 #   sql_injection / trust_boundary_violation / xpath_injection / xss /
 #   path_traversal / xxe  —— 394 条 spec 被否决、TP 误杀 0、召回 99.7%。
 # 闸本身是保守的：只有「用例内全部 spec 都判 absent（族 sink 已到达但实参里没有 payload）」
@@ -5662,7 +5516,6 @@ def _cfg_confirm_sink_fams(default) -> list:
 _VALUE_GATE_FAMILIES_DEFAULT = (
     "command_execution", "sql_injection", "trust_boundary_violation",
     "xpath_injection", "xss", "path_traversal", "xxe",
-    # 2026-10-19（r111 ldapi 验收，run 403 实测）：at_sink 精度 27/27=100%、
     # absent 纯度 21/21=100%（0 个 TP 被误判 absent）⇒ 纳入默认族。
     # 对账预期：ldapi 精确率 57.4% → 100%（20 个 FP 检出被否决），抑损 0。
     "ldap_injection",
@@ -5742,7 +5595,6 @@ def _apply_sink_value_gate_postpass(task_id: Optional[int], sdb) -> int:
         return _evs
 
     # 用例级聚合：endpoint（退化用 sink 文件）→ [(spec_id, verdict, has_events, family)]
-    # 2026-10-18：额外记录 has_events（该 canary 是否有任何探针事件）与族名，供严格否决判据
     # 区分「重放未送达」与「到达应用但没到族 sink」——后者才是可安全否决的非可利用证据。
     _groups: dict = {}
     _skip = 0
@@ -5769,26 +5621,20 @@ def _apply_sink_value_gate_postpass(task_id: Optional[int], sdb) -> int:
         _groups.setdefault(_key, []).append(
             (int(_sp.get("id")), str(_v.get("verdict") or ""), bool(_evs), _fam))
 
-    # —— 严格模式（2026-10-18，opt-in）：对「到达应用但没到族 sink」的用例也否决 ——
-    # 默认关闭（SAST_AI_VALUE_GATE_STRICT=1 才启用），且只对 SAST_AI_VALUE_GATE_STRICT_FAMILIES
-    # 指定族生效（默认 trust_boundary_violation,xss，r107 实测这两族 TP 100% 有 at_sink）。
+    # 默认关闭，且只对 SAST_AI_VALUE_GATE_STRICT_FAMILIES
     # 三重守卫缺一不可，防止把「重放注错源」误判成「安全」：
     #   ① 族覆盖：本 task 该族的 at_sink **覆盖率** ≥ SAST_AI_VALUE_GATE_STRICT_MIN_COVERAGE
-    #      （默认 0.6）。原判据是「≥1 条 at_sink」，2026-10-18 实测被它咬了一口：r107 的
-    #      run 386 是**补 compile hook 之前**跑的 xpathi，7/15 TP 判 absent（覆盖率 47%），
     #      但族里确实存在 1 条 at_sink ⇒ 守卫放行 ⇒ 严格模式误杀 8 个真 TP（抑损 8）。
     #      改为覆盖率阈值后，这种「族判据半通不通」的数据会自动挡住（47% < 60%）。
     #   ② 到达：用例内至少一个 spec 的 canary 有探针事件（请求确实到了应用）；
     #   ③ 无正向证据：用例内没有任何 spec 判 at_sink。
     _strict = str(os.environ.get("SAST_AI_VALUE_GATE_STRICT", "")).strip().lower() in (
         "1", "true", "yes", "on")
-    # 2026-10-18 收紧（用户质询后复核）：严格模式默认**只砍「有反证」的用例**。
     #
     # 原因：「无 at_sink」包含两种完全不同的情况——
     #   absent  : 族 sink 已到达，但实参里没有我方 payload ⇒ 这是**反证**（有据可依）；
     #   no_event: 连族 sink 都没到 ⇒ 这是**没有证据**，不等于安全（探针没织到 / API 不认）。
     # 把后者也当"不可利用"是「以证据缺失推定安全」，在真实项目上会砍掉真漏洞。
-    # r109 实测：严格模式砍的 24 个用例里，16 个有反证、8 个仅无证据（全 no_event）。
     # 数学上只要砍掉 1 个 TP，精确率必然下降（precision=(TP-1)/(D-1) < TP/D 当 D>TP）。
     # 故默认要求 ≥1 条 absent 作为否决依据；确需激进模式可置
     # SAST_AI_VALUE_GATE_STRICT_ALLOW_NO_EVENT=1 恢复旧行为。
@@ -5807,11 +5653,9 @@ def _apply_sink_value_gate_postpass(task_id: Optional[int], sdb) -> int:
     except Exception:
         _strict_min_cov = 0.6
     # 每族「判别力」：在**用例级**统计「canary 到达了族 sink 的用例里，payload 真的出现在实参中的比例」。
-    # 2026-10-18 二次修正：原先按 spec 级统计（at_sink spec / 全部 spec），被 TP 用例的
     # 多 spec 结构严重稀释——xpathi 的 TP 用例每条有 6 个 spec 只有 1–2 个 at_sink，
     # 于是 TP 覆盖 15/15=100% 的分片在 spec 级只有 28/80=35%，守卫误判为「判据不可信」而闭嘴。
     # 改为用例级且只在「有族 sink 证据」的用例上取比值（只 no_event 的用例不参与分母）：
-    #   r109 xpathi = 15/(15+10) = 60% → 放行；r107 run 386（compile hook 前）= 7/(7+8) = 47% → 拦住。
     _fam_judged: dict = {}
     for _items in _groups.values():
         _fs = {f for _i, _v, _h, f in _items}
@@ -5841,16 +5685,13 @@ def _apply_sink_value_gate_postpass(task_id: Optional[int], sdb) -> int:
     _n = 0
     _cases_vetoed = 0
     _strict_vetoed = 0
-    # —— strict-C（2026-10-19，默认开、按族验收）：≥1 absent 且无 at_sink ⇒ 否决 ——
     # 与旧严格模式的区别：不再要求「本用例全部 spec 都 absent」，no_event 兄弟不再阻挠。
     # 为什么安全：absent 是**正反证**（族 sink 已到达但实参无 payload），no_event 只是没证据，
-    # 二者并存时反证仍然成立。r112 实测 ldapi 2 例、cmdi-2 1 例、sqli-1 5 例因此残留。
     # 按族验收（tasks 397-406 真实数据，判据 = 误杀 TP 必须为 0）：
     #   ldap_injection 22 FP/0 TP、sql_injection 8/0、command_execution 3/0 → 纳入；
-    #   path_traversal 11 FP/**16 TP** → 排除（该族 absent 与 TP 高度重叠，绝不启用）；
+    #   path_traversal 11 FP/**16 TP** → 排除；
     #   xss/xpathi/trust_boundary_violation/xxe 无足够样本 → 暂不纳入。
     # 覆盖集可 env 覆盖；置空即整体关闭。
-    # 2026-10-20（r113 178 FP 根因 + 离线预演）：扩到 xpath_injection / xss /
     # trust_boundary_violation。预演 tools/_wb_preview_strict_c_expand.py 实测
     # **TP 误杀=0，FP 178→159**（xpathi 11→2、xss-1 2→0、xss-2 6→0、ab-mix 13→11）。
     # 硬边界（数据钉死）：path_traversal 的 mixed 组 TP=66 ⇒ **绝不纳入**；
@@ -5910,13 +5751,11 @@ def _apply_sink_value_gate_postpass(task_id: Optional[int], sdb) -> int:
 
 
 def _apply_confirm_sink_identity_postpass(task_id: Optional[int], sdb) -> int:
-    """确认态 sink 身份校验（阶段2a，2026-10-20）：canary 只到旁路 sink ⇒ 抑制。
+    """确认态 sink 身份校验：canary 只到旁路 sink ⇒ 抑制。
 
     本质：确认态硬闸用「通用 sink 到达」确认，**未校验 sink 是否属于报告族的真 sink**。
-    r113 实测：xpathi/trustbound 的 FP 中，canary 只到 PrintWriter/Cookie/FileOutputStream
     等旁路 sink（从未进入族真 sink 实参），却被确认成 sink_reached/confirmed_exploitable。
 
-    仅对 ``xpath_injection`` / ``trust_boundary_violation`` 启用（r113：旁路 TP=0/FP=10 与 0/5，
     离线预演 TP 误杀=0、FP 降 15）。
     **硬边界**：path_traversal(旁路 TP=66)、xss(51)、weak_crypto(56) 等族旁路含大量真 TP，
     禁止启用，否则大规模误杀。故族白名单写死，不开放 env 泛化。
@@ -6030,15 +5869,12 @@ def _apply_confirm_sink_identity_postpass(task_id: Optional[int], sdb) -> int:
     return _n
 
 
-# —— 确认态硬闸 + D2 证据回灌（2026-09-29 批准落地，）——
 #
-# 背景（run 32/ run 34 实证）：
 #   ① 证伪失效：283 条 confirmed_exploitable 里有 17 条 iast_state=no-arrival —— 探针明确记录
 #      「请求没抵达应用」，平台却仍下肯定结论。按本项目「自己提出假说、自己否定收紧」的框架，
 #      这不是与真值比精确率的问题，是证伪环节失效：假说提出了，却没有任何正向证据支撑就确认了。
 #   ② 信息黑洞：D2 产物（verification_decision / iast_evidence / dast_impact_evidence /
 #      d2_verdict / poc）只写进 findings.raw_json，trigger_specs 侧 d2_evidence / d2_output /
-#      poc / executed / sink / data_flow 恒为空（run 32 实测 262/262 全空），攻击计划页与
 #      spec 详情拿不到任何「这条假说到底怎么被证实/否证」的信息。
 #
 # 修法：终态写入同一事务点回灌证据块+ confirmed_exploitable 必须过三准入硬闸。
@@ -6056,7 +5892,6 @@ _IAST_STATE_HUMAN = {
     "sink-reached-probe": "探针在危险函数的实参里断言到本次投放的数据",
     "iast-reached": "探针记录到该请求已进入应用",
     "business-logic-confirmed": "双账号差分重放确认了越权差异",
-    # 2026-11-05（jsc 622 实证）：主链路的 no-arrival 是「探针 canary 零事件」，与 HTTP
     # 是否到达无关（实测 status_code=200 / reached=true 仍可 no-arrival，如请求到达应用但
     # 载荷没到目标危险函数、或探针未插桩）。旧文案武断断言「靶场不可达或路由不匹配」会
     # 误导对账，改为与主裁决链路（adjudicator/d2_judge）同口径的如实表述。
@@ -6091,8 +5926,6 @@ def _confirm_gate_decide(iast_state, iast_ev, dast_ev, d2_verdict, oob_confirmed
     _value_live = bool(_vh.get("hit")) and str(_vh.get("form") or "") == "hit_live"
     _vd_exc = bool(vd.get("sink_exception_class") or iast_ev.get("sink_exception_class")
                    or dast_ev.get("sink_exception_class"))
-    # 2026-11-06（jsc 629 红线误报）：d2_output.impact_observed 只是 D2 给出的布尔。
-    # 实测 spec 239136 只有 sink-reached + 一条 1292ms 慢请求、行为 oracle 还是
     # inconclusive/no_delay，D2 却置 True；runtime_arrival 无条件采信后把
     # tomcatfiltermemshell.java/command_execution 放成红线误报。
     # 布尔本身不是可核验证据：必须另有值级命中 / 匹配事件 / 带外 / 差分 / 时延 /
@@ -6130,7 +5963,6 @@ def _confirm_gate_decide(iast_state, iast_ev, dast_ev, d2_verdict, oob_confirmed
         # v2 证据分层 B6：到达须配「语义层正向证据」才准入；到达单独不足（L1≠L4）。
         # 语义证据 = 值级命中且未消毒(hit_live) / 影响观测 / 带外回调 / 业务差分 / 时延盲注
         # / 反序列化链路确证（B5 专用救援路径，机制级）/ sink 异常签名（B2，L3 语义层）。
-        # F 批回归锁修正（2026-10-10）：deser_confirmed 与 sink_exception 此前漏在 _semantic
         # 之外，导致「到达态 + 链路/异常确证」被误降级 —— 会杀掉反序列化救援路径。
         _semantic = (
             _value_live
@@ -6159,23 +5991,16 @@ def _confirm_gate_decide(iast_state, iast_ev, dast_ev, d2_verdict, oob_confirmed
 def _differential_override(dast_ev, vd, oob_confirmed, bl_confirmed):
     """v2 证据分层 E4：差分降级权的条件化恢复（对照实验）。
 
-    2026-10-09（r250 实证）：差分 harmful=False 的依据是「控制与实验的 HTTP 响应无差异」，
-    但 OWASP 数据流族的静默成功型 TP 与 FP 在响应层完全不可区分 —— r250 该降级 fired 172 次，
     把 33 个真 TP 连同 FP 一起归零（召回 69.8%→35.4%），违反「绝不零化仅到达 TP」铁律。
 
     v2 修正（条件化）：**默认恢复降级权**，但**仅当具备前置 L3 证据**时才允许差分做阴性：
       - A1 异常证据：vd 录得 sink_exception_class（注入被解释器处理，语法错误证明生效）
       - A3 值级证据：dast_ev.value_level_hit 为真（我方数据确证抵达 sink 实参）
     无前置 L3 证据 → fail-open 保留（绝不零化仅到达 TP）。
-    显式 SAST_AI_DIFF_DEMOTE=0 可强制关闭（回到 r250 后的「差分只作正向、不降级」行为）。
 
-    2026-10-11（r74 实证，方向反转）：「L3 解锁降级」是错的 —— L3 是**正向**证据时恰恰
-    必须**否决**降级。r74 实测 282 的 62 条降级里 26 条为 hit_live 且真值 100% TP（283 另
     有 9 条），35 条真漏洞被响应层无差异否掉。现改为：L3 正向（hit_live / 异常签名）⇒
     不降级；仅当 L3 明确为阴性（hit_sanitized 且无异常签名）时差分才保留降级权。
-    无 L3 的仅到达 spec 仍 fail-open 不降级（未收紧，防 r250 复发）。
     """
-    # 显式关闭：保留 r250 后的「差分只作正向、不降级」行为，用于 A/B 对照。
     if os.environ.get("SAST_AI_DIFF_DEMOTE", "1") in ("0", "false", "False", "no"):
         return None
     if not isinstance(dast_ev, dict):
@@ -6196,13 +6021,10 @@ def _differential_override(dast_ev, vd, oob_confirmed, bl_confirmed):
         return None
     # 前置 L3 证据：异常类型属族（A1）或值级命中（A3）。缺则 fail-open（不零化仅到达 TP）。
     # 注意这一档是 fail-open 保留，本次**未收紧**：无 L3 的仅到达 spec 依旧不被降级，
-    # 否则会重现 r250「无条件降级」把静默成功型真 TP 连同 FP 一起归零的事故。
     _l3 = bool(vd.get("sink_exception_class") or dast_ev.get("sink_exception_class")) \
         or bool(dast_ev.get("value_level_hit"))
     if not _l3:
         return None
-    # ── L3 内部的正反区分（2026-10-11，r74 实证反转）────────────────────────────────
-    # 原设计把「有 L3 证据」当成**解锁**差分的钥匙，方向是反的。r74 实测：282 的 62 条
     # differential_no_impact 里 26 条是值级 hit_live 且**真值 100% TP**（283 另有 9 条），
     # 合计 35 条真漏洞被「控制/实验 HTTP 响应无差异」这条 P1 证据否掉 —— 证明力 4 的
     # 值级正向被 P1 差分压过，违反证明力序。
@@ -6311,7 +6133,6 @@ def _build_d2_evidence_block(vuln, result, spec_row, oob_token=""):
             "matched_event_ids": list(matched)[:20],
             "sink_method": sink_method,
             "source_value": _short_text(ie.get("source_value"), 150),
-            # 可观测性（2026-10-11）：把值级证据连同形态一起落库。此前 value_hit 只在内存里
             # 流转、从不落盘，导致「线上到底有没有算出 hit_live」永远是盲区，只能靠
             # primary_channel / evidence_strength 反推。落库后可直接对账与归因。
             "value_hit": dict(ie.get("value_hit") or {}),
@@ -6341,7 +6162,6 @@ def _build_d2_evidence_block(vuln, result, spec_row, oob_token=""):
             "impact_observed": bool(de.get("impact_observed")),
             "response_summary": _short_text(de.get("response_summary") or de.get("body") or "", 400),
             "requests_made": len(ev.get("requests_made") or []),
-            # 2026-11-05（jsc 622 实证）：requests_made 取自 D2 执行证据（d2_strategy 从
             # LLM 输出抽取的 HTTP 条目），并不等于 D1 实际投递数。实测出现 status_code=200 /
             # reached=true 但 requests_made=0 的「矛盾」读数，实为两路证据不同源。补两个口径
             # 字段让对账可直接区分，不改任何判定（确认态硬闸不看 requests_made）。
@@ -6402,7 +6222,6 @@ def _oracle_positive_signal(family: Any, oracle_state: Any, oracle_signal: Any) 
     与族严格匹配。`inconclusive` / `no_ssrf_effect` / 跨族信号一律不认，
     所以「靶场自己弹的错误页」不会被当可利用证据。
 
-    2026-11-06（jsc 624 实测）：`/ssrf/urlConnection/vuln` 的
     `oracle_state=exploitable, oracle_signal=error_reflect` 已命中，但硬闸只读
     raw_json 的三类证据，读不到 spec 列里的 oracle 结论 ⇒ 判无正向证据降级成
     `confirm-gate:sink-reached`；同一端点在 623 靠「迟到 sink 事件」碰巧回补才确认。
@@ -6432,13 +6251,11 @@ def _oracle_positive_signal(family: Any, oracle_state: Any, oracle_signal: Any) 
 # 不依赖探针是否在业务 sink 插桩，所以 no-arrival 时仍可作为确认依据。
 _RESPONSE_ONLY_ORACLE_SIGNALS = frozenset({
     "error_reflect", "internal_url_reflect", "location_reflect", "websocket_echo",
-    # 2026-11-06：这两族的真值点（/vuln1、/xstream、两个 rememberMe 端点）
     # 恰好都是 no-arrival / 零重放，若不放进纯响应事实集合，探测臂判出正向
     # 信号也升不了确认。两者都只依赖我方投放值与目标响应的对照，与探针无关。
     "expr_eval", "deser_object_accepted",
 })
 
-# 2026-11-06（jsc 625 红线）：响应层 oracle 单独充当**确认依据**时，只认强因果信号。
 # 这些信号绑定我方投放的特定值且能推出危害：注入内网地址触发的连接错误回显、
 # 注入跳转目标原样回显到 Location、命令 stdout 经 WS 帧回显。
 # `reflection_raw` / `acao_reflect` / `header_injected` 只证明「值被回显」，安全端点
@@ -6450,7 +6267,6 @@ _RESPONSE_ONLY_ORACLE_SIGNALS = frozenset({
 # websocket(websocket_echo) 三个已实证的收敛点。
 _ORACLE_WEAK_REFLECTION_SIGNALS = frozenset({
     "reflection_raw", "acao_reflect", "header_injected", "location_reflect",
-    # 2026-11-06：deser_object_accepted 只证明「攻击者字节被反序列化器接受」，
     # 不是 RCE 命令执行，证据强度弱于 error_reflect / websocket_echo。
     # 按 625 红线治理的同一纪律，泛化族上要求 sink 文件名有反序列化语义提示，
     # 避免把「合法输入 200 / 垃圾输入 500」的普通解析错误端点误升成反序列化漏洞。
@@ -6464,8 +6280,6 @@ _ORACLE_FAMILY_FILE_HINTS = {
     "xss": ("xss",),
     "url_redirect": ("redirect",),
     "crlf_injection": ("crlf",),
-    # jsc 三个目标文件：Deserialize.java / Shiro.java / XStreamRce.java
-    # 2026-11-06（jsc 627）：Fastjson.java 的 deser_object_accepted 是弱回显信号，
     # 文件名不含旧提示词会被闸门拦掉。fastjson/jackson/gson 是解析器类名（源码事实），
     # 与 625 红线误报的 Log4j.java/OriginFilter.java 这类错配无关，不会放宽误报面。
     "deserialization": ("deser", "shiro", "xstream", "unserial", "serial",
@@ -6479,8 +6293,7 @@ def _oracle_gate_signal(family: Any, oracle_state: Any, oracle_signal: Any,
                         sink_file: Any = "") -> str:
     """响应层 oracle 能否单独作为确认依据：返回 signal，否则空串。
 
-    三层判据（jsc 625 三条红线误报实证）：
-      1. `_oracle_positive_signal()` 的族严格匹配（含 positive_evidence_rule 回补）；
+      1. `_oracle_positive_signal` 的族严格匹配（含 positive_evidence_rule 回补）；
       2. 强因果信号（差分/时延/文件签名/WS 回显/错误回显）直接放行；
       3. 纯回显类弱信号，且 spec 属于泛化族时，要求 sink 文件名与族语义一致。
          否则就是 A1 把别处 sink 的回显挂到了这个族上：
@@ -6515,7 +6328,7 @@ def _apply_confirmation_gate(task_id: Optional[int], sdb) -> int:
     """确认态硬闸 DB 兜底：扫本 task 全部 confirmed_exploitable spec，逐条用
     raw_json 里已回灌的证据复核是否握有正向证据；无证据者降级 unconfirmed（待重试）。
 
-    覆盖 D2 主循环之外写入 confirmed 的通道（注册期直判、族路由漏网、重放补登记等）——
+    覆盖 D2 主循环之外写入 confirmed 的通道——
     主循环那一路已在写终态时就地过闸，此处是防御性收口，保证「no-arrival 且 confirmed」
     这一证伪失效组合在任何路径下都不可能出现。
     """
@@ -6555,7 +6368,6 @@ def _apply_confirmation_gate(task_id: Optional[int], sdb) -> int:
         if not isinstance(_dast_ev, dict):
             _dast_ev = {}
         _dast_ev.setdefault("impact_observed", bool(_out.get("impact_observed")))
-        # 2026-11-04（jsc 619 实测）：**技术判据已确认 ⇒ 硬闸不得降级**。
         #
         # 技术判据的证据是「响应层可复现观测」（原样反射的载荷 / 模板引擎异常类名 /
         # ACAO 反射 canary / 进程创建异常 / 脚本引擎求值结果），每一条都是**响应事实**，
@@ -6571,7 +6383,6 @@ def _apply_confirmation_gate(task_id: Optional[int], sdb) -> int:
                 "[D2][confirm-gate] spec=%s family=%s 技术判据已确认（technique=%s）⇒ 放行不降级",
                 _spid, _sp.get("family"), _tech_ev.get("technique"))
             continue
-        # 2026-11-06（jsc 624）：第三类「响应层正向证据」——行为 oracle。
         # 它和 technique_evidence 同属响应事实（我方特定投放值被服务端回显/回带），
         # 但结论只落在 spec 列 oracle_state/oracle_signal/positive_evidence_rule，
         # 从不回灌 raw_json，硬闸此前完全看不见 ⇒ 把已确证的点无理由降级。
@@ -6585,9 +6396,7 @@ def _apply_confirmation_gate(task_id: Optional[int], sdb) -> int:
             continue
         _ok, _code, _why = _confirm_gate_decide(
             _st,
-            # 值级证据（2026-10-11）：复核必须带上 value_hit，否则「已落库的值级命中」
             # 在复核侧完全不可见，会把主流程已确认的条目一律判成 arrival_without_semantics
-            # （r75 就是这么把 57 条到达态全降级的）。
             {"matched_event_ids": _d2e.get("matched_event_ids") or [],
              "value_hit": _d2e.get("value_hit") or {}},
             _dast_ev,
@@ -6635,14 +6444,11 @@ def _apply_confirmation_gate(task_id: Optional[int], sdb) -> int:
                     _sfs = [x for x in _sfs if x]
                     # 只在「全部事件的 sink 落点都判非真」时否决；任一为真即放行（零误杀）。
                     #
-                    # 2026-11-02 实杀：`sink_file` 极不可靠——探针在业务 sink 上常常留空或
                     # 只记框架类（`StringHttpMessageConverter` / `OnCommittedResponseWrapper`），
                     # **真实业务 sink 只出现在 `stack_trace`**。只看 `sink_file` 会把
                     # 「真到了业务 sink」误判成「只有噪声 sink」：
                     # 实测 本轮的 `/path_traversal/vul`，6 条事件 stack_trace 里是
-                    # `Files.readAllBytes → PathTraversal.getImgBase64(PathTraversal.java:45)`，
                     # 但 sink_file 全是 Spring 类 ⇒ 硬闸把 16 条真确认降级成 unconfirmed
-                    # （四档动态文件级因此从 55.2% 掉到 41.4%）。
                     _stack_hit = False
                     _esf = str(_sp.get("expected_sink_file") or "").replace("\\", "/")
                     _esf = _esf.rsplit("/", 1)[-1].lower()
@@ -6703,7 +6509,7 @@ def _apply_confirmation_gate(task_id: Optional[int], sdb) -> int:
 
 
 def _apply_oob_correlation(task_id: Optional[int], sdb) -> int:
-    """OOB 第四层回调回流（收口，2026-09-29）：把「真实到达的带外回执」与 spec 对号入座。
+    """OOB 第四层回调回流：把「真实到达的带外回执」与 spec 对号入座。
 
     为什么必须独立做：D2 主循环里 oob_confirmed 只在「反序列化 IAST 链路被观测到」的支内才查
     has_callback（d2_facade._verify_sink_result 的 _deser 分支）。而 no-arrival 的反序列化 spec
@@ -6847,7 +6653,6 @@ def _load_idor_accounts(task_id: Optional[int], external_target: Dict[str, Any])
     if not app_id:
         return None
     try:
-        # R23-2：必须传真实 db。D1Service() 无参会退化为临时库，list_accounts 恒空 →
         # 差分重放永远拿不到双账号（表现为「读 idor app 双账号」静默降级为 None）。
         from src.infrastructure.db import Database as _Database
         _db = _Database(os.environ.get("SAST_AI_DB_PATH", "data/app.db"))
@@ -6865,9 +6670,9 @@ def _load_idor_accounts(task_id: Optional[int], external_target: Dict[str, Any])
 def _build_business_logic_spec(vuln: Dict[str, Any], external_target: Dict[str, Any], accounts,
                                code_root: Optional[str] = None,
                                discovered_routes: Optional[List[Dict[str, Any]]] = None) -> Optional[Dict[str, Any]]:
-    """由 A1/A2 业务逻辑 finding 构造 business_logic trigger_spec（供 verify() 路由到差分重放）。
+    """由 A1/A2 业务逻辑 finding 构造 business_logic trigger_spec（供 verify 路由到差分重放）。
 
-    修复一：业务重放路径此前绕过 §5 解析真相源——只从 ae.target_endpoint / vuln.entry_point
+    修复一：业务重放路径此前绕过  解析真相源——只从 ae.target_endpoint / vuln.entry_point
     取端点，业务型上这些字段常为「空 / 源码路径 / 方法名拼接」，导致重放打到 /address/（空 id）而非
     /address/{id}，探针 ExecutorQueryAdvice 永不命中 findById → BOLA_SUSPECT 恒 0（即「检测到但没确认」真根因）。
     现改为优先调用 resolve_endpoint_full(vuln, ae, code_root, discovered_routes) 取与通道 A 同一解析器产出的
@@ -6926,7 +6731,7 @@ def _attach_business_canary(
 ) -> Dict[str, Any]:
     """P1：为业务差分重放 spec 绑定 canary（taint_marker），打通 IAST 可达性消费 + X-SASTAI-Trace 注入。
 
-    背景：d2_facade._verify_business_logic（ 落地）消费 IAST 可达性须从
+    背景：d2_facade._verify_business_logic消费 IAST 可达性须从
     trigger_spec.taint_marker 取 canary；replay_bola 也须从 taint_marker 注入 X-SASTAI-Trace 头。
     但原业务分支用 _build_business_logic_spec 现造 spec，键集不含 taint_marker，导致：
       (a) IAST 消费端 read 到空 canary → fail-open 跳过（永远 no-iast-evidence）；
@@ -6941,7 +6746,7 @@ def _attach_business_canary(
         return spec
     if spec.get("taint_marker"):
         return spec
-    # 1) 复用已登记 spec 的 canary（取本 task 登记的；无则取 [0]，与 _select_trigger_spec_for_task 同口径）
+    # 1) 复用已登记 spec 的 canary
     _matched = (specs_by_hash or {}).get(vhash, []) or []
     _reg = _select_trigger_spec_for_task(_matched, task_id) or {}
     _reg_tm = _reg.get("taint_marker") or ""
@@ -6980,7 +6785,7 @@ def _select_trigger_spec_for_task(matched_specs: list, task_id) -> Optional[dict
 
 
 def _mark_unverified_kind(raw_json: str, kind: str) -> str:
-    """批次 B（2026-10-01）：在 spec 的 raw_json 上打「未验证子类」标记，fail-open。
+    """批次 B：在 spec 的 raw_json 上打「未验证子类」标记，fail-open。
 
     kind='never_replayed' 表示该 spec 从未进入 D2 重放（被调度门禁拦下 / 无 finding 驱动），
     与「重放过但窗口内零探针事件」区分开，供判责与重放策略选择。
@@ -6997,15 +6802,15 @@ def _mark_unverified_kind(raw_json: str, kind: str) -> str:
 
 
 def finalize_unverified_trigger_specs(db, task_id: Optional[int]) -> int:
-    """§3.1-B 末态兜底：把本 task 仍为空 verification_status 的 trigger_spec 落 'no_evidence'。
+    """-B 末态兜底：把本 task 仍为空 verification_status 的 trigger_spec 落 'no_evidence'。
 
     根因：trigger_specs 中部分 spec 由 A2 自动登记，但无对应 finding 驱动 run_d2_verify 的
-    verify()（all_vulns 仅来自 a1/a2 findings），导致 Phase2 的 per-spec 写回循环永不触发，
+    verify（all_vulns 仅来自 a1/a2 findings），导致 Phase2 的 per-spec 写回循环永不触发，
     verification_status 与 iast_state 恒为空字符串。空串在指标里形成一个幽灵第三类目
     （empty=8），污染召回率统计（confirmed/unconfirmed/empty 三态被空串偷走一档）。
 
     修法：D2 聚合终态统一清扫——凡是本 task 下 verification_status 仍为空的 spec，一律置
-    'no_evidence'（并补 iast_state='no-iast-evidence'）。这与 D2Agent.verify() 在「缺 trigger_spec」
+    'no_evidence'（并补 iast_state='no-iast-evidence'）。这与 D2Agent.verify 在「缺 trigger_spec」
     分支返回的 final_state='no_evidence' 语义一致：D2 已就位审视过该 spec，无证据表明可利用。
     只扫本 task（WHERE task_id=?），避免误改其他 in-progress task 的 spec。
     iast_state 仅在当前为空时才补默认；若某 spec 已有非零 iast_state（例如曾观察到事件），
@@ -7013,7 +6818,6 @@ def finalize_unverified_trigger_specs(db, task_id: Optional[int]) -> int:
     """
     if db is None or task_id is None:
         return 0
-    # D5（2026-10-10）：no-iast-evidence 归因二分——先取本 task 的任务级 hook_inventory
     # （探针 HOOK_INVENTORY 事件 / 任意事件 context 里的 hook_inventory），判断各 spec 的
     # 「无证据」根因是探针组件缺陷（关键 hook 未织入）还是 A2/D1 攻击计划缺陷（hook 就位但
     # canary 没投到正确入口）。整段最佳努力（try/except），失败一律 unknown，绝不阻断兜底。
@@ -7049,7 +6853,6 @@ def finalize_unverified_trigger_specs(db, task_id: Optional[int]) -> int:
             sid = int(r["id"] if isinstance(r, dict) else r[0])
             cur_state = (r.get("iast_state") if isinstance(r, dict) else r[1]) or ""
             new_state = cur_state if cur_state else "no-iast-evidence"
-            # 批次 B（2026-10-01）：区分「从未重放」与「重放过但零探针事件」。
             # 走本兜底的 spec 从未进入 D2（verification_status 仍为空），与「D2 跑过、
             # 只是窗口内零事件」不是同一类失败——后者可走重放/延窗补救，前者只能靠
             # 调度修复（如批次 A 的吸收门禁放行）。此前两类都落成 no_evidence +
@@ -7087,10 +6890,8 @@ def finalize_unverified_trigger_specs(db, task_id: Optional[int]) -> int:
         return 0
 
 
-# 2026-10-08：D2 合批埋点的**跨调用累加器**。
-# 背景（实测踩坑）：d2_batching 埋点每次调度调用都整体覆写，而 run_d2_verify 会被
+# 背景：d2_batching 埋点每次调度调用都整体覆写，而 run_d2_verify 会被
 # 「主 pass + i2_rerun（最多 3 轮）」多次调用，于是最终只残留最后一轮那个极小批次
-# （run 245 实测残留 vulns=1 / batches=1 / avg_batch=1.0），把「主 pass 到底批成多少」
 # 这个关键事实**永久抹掉**了 —— 曾据此误判「合批没生效、需放宽切块粒度」。
 # 这里跨调用累加，下一轮即可读到真实的主 pass 分批规模，避免再靠墙钟反推。
 _D2_BATCH_CUM = {"calls": 0, "batches": 0, "members": 0, "vulns": 0}
@@ -7105,13 +6906,11 @@ except Exception:  # pragma: no cover - 仅防御
 class _D2Phase1TimeoutResult(_D2ResultBase):
     """Phase1 总墙钟/单条超时降级用的结果对象。
 
-    2026-10-22（本轮实杀）：`as_completed(timeout=SAST_AI_D2_PHASE1_WALL)` 超时后原实现
     直接 `raise`，把整轮任务打挂（exit 1、报告都没出）。Phase2 收卷处是
     `_phase1[id(vuln)]` 直接下标 + 访问 result.raw_output/poc_code/reason/verification_decision/
     iast_evidence，缺条会 KeyError。故超时改为「取消剩余批 + 用本对象降级填充」，
     让整轮能收卷出报告；代价是这些 spec 记 no_evidence（宁可丢确认，不可丢整轮）。
 
-    2026-10-29（crypto-523 实杀）：**不再手写属性表，改为直接继承真实的 VerificationResult**。
     手写版连踩两次同类坑——先漏 `exploitable`（AttributeError，half2 四轮全崩），
     又把 `steps_executed` 写成 `[]`（下游 `result.steps_executed > 0` ⇒
     TypeError: '>' not supported between 'list' and 'int'，crypto 整片 failed）。
@@ -7150,7 +6949,7 @@ class _D2Phase1TimeoutResult(_D2ResultBase):
 
 def _d2_primitives_gate_impl(vuln: Dict[str, Any], full: float = 0.85,
                              skip: float = 0.5) -> Dict[str, Any]:
-    """D2 入口概率闸门（纯函数，可单测；2026-10-24 Jev 理念第二阶段）。
+    """D2 入口概率闸门。
 
     读 A2 原语判定挂进来的 vuln_prob（在 exploit_spec.primitives 里），返回分派动作：
       full        VP>=full 或无信号
@@ -7158,7 +6957,6 @@ def _d2_primitives_gate_impl(vuln: Dict[str, Any], full: float = 0.85,
       skip        VP<skip
     无信号（没跑两段式 / 判别降级 / 坏值）时一律 full——闸门只降级不新增否决，保召回。
 
-    阈值修正记录（run 465 A/B 实测）：skip=0.5 时 D2 重放条数降 42%（3535→2276）但
     TP -3、FP +1，未通过"TP 不降 FP 不升"验收 ⇒ skip 默认下调到 0.3（只对极高置信判否
     才跳过）。0.5 到 0.85 的 canary_only 区间实测无副作用，保留。
     """
@@ -7187,7 +6985,7 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
     """运行 D2 动态验证（统一 verify 链路：D1 重放 + I1 关联 + D2 核实 + I2 裁决）。
 
     业务逻辑漏洞（BOLA/越权/状态机/计算逻辑/认证会话/滥用DoS）走「双账号差分重放」（business_logic.verify），
-    技术类漏洞走 canary 污点重放；两者都经同一 verify() 入口，用户感知为「每个 finding 一次 D 阶段验证」。
+    技术类漏洞走 canary 污点重放；两者都经同一 verify 入口，用户感知为「每个 finding 一次 D 阶段验证」。
     差分重放结论折叠进统一 VerificationResult，攻击计划命中指标一并计入业务逻辑命中（消除「0 命中」错觉）。
     """
     import os
@@ -7246,7 +7044,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
         'hitl': {
             'approval_mode': config.get('agents.d2.hitl.approval_mode', 'off'),
             'tool_allowlist': list(config.get('agents.d2.hitl.tool_allowlist', []) or []),
-            # 2026-09-24：闸门消费的是 act_allowlist（动作类别级），此前从未被写入也从未透传。
             'act_allowlist': list(config.get('agents.d2.hitl.act_allowlist', []) or []),
         },
     }
@@ -7296,7 +7093,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
                 'canonical_group_key': getattr(vuln, 'canonical_group_key', ''),
                 'chain_id': getattr(vuln, 'chain_id', '') or getattr(vuln, 'canonical_group_key', ''),
                 'is_canonical': getattr(vuln, 'is_canonical', False),
-                # 2026-09-18（A2 方案二）：聚合吸收成员补行标记，供 _d2_gate / 记录层识别
                 'is_absorbed': bool(getattr(vuln, 'is_absorbed', False)),
                 'absorbed_by_group_key': str(getattr(vuln, 'absorbed_by_group_key', '') or ''),
                 'supporting_nodes': list(getattr(vuln, 'supporting_nodes', []) or []),
@@ -7312,7 +7108,7 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
                 'a21_reason': getattr(vuln, 'a21_reason', ''),
                 # 透传 A1 业务逻辑语义标记，供 _is_business_logic_vuln 在统一 verify 阶段路由到差分重放
                 'a1_evidence': getattr(vuln, 'a1_evidence', {}) or {},
-                # §统一链路：预先算规范 vhash（与 auto_register 同一算法、同一输入源 vuln.to_dict()），
+                # §统一链路：预先算规范 vhash（与 auto_register 同一算法、同一输入源 vuln.to_dict），
                 # 供下方 _d2_gate 用「已登记的 trigger_spec」反查放行——A1 漏洞自身 exploit_spec.entry.route
                 # 为空（未走 _pre_resolve_a2_endpoints，仅 a2_results 被回填），但 auto_register 已用
                 # resolve_endpoint_full 独立解析出路由并登记 spec，仍能进 D2 验证，避免 verification_status
@@ -7348,9 +7144,9 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
 
     all_vulns = list(candidate_map.values())
 
-    # §183：统一从 trigger_spec_registry 加载本 workspace 的 trigger_specs（A2→D1 自动登记的假说），
+    # 统一从 trigger_spec_registry 加载本 workspace 的 trigger_specs，
     # 按 vuln hash 关联。此处提前到门禁之前加载，供下方 _d2_gate 反查「已登记且解析出路由的 spec」放行
-    # 技术族漏洞（含 A1 漏洞），也供 verify() 驱动 D1 重放。
+    # 技术族漏洞（含 A1 漏洞），也供 verify 驱动 D1 重放。
     _workspace_id_for_specs = None
     _sdb = None
     try:
@@ -7361,7 +7157,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             _workspace_id_for_specs = int(_wr["workspace_id"]) if _wr else None
     except Exception:
         _workspace_id_for_specs = None
-    # §Layer2（2026-09-24 诊断修复）：benchmark Servlet 触发器适配器。
     # 在为 A1 finding 反查 trigger_spec 之前，先把每个 A1 finding 关联到同类别的
     # BenchmarkTest servlet 路由并登记 trigger_spec，使 D2 能真实回放确认（此前 252/253
     # 候选因 no_trigger_spec 跳过）。仅在 discovered_routes 含 BenchmarkTest servlet 时生效，
@@ -7432,8 +7227,7 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
     # SQLi /products）全量裁掉，导致其 verification_status 永远为空（从未进 D2）。这是「让 /products SQLi 在
     # D2 裁决中通过」的关键门禁修复。判定逻辑见模块级 _d2_gate_predicate。
     # 门禁反查改用 _trigger_specs_by_anykey（stable 主键优先），避免 route 漂移导致的漏进。
-    # §Phase 1.5（2026-10-17）：孤儿 spec 补入。已登记、payload 齐全、replayable=1 的 spec
-    # 若其源 finding 未进入候选集（聚合合并 / result.error / 二次证明登记），此前会永久
+    # 若其源 finding 未进入候选集，此前会永久
     # no_evidence + never_replayed，等于「发现了却从不验证」。补入后由 D1/I1/D2 正常筛。
     _n_orphan = _enqueue_orphan_trigger_specs(
         all_vulns, _trigger_specs_by_anykey, db=_sdb, task_id=task_id)
@@ -7443,7 +7237,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
     if _has_a21_gate:
         all_vulns = [vuln for vuln in all_vulns if _d2_gate_predicate(vuln, _trigger_specs_by_anykey)]
 
-    # §③ 调度留痕（2026-09-22，闭环 D2_NOT_SCHEDULED）：需求约定「未进 D2 必须显式记 runtime
     # 原因，不得留 unknown」。这里把门禁前后差集逐条落原因，写 event 流 + stage_results.d2.scheduling，
     # 使「谁没进 D2、为什么」事后可审计，不再留下无任何证据、也无任何原因的沉默空壳。
     _d2_scheduling: Dict[str, Any] = {
@@ -7507,8 +7300,8 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             'pending_actions': [],
         }
 
-    # §统一链路：加载本 workspace 的 trigger_specs（A2→D1 自动登记的假说），按 vuln hash 关联，
-    # 供 verify() 驱动 D1 重放。统一链路里 verify() 不再有 legacy 分支，必须拿到 trigger_spec
+    # §统一链路：加载本 workspace 的 trigger_specs，按 vuln hash 关联，
+    # 供 verify 驱动 D1 重放。统一链路里 verify 不再有 legacy 分支，必须拿到 trigger_spec
     # 才能真正跑 D1；没有则明确报 no_evidence（不静默回落）。
     from src.core.config import config as app_config
 
@@ -7521,7 +7314,7 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
         }
     }
 
-    # §并行化：D2 verify 内部并发。原 run_d2_verify 逐 finding 串行调用 agent.verify()
+    # §并行化：D2 verify 内部并发。原 run_d2_verify 逐 finding 串行调用 agent.verify
     # （每个 verify 内含 D1 重放 + I1 轮询 + D2 核实 + I2 裁决，是整轮扫描最重 I/O 瓶颈，约 23min）。
     # 改为 Phase1 并发跑 verify（每 worker 独立 agent 实例，线程局部复用，并发度由
     # agents.d2.parallel_workers 控制，默认 12），Phase2 串行做后处理（结果解析 + DB 回写
@@ -7530,9 +7323,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
     _D2_MAX_WORKERS = int(config.get('agents.d2.parallel_workers', 12) or 12)
     _d2_tls = _threading.local()
 
-    # §靶场实例纪元 —— D2 批次隔离（item 三，2026-09-21）
-    # 背景：D2 批次重放期间靶场可能被看门狗重启。run 23 实证：java-sec-code 于 17:24:22
-    # 优雅退出（看门狗 5s 重建），新 JVM 到 17:30~17:31 才启动完 Spring Boot，而 run 23
     # （16:59:30~17:34:35）的重放窗口正落在该停机 + 启动区间内 → 停机窗口内重放的 spec 拿不到
     # 任何证据，会被写成 no_evidence（「永久非漏洞」结论），污染对账与差分门禁。
     # 处置：批次期间跟踪靶场实例纪元（监听目标端口进程的创建时间 —— JVM 重启必变；取不到时
@@ -7562,9 +7352,9 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
         return _d2_tls.agent
 
     def _d2_resources():
-        """线程内复用 IastService / D1Service（2026-10-18 内存/耗时治理）。
+        """线程内复用 IastService / D1Service。
 
-        背景：verify()/verify_group() 的 iast_service/dast_operator 是可选参数，不传时它们会
+        背景：verify/verify_group 的 iast_service/dast_operator 是可选参数，不传时它们会
         **每个 spec 各新建一次** Database + IastService + D1Service + LLM 网关。Database 实例级
         的 _initialized 为 False，首次 connect 会重跑一遍 _init_schema（数十条 CREATE/PRAGMA）；
         在 9GB 级库上这是纯浪费，309 spec/片就是 309 次建表检查 + 309 个网关对象。
@@ -7581,17 +7371,14 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
     def _d2_resolve_spec(vuln):
         """并发单元前半段（无 I/O）：解析本 finding 的 trigger_spec，返回 (_vhash, _sk, _ts, _trace)。
 
-        2026-09-27 从 _d2_call_verify 中拆出，使批量合并事务能先把批内所有 spec 解析好，
         再一次事务跑完整组（耗时主体是事务窗口，与批内假说数无关）。
 
-        _trace = 本条的执行期逐项埋点（2026-09-22，定位 14 条 enqueued_but_no_verification_record）。
         _d2_scheduling 只记「被门禁裁掉」的条目，对「已入队却无验证记录」的条目完全无痕，
         导致该缺口只能靠猜。这里把 spec 是否命中 / 选中 spec 与 replayable 逐项记下，
         由 Phase2 串行汇总后持久化到 stage_results.d2.scheduling.execution_trace。
         """
         _vhash = ""
         _sk = ""
-        # 2026-11-06：孤儿补入的 vuln 必须按原 spec 的登记 vhash 反查，
         # 重算值对不上任何 spec（见 _enqueue_orphan_trigger_specs 注释）。
         # 空值/非孤儿 vuln 完全沿用原有重算路径，零行为变化。
         _orphan_vh = str(vuln.get("_orphan_spec_vhash") or "").strip()
@@ -7656,7 +7443,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             _trace["error"] = "%s: %s" % (type(_se).__name__, _se)
             logger.warning("[D2] trigger_spec 解析异常（file=%s）：%s", vuln.get("file"), _se)
 
-        # ── D2 入口概率闸门（2026-10-24，Jev 理念第二阶段）──
         # A2 原语判定的 vuln_prob 决定本条的重放策略，省 D2 这个最贵阶段（占总耗时 28%）：
         #   full        VP>=0.85 或无信号 → 正常完整重放（无信号按 full，保召回）；
         #   canary_only 0.5<=VP<0.85 → 只发 canary 不投攻击载荷（D1 attack_degraded 路径）；
@@ -7691,16 +7477,13 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
         return _d2_primitives_gate_impl(
             vuln,
             full=float(os.environ.get("SAST_AI_D2_GATE_FULL", "0.85") or 0.85),
-            # skip 默认 0.3：run 465 A/B 实测 0.5 会掉 TP 3 个（详见 _d2_primitives_gate_impl）
             skip=float(os.environ.get("SAST_AI_D2_GATE_SKIP", "0.3") or 0.3))
 
     def _d2_call_verify(vuln):
         """单条 verify（批量合并关闭时、或批量异常回退时使用）。
 
-        2026-10-18（基建补漏，crypto-r104 卡死根因）：单条 verify 也套墙钟。此前只有
         verify_group 有 SAST_AI_D2_BATCH_WALL，而 group 超时后会回退到本函数逐条跑——
         若单条 HTTP 重放本身挂住（请求级无超时），worker 线程永久卡住，整轮只能等
-        Phase1 总墙钟（SAST_AI_D2_PHASE1_WALL=3600s）兜底。实测 crypto-r104 补捞轮
         replay 停在 1/32、心跳停滞 721s+ 即此形态。
         超时**按降级结果返回**（no_evidence + single_verify_timeout 标记），绝不抛异常：
         Phase2 收卷处是 `_phase1[id(vuln)]` 直接下标取结果，缺条会 KeyError 掀翻整轮。
@@ -7751,16 +7534,14 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
                 _trace["result_status"] = ""
         return _res, _ts, _vhash, _sk, _t0, _t1, _trace
 
-    # 批量合并生效度埋点（2026-09-28）：统计「多少个批真的共用了事务、多少个批退化为逐条」。
     # 没有它就无法回答「批量合并到底生效了吗」，只能凭 D2 总耗时猜。
     _batch_stats = {"batches": 0, "members": 0, "fallback_batches": 0, "fallback_members": 0}
-    # 2026-10-28（P2-2 D2 性能）：分批墙钟埋点。crypto 实测 ~15s/候选、200 候选 50 分钟，
     # 但不知道是「均匀慢」还是「少数批超时」。记录每批耗时后，重跑时可直接看 min/max/avg。
     _batch_walls: list = []
     _bw_lock = threading.Lock()
 
     def _d2_call_verify_batch(batch):
-        """批量合并事务（2026-09-27 落地）：批内漏洞共用一次 IAST 触发事务。
+        """批量合并事务：批内漏洞共用一次 IAST 触发事务。
 
         返回 [(id(vuln), res_tuple)]，与 _d2_call_verify 的元组形态完全一致，Phase2 无需改动。
         任何环节异常都整批回退逐条 verify —— 绝不以降质换速度。
@@ -7805,8 +7586,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
         _resolved = _kept
         _members = [{"vulnerability": _v, "trigger_spec": _ts} for (_v, _vh, _sk, _ts, _tr) in _resolved]
         _vrs = None
-        # 2026-10-17（D2 hang 修复）：verify_group 无内置墙钟上限，单批卡死会拖死整个
-        # as_completed（实测 run 368 卡 2h，replayed=1/690 零变化）。用现成的
         # _with_wall_clock_limit 给每批硬上限，超时即整批回退逐条（fail-safe，不阻塞主流程）。
         _batch_wall = float(os.environ.get("SAST_AI_D2_BATCH_WALL", "600") or 600)
         try:
@@ -7874,10 +7653,9 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
     runtime_source = ''
     pending_actions = []
 
-    # §并行化 Phase1：并发跑 agent.verify()（每个 worker 独立 agent 实例，线程局部复用），
+    # §并行化 Phase1：并发跑 agent.verify（每个 worker 独立 agent 实例，线程局部复用），
     # 并发度由 _D2_MAX_WORKERS 控制。IO 密集，并发收益最大。futures 用 id(vuln) 关联，保证
     # Phase2 串行后处理时按原始 all_vulns 顺序取回 (result, _ts, _vhash)，报告顺序稳定。
-    # #5 (2026-09-13 修复)：改用 as_completed 收集，并按完成进度增量写入 replay_progress 心跳到
     # scan_progress.json（第 N/M 条、当前端点、已 confirmed/sink 计数、心跳时间戳），使 task_runner
     # 与前端在 D1/D2 重放期间能看到实时进度，不再把长时间 running 误判为卡死。fail-open，写失败不影响主流程。
     _total_specs = len(all_vulns)
@@ -7902,7 +7680,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             "heartbeat": datetime.now().isoformat(),
             "status": "replaying",
         }
-        # P1-3（2026-09-13）：心跳同步落 scan_task_events 事件流（追加不可覆写）。
         # scan_progress.json 是易变文件，事后无法审计「本轮前端到底看到过什么」；
         # 事件流的 replayed 递增序列是 D2 重放进度的权威审计依据。
         _append_scan_task_event(task_id, "task_progress", {"replay_progress": _hb_payload})
@@ -7910,7 +7687,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             _update_scan_progress_metadata(output_dir, {"replay_progress": _hb_payload})
         except Exception as _he:
             # P1-3：吞异常从 debug 升为 warning 并同步写 task_log 事件——本轮 NameError
-            # 死代码事故正是靠 debug 级日志 + except: pass 藏了整整一轮。
             logger.warning("[D2] replay_progress 心跳写入失败（task=%s）：%s", task_id, _he)
             _append_scan_task_event(task_id, "task_log", {
                 "level": "warning",
@@ -7938,7 +7714,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             "message": f"replay_progress 初始心跳写入失败: {_he}",
         })
 
-    # §批量合并事务（2026-09-27 落地）：按「族」同质分批，批内共用一次 IAST 触发事务。
     # 早停要求批内全部假说到达才 break，异质分批会让快批被慢假说拖满整窗口 —— 故按族聚合；
     # 批大小由 SAST_AI_D2_BATCH_SIZE 控制（默认 32，设 0/1 即恢复逐条，用于一键回退）。
     _BATCH_SIZE = int(os.environ.get("SAST_AI_D2_BATCH_SIZE", "32") or 32)
@@ -7969,7 +7744,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
                 _BATCH_SIZE, len(all_vulns), len(_batches), _frag_merged)
     # 埋点：批量合并到底生效没有，以前只能靠猜。这里把批数/批内规模/碎片合并量写进
     # scan_progress 的 d2 段，事后可直接读 stage_results.d2.scheduling.batching 对账。
-    # 2026-10-08 增补：同时累加进 _D2_BATCH_CUM 并单独落盘 d2_batching_cumulative。
     # 只写「本次调用」会被 i2_rerun 的极小批次覆写（见上方累加器注释），
     # 累计值才是判断主 pass 合批是否生效的依据。
     _D2_BATCH_CUM["calls"] += 1
@@ -8001,8 +7775,7 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             if str(_dec.get("verification_status", "")) == "confirmed_exploitable":
                 _rp_confirmed += 1
             _iast = getattr(_res, "iast_evidence", {}) or {}
-            # §单一真相源：必须用 is_sink_reached()（含探针显式断言态 sink-reached-probe），
-            # 不能硬编码 == "sink-reached"。实测 R28 全量：245 条 canary 事件里 222 条是
+            # §单一真相源：必须用 is_sink_reached（含探针显式断言态 sink-reached-probe），
             # sink-reached-probe 态，硬编码比较会把它们全漏掉，前端 sink_reached 恒显示 0，
             # 与 iast_events 里 sink_reached=1 的真实行数自相矛盾。
             # ④ sink 身份校验：框架噪声 sink（非本族真 sink）不计入 sink_reached。
@@ -8013,9 +7786,8 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             _cur = ""
         _write_replay_heartbeat(current=_cur)
 
-    # 2026-10-28（P0-5 D2 分级超时）：给「单批 / 单条」各加墙钟，超时即降级 no_evidence，
     # 绝不阻塞 as_completed。此前只有总墙钟（7200s）兜底，任一批挂死就要白等 2 小时
-    # （crypto 实测卡 50 分钟零进展、本轮挂过 2h）。阈值可用环境变量覆盖。
+    # 。阈值可用环境变量覆盖。
     _per_batch_wall = float(os.environ.get("SAST_AI_D2_BATCH_WALL", "900") or 900)
     _per_vuln_wall = float(os.environ.get("SAST_AI_D2_VULN_WALL", "300") or 300)
 
@@ -8068,8 +7840,7 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
         """批量单元（永不抛异常）：单批/单条超时或失败均降级兜底，保证 _phase1 不缺项。"""
         try:
             if _BATCH_SIZE > 1:
-                # 2026-10-29（trustbound 回归实杀）：**批路径不能再包 _run_with_timeout**。
-                # 原因：_run_with_timeout 新建单线程池执行，而 _d2_agent() / _d2_resources()
+                # 原因：_run_with_timeout 新建单线程池执行，而 _d2_agent / _d2_resources
                 # 都是**线程局部**（_d2_tls）⇒ 新线程里会重建 D2 verifier + IastService +
                 # D1Service，导致证据窗口被绕过：实测 trustbound 的 sink 到达 34→18、
                 # D2 耗时 1027s→160s、召回 96.4%→67.9%（本轮 vs 531）。
@@ -8098,34 +7869,27 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
                                    str(_v.get("vulnerability_hash_v2", ""))[:12], _ve2)
             return _pairs
 
-    # 2026-10-17（D2 hang 修复·兜底）：Phase1 总墙钟上限。即便单批回退逐条仍卡死，
-    # 也绝不让 as_completed 无限挂起（run 368 实测挂 2h 无进展）。超时按 fail-fast 收口。
     import concurrent.futures as _cf
-    # Phase 0a（2026-10-17）：D1 重放前按 servlet 源码纠正 param_location（治"注错源"）。
     # 放在并发重放之前，保证 D1 把 payload 注到 servlet 真正读取的源（header/cookie/query/body）。
     try:
         _apply_source_location_postpass(task_id, _sdb, code_root)
     except Exception as _sle:
         logger.warning("[D2] 源位置纠正失败（忽略，不阻断重放）：%s", _sle)
-    # Phase 0b（2026-11-01，阶段 2）：补齐空的 param_name（工具类 sink 走调用图回溯）。
     # 必须排在 Phase 0a 之后、并发重放之前：param_location 定「注哪儿」，param_name 定
     # 「注什么名字」，两个都对了 D1 才能把 payload 送到 sink。只填空，不覆盖 A2 的结论。
     try:
         _apply_param_backfill_postpass(task_id, _sdb, code_root, output_dir)
     except Exception as _pfe:
         logger.warning("[D2] param 补齐失败（忽略，不阻断重放）：%s", _pfe)
-    # Phase 0c（2026-11-02）：按形参类型纠正请求形态（multipart / 二进制 / header / cookie）。
     # 必须排在 param_name 补齐之后：先知道「注哪个参数」，再决定「用什么编码注」。
     try:
         _apply_binding_postpass(task_id, _sdb, code_root, output_dir)
     except Exception as _bfe:
         logger.warning("[D2] 请求形态纠正失败（忽略，不阻断重放）：%s", _bfe)
-    # Phase 0d（2026-11-02）：合并完全重复的 spec（同 endpoint+行+族），避免重复重放与分母虚高。
     try:
         _apply_spec_dedupe_postpass(task_id, _sdb)
     except Exception as _dfe:
         logger.warning("[D2] spec 去重失败（忽略，不阻断重放）：%s", _dfe)
-    # Phase 0e（2026-11-02）：按过滤器源码补「前置请求头」（Referer/Origin）。
     # 排在重放之前：缺这些头时请求会被 filter 直接 return，参数再对也进不到业务代码。
     try:
         _apply_filter_headers_postpass(
@@ -8133,19 +7897,15 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             str((external_target_dict or {}).get("service_url") or ""))
     except Exception as _fhe:
         logger.warning("[D2] 前置请求头补齐失败（忽略，不阻断重放）：%s", _fhe)
-    # Phase 0f（2026-11-02）：标记两步桥 spec（写入口 → 存储 → 调度器执行），
     # 使其不计入动态确认分母。
     try:
         _apply_two_step_mark_postpass(task_id, _sdb)
     except Exception as _tse:
         logger.warning("[D2] 两步桥标记失败（忽略，不阻断重放）：%s", _tse)
-    # 2026-10-22：默认 3600s 在 本轮（391 spec / 29 批）实测不够——超时即整轮挂死。
     # 现已有「超时降级填充 no_evidence 后继续收卷」的兜底（见 except _cf.TimeoutError），
     # 故把默认墙钟抬到 7200s：给 D2 跑完的机会，真超时也能带报告收口。
     #
-    # 2026-10-29（half2 实杀）：上一轮把默认值改成 3600 是错的——crypto 分片 238 个候选、
     # 单候选约 15s 本地计算，本来就需要 ~1h，3600s 正好卡在边界 ⇒ crypto(514/515) 每次都
-    # 被总墙钟提前收卷，叠加 _D2Phase1TimeoutResult 缺属性 ⇒ 四轮全崩、findings=0。
     # 现在单批 900s / 单条 300s 的分级超时已能兜住死锁（不再需要靠总墙钟防挂死），
     # 总墙钟回归 7200s 只作为最后保险。
     _phase1_wall = float(os.environ.get("SAST_AI_D2_PHASE1_WALL", "7200") or 7200)
@@ -8163,7 +7923,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
                     _account(_res_tuple)
         except _cf.TimeoutError:
             _done = sum(1 for _f in _futs if _f.done())
-            # 2026-10-22（run 450 实杀）：原实现这里是 `raise`——Phase1 一超总墙钟就把
             # 整轮任务打挂（报告都没出、trigger_specs 全空、任务永久 running）。
             # 现改为「取消剩余批 + 降级填充 no_evidence」：宁可这些 spec 丢确认，
             # 也不能丢整轮（召回由下一轮/放高墙钟补，任务挂死则什么都没有）。
@@ -8259,7 +8018,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
         }
 
     # §迟到证据补捞（I1 关联竞态）：D2 裁决与探针事件摄取是并发的，per-spec 有界轮询窗口
-    # （15×1.5s≈22s）远小于真实摄取延迟——实测 task-7 事件摄取跨度 04:40:23→04:44:51（约 4.5 分钟），
     # 而 D2 阶段 04:40:22→04:44:42，两者几乎完全重叠。结果是事件最终落库、canary 也逐字符可匹配
     # （spec815↔事件2640、spec763↔事件2743），裁决却早已按 no-iast-evidence 定稿，产生
     # 「sink_reached=1 却 iast_state=no-iast-evidence」的矛盾行。
@@ -8279,9 +8037,7 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
     except Exception as _le:  # fail-open：补捞失败不应影响既有裁决与主流程
         logger.warning("[D2] 迟到证据补捞失败（忽略）：%s", _le)
 
-    # §补捞后回写心跳（R28 修复）：上面那条 status=replay_done 的心跳是「重放结束瞬间」的快照，
     # 而迟到证据补捞发生在它之后，会把一批 no-iast-evidence 升级成 sink-reached / sink-reached-probe。
-    # 不回写的话前端与 scan_progress.json 永远停在偏低数字——R28 实证：replay_done 时 sink_reached=0，
     # 而权威口径（D1 iast_arrivals、D2 sink_reached_count）都是 36，iast_events 里 sink_reached=1 有
     # 454 行，三者自相矛盾，看起来像探针没工作。
     # 这里不直接加 _late_n，而是基于补捞后的 result 重新计数（补捞是就地改 state，重算最稳）。
@@ -8351,11 +8107,9 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
         _canary_sink_cache[_ident] = _out
         return _out
 
-    # §逐条执行埋点收集器（2026-09-22）：Phase1 并发写、Phase2 串行汇总，最后随 scheduling 一起落盘。
     _d2_exec_trace: List[Dict[str, Any]] = []
     for vuln in all_vulns:
         result, _ts, _vhash, _sk, _t0, _t1, _trace = _phase1[id(vuln)]
-        # §逐条埋点（2026-09-22）：本条已走完 Phase2 折叠，记 folded。
         # 关键对照：verify_returned=True 且 folded=True 却仍被报告写成
         # enqueued_but_no_verification_record 的条目，说明断点不在 D2 执行而在报告折叠端。
         _trace["folded"] = True
@@ -8371,9 +8125,7 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
         verification_decision = getattr(result, 'verification_decision', {}) or {}
         verification_status = str(verification_decision.get('verification_status', '') or '')
 
-        # §批次隔离（item 三，2026-09-21）：靶场重启/不健康窗口内的结论一律落 invalidated
         # （可重试），既不记 confirmed 也不记 no_evidence。否则停机窗口内拿不到证据的 spec 会
-        # 被写成 no_evidence（「永久非漏洞」结论），污染对账与差分门禁 —— run 23 即此情形。
         _inval = ""
         try:
             # pre_status 传入「失效前的原裁决」：正向证据否决失效判定时要用它判断本条是否已确认。
@@ -8424,7 +8176,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             try:
                 _iast_state = str((getattr(result, 'iast_evidence', {}) or {}).get('state', '') or '')
                 _bl_confirmed = 1 if (verification_decision.get('business_logic') and confirmed_exploitable) else 0
-                # —— I 族路由判定（2026-09-28 批准）——
                 # 三失效族（weak_hash/weak_crypto=算法通道；securecookie=属性通道）的
                 # confirmed_exploitable 改按各自判据重判，独立终态 confirmed_code_property。
                 # 数据流族原样放行（零回归）；仅对 confirmed_exploitable 介入。
@@ -8502,9 +8253,7 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
                                 _spid, _fv_family, _iast_state, _why,
                             )
                     _bl_write = _bl_confirmed if _vs_write == 'confirmed_exploitable' else 0
-                    # ── unknown 族禁确认（2026-10-23）──────────────────────────────────
                     # unknown = 离线兜底分析器连「属于哪个族」都没归类出来的产出。族都没定，
-                    # 再说「已证实可利用」是自欺（457 的 BenchmarkTest00099 就是这种，trustbound
                     # 安全用例被 unknown 族确认）。跨轮预演 446/452/453/457：**没有任何 TP 仅靠
                     # unknown 族确认**，只有 457 的 00099 一个 FP ⇒ TP 误杀 = 0，可以做硬闸。
                     # 只降状态、不删 spec：canary 覆盖与报告里的观测面都保留。
@@ -8552,8 +8301,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
                             )
                     except Exception as _fs_e:
                         logger.warning("[D2][family-sink] spec=%s 族-证据校验失败（按原族名）：%s", _spid, _fs_e)
-                    # P2（2026-09-29）反向改判：rmi/jndi_injection 无 naming sink 实证且仅业务
-                    # 差分确认 → 改判 broken_access_control（run 38 实证 rmi@/jwt/createToken
                     # 实为垂直越权被误定族）。只改族名不动验证裁决，业务差分确认本身仍成立。
                     if not _fam_write:
                         try:
@@ -8630,10 +8377,9 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
         except Exception as exc:
             logger.warning(f"[D2] Failed to generate structured POC for report: {exc}")
 
-        # 2026-10-28 修：D2 Phase1 墙钟超时降级对象 _D2Phase1TimeoutResult 没有 attack_plan，
         # 原写法 `result.attack_plan if isinstance(getattr(...), dict) else {}` 会在缺属性时
         # getattr 返回 {} → 判断为真 → 再直接取 result.attack_plan 抛 AttributeError，
-        # 把整轮任务打挂（本轮实测）。改为先取到局部变量再判类型。
+        # 把整轮任务打挂。改为先取到局部变量再判类型。
         _attack_plan = getattr(result, 'attack_plan', {})
         attack_plan = _attack_plan if isinstance(_attack_plan, dict) else {}
         exploit_spec = normalize_exploit_spec(
@@ -8684,12 +8430,10 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             tool_id = next((item.split("=", 1)[1] for item in tool_evidence if item.startswith("tool=")), "unknown")
             risk_level = next((item.split("=", 1)[1] for item in tool_evidence if item.startswith("risk=")), "high")
             # ⑤-C 闸门短接场景：result.evidence 为空（未实际执行），tool_id 会落到 "unknown"。
-            # 但下游 resolve_task_hitl_action 批准时会把 tool_id 写入 tool_allowlist，
             # "unknown" 毫无语义且污染白名单，故此处按「待放行的是 D2 破坏性重放」补语义值。
             if tool_id == "unknown" and (verification_decision or {}).get("hitl_gate"):
                 tool_id = "d2_replay"
             # ⑤-C 两阶段只读先行：proposed_action 富化为「只读阶段已探明的将投放动作」，
-            # 让人在批准前看清不可逆动作长什么样（route/method/category/reason/tool），
             # 实际执行留到审批后重跑（回填）才发生。
             _es = getattr(result, 'exploit_spec', {}) or {}
             _entry = (_es.get('entry') or {}) if isinstance(_es, dict) else {}
@@ -8761,9 +8505,9 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             'final_state': getattr(result, 'final_state', '') or '',
             'iast_evidence': getattr(result, 'iast_evidence', {}) or {},
             'dast_impact_evidence': getattr(result, 'dast_impact_evidence', {}) or {},
-            # §D1 重放指标：记录本次 verify() 是否真的被 trigger_spec 驱动（D1 实际发流量）。
+            # §D1 重放指标：记录本次 verify 是否真的被 trigger_spec 驱动（D1 实际发流量）。
             # 不能从 iast_evidence.replayed 取值——aggregate_iast_evidence 的返回不带该字段，
-            # 历史版本因此把 D1 永远计为 0 条/ skipped（见 #D1-skip 修复）。
+            # 历史版本因此把 D1 永远计为 0 条/ skipped。
             'trigger_spec_provided': _ts is not None,
             'trigger_spec_hash': (_ts.get('vulnerability_hash_v2') if isinstance(_ts, dict) else None),
             # §#3②：权威关联键（与报告层 finding.vulnerability_hash_v2 同源计算），使校验↔finding
@@ -8822,36 +8566,30 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
 
     logger.info(f"D2 AI Agent verification complete: {len(results)} vulnerabilities verified")
 
-    # §I 族路由 post-pass（2026-09-28 批准，根因1 方法A）：D2 主循环后独立收尾，重判注册期直接
     # confirmed_exploitable 而绕过 D2 的三失效族（weak_hash/weak_crypto/secure_cookie）。绕过
     # _d2_gate_predicate 的结构性够不到问题，使 I 路由真正可达、三失效族假阳性出清得以发生。
     _n_family_route = _apply_family_route_postpass(task_id, _sdb)
     if _n_family_route:
         logger.info("[D2] I 族路由 post-pass 改写 %d 条三失效族 spec（详见 [D2][family-route-postpass]）", _n_family_route)
 
-    # §G 第二步 A 路线（2026-09-28 批准）：A2 安全写法反例否决 post-pass。数据流族
     # confirmed_exploitable 若源文件含「死分支常量/安全值覆盖」反例（canary 到达真 sink
-    # 但运行期走常量分支），确定性降级 unconfirmed。run 28 实证 TP 误伤=0。
     _n_safe_veto = _apply_safe_pattern_postpass(task_id, _sdb, code_root or target_path)
     if _n_safe_veto:
         logger.info("[D2] 安全写法反例否决 post-pass 改写 %d 条 spec（详见 [D2][safe-pattern-veto]）", _n_safe_veto)
 
-    # §Phase 2（2026-10-17）：值级 sink 实参闸 post-pass —— 本质修复。
     # 判据来自探针记录的 sink **实际实参**（payload 是否真到达该族真 sink），target-agnostic；
     # 前置依赖 Phase 0a 已把 param_location 按源码纠正（否则 payload 注错源 → 假 absent）。
     _n_value_veto = _apply_sink_value_gate_postpass(task_id, _sdb)
     if _n_value_veto:
         logger.info("[D2] 值级 sink 实参闸否决 %d 条 spec（详见 [D2][value-gate]）", _n_value_veto)
 
-    # §阶段2a（2026-10-20）：确认态 sink 身份校验 —— canary 只到旁路 sink（不在族真 sink
     # 实参）⇒ 抑制。修「确认态硬闸用通用 sink 到达确认」的缺陷；仅 xpathi/trustbound。
     _n_confirm_sink = _apply_confirm_sink_identity_postpass(task_id, _sdb)
     if _n_confirm_sink:
         logger.info("[D2] 确认态 sink 身份校验抑制 %d 条 spec（详见 [D2][confirm-sink]）",
                     _n_confirm_sink)
 
-    # §收口（2026-09-29）：OOB 第四层回调回流，必须在硬闸之前跑——
-    # 先把「回执真实到达」的 spec 升 confirmed_exploitable，硬闸随后复核（握 OOB 实证即通过），
+    # 先把「回执真实到达」的 spec 升 confirmed_exploitable，硬闸随后复核，
     # 否则会被硬闸当无证据降级，第四层证据白白流失。
     _n_oob_corr = _apply_oob_correlation(task_id, _sdb)
     if _n_oob_corr:
@@ -8860,14 +8598,12 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             _n_oob_corr,
         )
 
-    # 2026-11-02：按「注入技术」重判（放在硬闸之前，让带技术证据的结论先成立）。
     # 现有判定只认「canary 到 sink」，对盲注/反射类不成立——实测 594 有 5 个真值文件的
     # canary 明明到了业务 sink，却因「响应里没有明显危害」被判 unconfirmed。
     _n_tech = _apply_technique_oracle_postpass(task_id, _sdb, code_root or target_path)
     if _n_tech:
         logger.warning("[D2] 按注入技术补确认 %d 条 spec（详见 [technique-oracle]）", _n_tech)
 
-    # §确认态硬闸 DB 兜底（2026-09-29 批准）：主循环那一路已在写终态时就地过闸，
     # 此处复核全部 confirmed_exploitable（含注册期直判、族路由漏网等其它写入通道），
     # 保证「no-arrival 且 confirmed_exploitable」这一证伪失效组合在任何路径下都不出现。
     _n_confirm_gate = _apply_confirmation_gate(task_id, _sdb)
@@ -8880,15 +8616,14 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
             "[D2] 确认态硬闸降级 %d 条 confirmed_exploitable → unconfirmed（详见 [D2][confirm-gate]）",
             _n_confirm_gate,
         )
-    # 2026-11-03：硬闸之后**必须再复核一次**——IAST 事件批量落库，
     # 硬闸执行时部分 spec 的真实 sink 事件还没到，只看到框架噪声 sink 就降级了。
     # 实测 594/599 各 15 条降级里 11 条事后确有真 sink 证据。
     _n_regate = _apply_confirm_gate_recheck(task_id, _sdb)
     if _n_regate:
         logger.warning("[D2] 迟到证据回补 %d 条 confirm-gate 降级 → confirmed_exploitable", _n_regate)
 
-    # §3.1-B 末态兜底：清扫本 task 下仍为空 verification_status 的 trigger_spec（无 finding 驱动
-    # verify() 的自动登记 spec），统一置 'no_evidence'，消除 empty=8 幽灵计数污染。fail-open。
+    # -B 末态兜底：清扫本 task 下仍为空 verification_status 的 trigger_spec（无 finding 驱动
+    # verify 的自动登记 spec），统一置 'no_evidence'，消除 empty=8 幽灵计数污染。fail-open。
     # 注意：invalidated（批次隔离产物）是非空态，不会被此处清扫覆盖 —— 它必须保持「可重试」语义。
     _n_finalized = finalize_unverified_trigger_specs(_sdb, task_id)
     logger.info(
@@ -8897,7 +8632,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
         len(results), _n_finalized, _n_invalidated,
     )
 
-    # 2026-10-03（Part2 M1）：终态落定后统一做一次「未确认」判责，把 no_evidence/unconfirmed
     # 这个大杂烩劈成 env_unsupported / probe_not_covered / pipeline_gap / true_miss 四类。
     # 位置很关键：必须在 finalize_unverified_trigger_specs **之后** —— 那一步会把空状态 spec
     # 刷成 no_evidence，先归因会漏掉整批「从未重放」的 pipeline_gap。fail-open。
@@ -8915,15 +8649,12 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
     except Exception as _ae:
         logger.warning("[D2][归因] 批量判责失败（忽略，不影响主流程）：%s", _ae)
 
-    # P2-3（2026-09-13）：verification_status 三态显式分列（设计语义，不折叠）。
     # confirmed_exploitable=已证实可利用；unconfirmed=已验证但未证实可利用；no_evidence=
     # D2 已审视且无证据表明可利用（永久非漏洞结论，是误报治理依据，不得并入 unconfirmed）。
     # 与 iast_state（no-arrival=靶场挂了/请求未抵达）严格区分，两字段分列统计。
-    # 2026-09-21 增列 invalidated：靶场重启/不可用窗口内的结论（可重试，不得计入任何
     # 「已定论」档 —— 既不确认也不否证）。
     # 权威源是 finalize 之后的 trigger_specs（DB GROUP BY），而非内存 results。
     _vs_dist = {'confirmed_exploitable': 0, 'unconfirmed': 0, 'no_evidence': 0, 'invalidated': 0,
-                # 2026-10-07（方案①）：新增「已确认抵达、未证实利用」态。
                 # 必须显式列入，否则 GROUP BY 出的新状态在渲染分布时会被 KeyError 吞掉、
                 # 变成统计缺口（与 memory 里「r64a 探测卡片曾整体不显示」同源，必须显式初始化）。
                 'sink_reached': 0}
@@ -8967,7 +8698,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
         except Exception as _ae:
             logger.warning("[D2] 批次隔离告警事件写入失败（忽略）：%s", _ae)
 
-    # §逐条执行埋点落盘（2026-09-22）：把每条 vuln 的 verify 执行与折叠情况并入 scheduling，
     # 使「已入队却无验证记录」的条目能直接定位断点在「执行期」还是「折叠期」，不再靠猜。
     # 关键对照：verify_returned 与 folded 都为 True 却仍被报告写成
     # enqueued_but_no_verification_record 的条目 → 断点在报告折叠端（身份键错位），非 D2 执行。
@@ -8989,7 +8719,6 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
     except Exception as _te:  # fail-open：留痕失败不影响主流程
         logger.warning("[D2] 执行埋点落盘失败（忽略）：%s", _te)
 
-    # §2026-10-11 第六节：post-scan 迟到回收——orchestrator 采集窗口硬上限 900s 把探针批量
     # 迟到的事件丢掉（探针 flush 落在窗口关闭之后），导致本应在窗口内被确认的 spec 写成
     # no-arrival。这里在主流程定稿后、报告生成前，用全量 iast_events 重算 arrival+value_hit
     # （gate B：到达真实 sink 且 source_value 比对命中），把真 TP 救回。
@@ -9069,7 +8798,7 @@ def run_d2_verify(a1_results, a2_results, files, target_path: str = None, extern
 
 
 class _SpecOverrideVuln:
-    """轻量代理：委托原 vuln 的全部属性，仅覆盖 exploit_spec（§6.8 缺口收口，2026-09-30）。
+    """轻量代理：委托原 vuln 的全部属性，仅覆盖 exploit_spec。
 
     此前 execute_retryable_replay 直接把内存 vuln 对象喂给 run_d2_verify，trigger_specs 上
     已落库的 replay_adjust 调整（switch_param_location 换位 / escalate_variant 变体）完全
@@ -9103,7 +8832,7 @@ def _read_spec_row(db, spec_id: int) -> Dict[str, Any]:
 
 def _sanitizer_aware_variant(db, vuln, spec_row: Dict[str, Any], spec_id: int,
                              fam: str, base: str, imps: List[str]) -> Optional[Dict[str, Any]]:
-    """升变体：在净化器约束内合成下一发载荷（2026-10-02，取代静态变体梯子）。
+    """升变体：在净化器约束内合成下一发载荷。
 
     旧实现按族写死一张表（baseline → url_encode → alt_syntax → oob）按序取下一阶，
     它不知道对手在拦什么。新实现：
@@ -9171,7 +8900,7 @@ def _sanitizer_aware_variant(db, vuln, spec_row: Dict[str, Any], spec_id: int,
 
 
 def _spec_override_exploit_spec(db, vuln, spec_row: Dict[str, Any], spec_id: int) -> Dict[str, Any]:
-    """按 trigger_specs 权威字段重建 vuln 的 exploit_spec（Q6 §二.4，2026-09-30）。
+    """按 trigger_specs 权威字段重建 vuln 的 exploit_spec。
 
     - param_location：以 spec 落库值为准（apply_replay_adjustments 的 switch_param_location
       真 UPDATE 在 spec 上，vuln 内存对象不知道）→ 覆盖 entry.param_location，让换位生效。
@@ -9209,7 +8938,6 @@ def _spec_override_exploit_spec(db, vuln, spec_row: Dict[str, Any], spec_id: int
             imps = [str(p) for p in (pl.get("high_impact_payloads") or []) if p]
             base = str(adj.get("baseline_payload") or (imps[0] if imps else ""))
             level = int(adj.get("variant_level") or 0)
-            # 2026-10-02（造弹路线重写）：静态变体梯子（_VARIANT_LADDER / next_variant_payload）
             # 已从主路径移除——它不知道对手在拦什么，只是"换个写法碰运气"。
             # 改为净化感知合成：拿得到 FilterSpec 就在约束内构造并确定性验证；
             # 拿不到约束就不升级（宁可不动，也不盲试）。
@@ -9230,7 +8958,6 @@ def _spec_override_exploit_spec(db, vuln, spec_row: Dict[str, Any], spec_id: int
                 adj["variant_level"] = level + 1
                 adj["baseline_payload"] = base
                 adj["last_variant"] = nxt_name
-                # 批次 D（2026-10-01）：变体梯子命中埋点。此前 escalate_variant 是否真点火
                 # 只能事后 grep trigger_specs.raw_json，无法在 retryable 事件里直接观测；
                 # 这里打内部标记，由 execute_retryable_replay 汇总进事件，便于按轮验收。
                 espec["_variant_escalated"] = nxt_name
@@ -9262,11 +8989,10 @@ def _count_confirmed_specs(db, task_id: int) -> int:
 
 
 def _confirmed_vhash_set(db, task_id: int) -> set:
-    """确认态 spec 的 vhash 集合（2026-10-08 #确认保全闸）。
+    """确认态 spec 的 vhash 集合。
 
     B-1 产物健康度闸（spec 总数/端点率/注入类比）不含「确认保全」维度——rerun 产物
     可以健康度全达标，却把上一轮已确认的漏洞在重验后大量丢成 unconfirmed/no_evidence
-    （run 245 实证：confirmed 60→41，gain=-19，rerun_gate 却 ok=True）。
     本集合供重验前后对比确认保全率。
     """
     try:
@@ -9286,18 +9012,12 @@ def execute_retryable_replay(db, task_id, retryable, *, a1_results, a2_results, 
                               inter_batch_sleep: float = 2.0) -> Dict[str, int]:
     """消费 plan_retryable_replay 的 retryable 清单，真正重放（D1 重发 + D2 重验），回写终态。
 
-    2026-09-29 补 执行缺口：此前闭环收尾只把 retryable 清单写进 scan_task_events 留痕，
     没有任何代码消费它去真正重跑 → xss 等 no_evidence 在各轮稳定残留。这里接上执行：
       - 把 a2_results 按 retryable 的 vhash 过滤成子集，传**空 a1_results** 调 run_d2_verify，
         只重验这些 spec，不碰全量（避免重复确认/污染对账）。
-      - 按族分批 + 批间 sleep，避 D2 开闸洪峰的队列背压吞事件（run 40 实测 40s 内三次 queue=100%）。
       - 每批后给每条 spec 的 raw_json.replay_adjust.round +1，封顶由 plan_retryable_replay 的
         max_rounds 控制，绝不无限重试。
-    2026-09-30（残留低风险二）：重放并发节流，批大小默认 6→3，重放期主动错峰，牺牲少量
-    时长换证据完整性（配合探针侧排空 2048/s + (canary,sink) 去重三件套，run 40 类背压丢事件收敛）。
 
-    2026-10-08（r65 实测纠偏）：批大小默认 3 → 32，与主 pass 的 SAST_AI_D2_BATCH_SIZE 对齐。
-    依据（run 245 shard-sqli-1-r65 真实读数，非估算）：
       - 主 pass：309 个漏洞，run_d2_verify 内部按族切 32 一批 → 约 15 分钟跑完；
       - 重试环：299 条 no_evidence/unconfirmed 被这里按 3 一切 → 65 次 run_d2_verify 调用，
         每次一个完整 IAST 事务（重放 + 60s 窗口 + 30s settle ≈ 180s），合计约 195 分钟，
@@ -9395,11 +9115,9 @@ def execute_retryable_replay(db, task_id, retryable, *, a1_results, a2_results, 
         except Exception as _e:
             logger.warning("[retryable] 回写 round 失败 spec=%s：%s", _sid, _e)
 
-    # Q6 §二.4（2026-09-30）：改为 spec_id 驱动——逐 retryable item 从 trigger_specs 读权威
     # 字段重建重放上下文（param_location 覆盖 + escalate_variant 变体升级），确保 replay_adjust
     # 调整真正生效；a2_results 仅按 vhash 建索引提供 vuln 载体。
     _vuln_by_vh = {}
-    # C9（2026-10-26）：vhash 之外的二级索引 (family, endpoint)。
     # 实测（471/472）：重试匹配率长期 21/119=0.176、7/85=0.082 —— 根因是 **vhash 两端口径漂移**：
     #   spec 登记端的 vulnerability_hash_v2 常取 chain_id / canonical_group_key 形态
     #   （benchmark_cli.py:3182），而这里对 a2_results 的 vuln 重算的是逐条完整 hash。
@@ -9427,11 +9145,9 @@ def execute_retryable_replay(db, task_id, retryable, *, a1_results, a2_results, 
         return re.sub(r"^[A-Z]+\s+", "", str(_e or "")).strip().rstrip("/").lower()
 
     _by_fam = defaultdict(list)
-    # 批次 D（2026-10-01）：变体梯子点火计数，随返回值落到 retryable_no_evidence 事件，
     # 使「escalate_variant 是否真发生」成为事件级可观测指标（此前只能事后 grep raw_json）。
     _variant_escalated = 0
     # C9 失配诊断：vhash 两端口径漂移导致的跳过条数与样本（下一轮精确归因用）。
-    # 2026-11-01 实杀：这三个变量原本初始化在**后面 `for _fam` 循环之前**，但真正使用它们的
     # 是**紧跟着的这个 `for _it in retryable` 循环**（`_vh_miss += 1`）⇒ 只要有 retryable
     # 匹配不上就抛 `UnboundLocalError: cannot access local variable '_vh_miss'`，
     # 整个闭环重试被 fail-open 吞掉（本轮日志：`[闭环] 可重试重放失败（忽略，保留终态）`）。
@@ -9540,7 +9256,7 @@ _CURRENT_SCAN_TASK_ID: Optional[int] = None
 
 
 def _append_scan_task_event(task_id: Optional[int], event_type: str, payload: Dict[str, Any]) -> None:
-    """P1-3（2026-09-13）：进度/诊断事件落 scan_task_events 事件流（追加不可覆写）。
+    """P1-3：进度/诊断事件落 scan_task_events 事件流（追加不可覆写）。
 
     scan_progress.json 是会被反复读写的易变文件，事后无法审计「本轮前端到底看到过什么」；
     事件流追加写让 D2 重放心跳（replayed 递增序列 / replay_done 终态）与吞异常原因可事后
@@ -9562,9 +9278,7 @@ def _append_scan_task_event(task_id: Optional[int], event_type: str, payload: Di
 def _spec_key_snapshot(task_id: Optional[int]) -> Dict[str, Dict[str, Any]]:
     """spec 集指纹快照（按 vulnerability_hash_v2 取键），供重登记前后逐条比对。
 
-    2026-09-28（01229 类收缩跟进）：``i2_feedback.spec_health_gate`` 是**比例闸门**
     （spec 总数退化 >10%、端点解析率 >10%、注入类 >20% 才拦），单条 spec 消失在比例上
-    根本不可见——run 28 已 confirmed 的用例 01229 到 run 32 无声消失即属此类，
     且 reasons 无痕、无法归因。闸门本身没错（它防的是整批退化），缺的是逐条可观测性。
     """
     if task_id is None:
@@ -9627,7 +9341,7 @@ _STAGE_PROGRESS_MTIME: Dict[str, float] = {}
 
 
 def _start_progress_heartbeat(output_dir: str, interval: float = 30.0):
-    """后台心跳线程（防卡死，2026-09-29 落地）：周期性刷新 scan_progress.json 的 mtime，
+    """后台心跳线程：周期性刷新 scan_progress.json 的 mtime，
     防止长耗时阶段（典型如 i2 闭环的 a2_rerun，单轮可长达 40+ 分钟）不写该文件时，被
     task_runner 看门狗按 STUCK_HEARTBEAT_SECONDS（默认 45min）误判为卡死强杀。
 
@@ -9659,9 +9373,7 @@ _WALL_EXECUTOR_LOCK = threading.Lock()
 def _wall_executor():
     """墙钟上限共用「有界」线程池（单例）。SAST_AI_WALL_POOL 控制并发上限（默认 8）。
 
-    2026-10-21：取代旧「每次调用新起一个 daemon 线程」。旧实现 join(timeout) 超时后不
     终止线程就返回，挂起的 verify_group/闭环工作量持续占用 GIL/DB/target，后续批次再叠加
-    新线程，形成「超时→线程泄漏→整体更慢→更多超时」的复合雪崩（run 440 实测 40 次 600s
     超时、3978 条 spec 的 confirming 层全程空转）。单例池把并发钉死在上限内，从根上消除。
     """
     global _WALL_EXECUTOR
@@ -9679,9 +9391,8 @@ def _wall_executor():
 def _with_wall_clock_limit(fn, timeout: float, label: str = ""):
     """在有界共享线程池执行 fn，超时返回 (None, True)，否则 (result, False)（单轮墙钟上限）。
 
-    2026-10-21 修复（D2 600s 超时复合雪崩根因，见 _wall_executor 说明）：
       - 复用单个有界 ThreadPoolExecutor，concurrency 由 SAST_AI_WALL_POOL 钉死，杜绝无界线程堆积；
-      - 超时后 fut.cancel() 至少回收「排队未启动」的任务，减小对 target/DB 的挤占；
+      - 超时后 fut.cancel 至少回收「排队未启动」的任务，减小对 target/DB 的挤占；
       - 已在运行的任务无法强杀（Python 线程限制），但并发被池上限约束，且终止信号让上层放弃本轮、
         保留原产物（fail-safe 语义不变）；异常透传与旧版一致（调用方按异常分支处理）。
     """
@@ -9705,7 +9416,7 @@ def _with_wall_clock_limit(fn, timeout: float, label: str = ""):
 
 
 def _emit_stage_progress(task_id: Optional[int], output_dir: str, key: str, payload: Dict[str, Any]) -> None:
-    """通用阶段心跳（待请示 6 项 #4②，2026-09-16）：把 A2 / a2_poc / D2 验证 / 闭环这类长耗时、
+    """通用阶段心跳：把 A2 / a2_poc / D2 验证 / 闭环这类长耗时、
     原本无任何增量更新的阶段进度钉进事件流与 scan_progress.json，使前端能看到真实进度，
     不再把 running 误判为卡死。
 
@@ -9738,9 +9449,7 @@ def _emit_stage_progress(task_id: Optional[int], output_dir: str, key: str, payl
 def _assert_output_dir_owned_by_task(output_dir: str, task_id: Optional[int]) -> bool:
     """产物分片保护：output_dir 必须属于当前 task，否则拒绝写入。
 
-    output_dir 形如 ``data\\workspaces\\target-mall\\task-4``。若解析出的 task 号与当前
     task 不符（即试图写回旧 task 目录），拒绝并告警——跨 task 覆写会把多轮数据叠加成
-    混合库，使单轮归因失效（task-3 事故）。task_id 为空时不做校验（离线/单测场景）。
     """
     if task_id is None:
         return True
@@ -9758,8 +9467,6 @@ def _assert_output_dir_owned_by_task(output_dir: str, task_id: Optional[int]) ->
 
 
 def _update_scan_progress_metadata(output_dir: str, updates: Dict[str, Any]) -> None:
-    # 2026-09-07 产物分片保护：禁止写回「非本 task」的产物目录。
-    # 历史事故：task-3 的产物被后续轮次覆写，叠加成混合库，导致单轮归因做不到
     # （同一 funnel 的 registered 读数在会话内 47→25 自相矛盾）。
     if not _assert_output_dir_owned_by_task(output_dir, _CURRENT_SCAN_TASK_ID):
         return
@@ -9780,7 +9487,6 @@ def _merge_framework_sink_findings(a1_results, code_root: str, shard: Optional[d
 
     ## 为什么必须单独做这一步
 
-    2026-10-31 实测 java-sec-code：29 个真值文件里 **11 个完全没有 trigger_spec**。
     这 11 个全部是 CodeQL 标准 Java 查询包不建模的形态（Spring ``@ResponseBody`` 返回、
     ``ExpressRunner.execute``、log4j2 记日志、``LocateRegistry``、CORS 头反射……）。
     候选压根没被登记，下游 D1/D2/I2 再强也无从下手 —— 这不是判据问题，是**覆盖问题**。
@@ -9796,7 +9502,6 @@ def _merge_framework_sink_findings(a1_results, code_root: str, shard: Optional[d
 
     ## 作用域
 
-    分片跑时只保留本片文件，否则会重演 2026-10-21 的「mini 片登记全项目」事故。
     """
     try:
         from src.iast.framework_sinks import detect_path
@@ -9824,11 +9529,8 @@ def _merge_framework_sink_findings(a1_results, code_root: str, shard: Optional[d
     def _norm_key(p: str) -> str:
         """把任意形态的路径归一成「相对 code_root 解析后的绝对路径（normcase）」。
 
-        2026-11-03 实杀：A1 的 `finding.file` 常是**相对 code_root** 的
-        （`ruoyi-system/src/main/resources/mapper/.../SysDeptMapper.xml`），而框架规则
         产出的是绝对路径。原来的 `os.path.abspath(_p)` 按**当前工作目录**解析相对路径，
         与 `code_root + h.file` 永远对不上 ⇒ 去重分支进不去、参数路径补不进来
-        （若依 604 实测 `enriched=0`，`params[dataScope]` 一条都没带上）。
         """
         s = str(p or "")
         if not s:
@@ -9862,15 +9564,13 @@ def _merge_framework_sink_findings(a1_results, code_root: str, shard: Optional[d
             by_file[nk] = res
             a1_results.append(res)
         # 同文件同行同族已存在（CodeQL/启发式已报）⇒ 不重复登记。
-        # 2026-11-03：**但要把框架规则更精确的证据补上去**。MyBatis 的 `${}` 命中常被
         # 启发式的 `mybatis-xml` 规则先报（同一行同一族），此前整条跳过 ⇒ 启发式只写了
         # 「这里有 ${}」，没有参数路径 ⇒ 登记层只能从 controller 签名反查，推出
-        # `parentId`/`username`/空 ⇒ 投错参数 ⇒ 若依 5 条 sql_injection 真值全漏。
         # 框架规则知道 `${params.dataScope}`，转成 `params[dataScope]` 就是精确注入点。
         #
         # 族名比较必须归一：启发式的 `type` 是展示名 `"SQL Injection"`（带空格），
-        # 框架规则的 `family` 是 `sql_injection`。直接 lower() 比永远不等 ⇒ 去重失效、
-        # 参数路径补不进去（604/605 两轮实测 `enriched=0`、`added=8` 全是重复登记）。
+        # 框架规则的 `family` 是 `sql_injection`。直接 lower 比永远不等 ⇒ 去重失效、
+        # 参数路径补不进去。
         def _fam_key(x: Any) -> str:
             return re.sub(r"[\s\-]+", "_", str(x or "").strip().lower())
 
@@ -9926,7 +9626,6 @@ def _merge_framework_sink_findings(a1_results, code_root: str, shard: Optional[d
     if enriched:
         logger.info("[fw-sinks] 为 %d 条已存在 finding 补上精确参数路径（MyBatis `${}` → `a[b]`）",
                     enriched)
-    # 阶段漏斗（2026-10-31）：这一层最容易「规则写了但没进流程」，必须留 in/out。
     # 同时记「命中族」与「实际并入族」——两者不一致时，差额就是被 dedup/过滤吃掉的族，
     # 下一轮定位 P2-1（deser 进不了报告）时可以直接看这个差集，不用再猜。
     try:
@@ -10036,7 +9735,6 @@ def _demote_unclassified_specs(db, task_id: int) -> int:
 
     ## 为什么这是必须的
 
-    2026-10-31 本轮实测：java-sec-code 的 SSTI.java 上有一条
     ``family='unknown'`` 的 spec 被确认成 ``confirmed_exploitable``。
     族名是「这条漏洞是什么」的唯一标识；族未分类却进了 confirmed 口径，
     等于报告里出现一条「已确认的未知类型漏洞」—— 无法复核、无法归因、无法统计。
@@ -10097,14 +9795,13 @@ def _demote_unclassified_specs(db, task_id: int) -> int:
 def _apply_oracle_upgrade(db, task_id: int) -> int:
     """行为 oracle 正向 ⇒ 把「到达但未确认」的 spec 升级为 confirmed_exploitable。
 
-    为什么放在**终态**而不是各判据分支里（2026-10-31 历史轮次 实证）：
     oracle 观测从 D1 落库（`trigger_specs.oracle_state`）到最终裁决，要穿过 5 处接线：
       ① adjudicator 准入条件（oracle 只在「已有影响证据」时才被调用，死循环）
       ② d2_facade 的「到达≠可利用」降级（primary_channel='none' 被当无证据）
       ③ specs 是 D2 入口的内存快照，读不到 D1 写的值
       ④ `iast_evidence.setdefault("oracle_state", ...)` 被空串占位挡住
       ⑤ 即便塞进 iast_evidence，最终落库的 d2_evidence 仍是另一份对象
-    每修一处都会在下一处断掉（实测连改 5 轮，oracle 转化始终 2~4/11）。
+    每修一处都会在下一处断掉。
     与其在每一环打补丁，不如在终态做一次显式升级：判据单一、可审计、可回滚。
 
     安全性（为什么这样升级不是「放水」）：
@@ -10113,7 +9810,6 @@ def _apply_oracle_upgrade(db, task_id: int) -> int:
         「没打通」一律是 inconclusive，不会误升。
       - 要求 signal 与族**严格匹配**（`_ORACLE_HARM_SIGNALS`），跨族信号不认。
       - 默认要求到达态（sink-reached / confirm-gate:* / late-evidence-recovered 等）。
-        2026-11-06（jsc 624）补：`error_reflect` / `internal_url_reflect` /
         `location_reflect` / `acao_reflect` / `header_injected` 是**纯响应事实**，
         判据绑定我方投放的特定 URL / 头值，探针在不在业务 sink 插桩都不影响证据成立
         （SSRF 常走 HttpClient / OkHttp，探针本来就可能 no-arrival），
@@ -10150,7 +9846,6 @@ def _apply_oracle_upgrade(db, task_id: int) -> int:
         _fam_n = canonical_family(_fam) or _fam
         if not _want or _want != _fam_n:
             continue
-        # 2026-11-06（jsc 625 红线）：升级与硬闸放行共用同一判据，
         # 纯回显弱信号在泛化族上要求 sink 文件名与族语义一致。
         if not _oracle_gate_signal(_fam, "exploitable", _sig, "",
                                    _d.get("expected_sink_file")):
@@ -10243,12 +9938,9 @@ def _assert_runtime_environment_ready(task_id: Optional[int], external_target: d
 
     targets = []
     if has_external:
-        # 2026-10-30（本轮实证）：external_target 就是「本次扫描实际要打的目标」，
         # 已由 _resolve_external_target_from_session 从 workspace 的会话里挑出 ready 的那个。
         # 此时**不能**再把 workspace 下全部历史会话都塞进 targets：workspace 4 里挂着一个
-        # 2026-10-04 的僵尸会话（app_name=sec-code / agent_id=java-sec-code，status=unready，
         # 心跳停在 10-04），它永远不 ready，于是把整轮扫描无条件挡死，
-        # 而真正在跑的会话（java-sec-code / jsc，心跳新鲜）明明 ready。
         # 判据本身不放松：只校验本任务实际要用的那一个目标。
         targets.append((
             external_target.get("app_name", ""),
@@ -10269,15 +9961,13 @@ def _assert_runtime_environment_ready(task_id: Optional[int], external_target: d
             problems.append(f"{app_name}/{agent_id}: 环境检查异常（{_e}）")
             continue
         if not rd.get("ready") and _wake_probe(target_url):
-            # 2026-10-30（本轮实证）：A1/A2 阶段后端繁忙（CodeQL 建库 / LLM 推理 /
             # SQLite 写锁）时，探针的 POST /api/agent/heartbeat 与事件上报会排队超时，
             # 探针静默十几到几十分钟 ⇒ 到 D2 前这一检查点，心跳与事件双双过期 ⇒
-            # 误判「探针离线」把整轮扫描硬阻断（实测 java-sec-code：A1 起 15:30，
             # 门禁 15:59 触发时探针已静默 30 分钟，但进程一直活着）。
             #
             # 这里不放松判据，而是补一次**主动探活**：向目标发一个真实请求，
             # 探针 hook 了 HttpServletRequest/Response，请求本身就会产生新事件并
-            # 刷新心跳（实测根路径 302 即产生 2 条事件）。等探针 flush 后重判，
+            # 刷新心跳。等探针 flush 后重判，
             # 仍然不 ready 才阻断——「能打通」比「最近有信号」更接近门禁要验的东西。
             try:
                 rd = iast.check_environment_readiness(target_url, app_name, agent_id)
@@ -10337,8 +10027,6 @@ def _resolve_external_target_from_session(task_id: Optional[int]) -> Optional[Di
                 if isinstance(_ws_json, str):
                     _ws_json = json.loads(_ws_json) or {}
                 _login = (_ws_json or {}).get("login") or {}
-                # 2026-11-03 实杀：workspace settings 有**两套键名**——
-                # 早期注册器写 `login`，新写法（若依 workspace 8）写 `auth`。
                 # 这里只读 `login` ⇒ `auth` 在这一步就被丢掉，下游
                 # `normalize_external_target` / `_fallback_auth_cookies` 的兜底全都拿不到配置
                 # ⇒ D1 判定「没配登录」⇒ 重放全程未认证。
@@ -10387,7 +10075,6 @@ def _parse_taint_path(raw: Any) -> List[Dict[str, Any]]:
 def _select_replay_specs(db, workspace_id, task_id):
     """D2 重放候选 TriggerSpec 选择（待请示 6 项 #3）。
 
-    2026-09-16 修复：按 task_id 隔离重放。每跑一次全量就只重放「本轮 task 登记的 spec」，
     不再把历史任务（task-6/9/...）的假说全部重放一遍——否则重放量随历史累积只增不减，
     且旧假说对应代码改动后与本轮 findings 对不上。task_id=None（离线 CLI 入口）退回 workspace 全量，保持旧语义。
     抽成独立函数便于单测，避免重写整个编排器。
@@ -10438,8 +10125,6 @@ def _run_iast_auto_replay(task_id: Optional[int], external_target: dict) -> Dict
             logger.warning("[D1] 清空旧 canary 缓存失败（不阻断重放）：%s", _e)
 
     # 取该 workspace 下 A2 生成的全部 TriggerSpec。
-    # 2026-09-16 修复（待请示 6 项 #3）：按 task_id 隔离重放，避免每跑一次全量就把
-    # 历史任务（task-6/9/...）登记的假说全部重放一遍——重放量随历史累积只增不减，
     # 一旦旧假说对应代码已改动，重放结果与本轮 findings 对不上，也稀释 D2 耗时预算。
     # 仅当 task_id 给定时加 AND task_id=?；离线 CLI 入口（task_id=None）仍按 workspace 全量，保持旧语义。
     specs = _select_replay_specs(db, workspace_id, task_id)
@@ -10457,7 +10142,6 @@ def _run_iast_auto_replay(task_id: Optional[int], external_target: dict) -> Dict
             "service_url": external_target.get("service_url"),
             "app_name": external_target.get("app_name", ""),
             "agent_id": external_target.get("agent_id", ""),
-            # 无会话兜底路径同样保留 login（2026-11-03，jsc-leakfix-r17）
             "login": external_target.get("login") or external_target.get("auth") or {},
         }]
     else:
@@ -10467,11 +10151,8 @@ def _run_iast_auto_replay(task_id: Optional[int], external_target: dict) -> Dict
             "agent_id": s.get("agent_id"),
         } for s in sessions]
 
-    # 2026-11-03（jsc-leakfix-r17）：把 workspace 登录配置并进每个 target。
     # 此处原先只带 service_url/app_name/agent_id ⇒ D1 技术族会话通道判「没配登录」，
-    # 自动重放全程未认证。jsc 607 实测：/sqli/jdbc/vuln（formLogin 保护）的
     # replay_attempts 12+6 条**全部 302**，payload 到不了业务代码 ⇒ sqli 整族漏报。
-    # jsc workspace 早已配好 login（joychou/joychou123，settings_json.login），
     # 手工 curl 验证同配置可登录（JSESSIONID 取得、带 cookie 访问 200）。
     # external_target 由 _resolve_external_target_from_session 产出，必带 login。
     _login_cfg = {}
@@ -10508,7 +10189,7 @@ def _run_iast_auto_replay(task_id: Optional[int], external_target: dict) -> Dict
         if not tgt_specs:
             tgt_specs = [dict(s) for s in specs]  # 无 session 绑定时全部对当前 target 重放
 
-        # §3.12 / §4.2：把本 target 的 app_name/agent_id 烤进 event_source 闭包，
+        #  / ：把本 target 的 app_name/agent_id 烤进 event_source 闭包，
         # 使 canary 轮询仅命中本目标事件，避免多次扫描事件混流污染。
         tgt_app = tgt.get("app_name") or ""
         tgt_agent = tgt.get("agent_id") or ""
@@ -10592,7 +10273,7 @@ def _session_id_for(sessions: List[Dict[str, Any]], target: Dict[str, Any]) -> i
 
 
 def _resolve_round_no(db, workspace_id: int) -> int:
-    """从 DB 派生本轮轮次号（取代 out-of-band 的 target-mall-round.txt）。
+    """从 DB 派生本轮轮次号。
 
     口径：该 workspace 已有 scan_runs 的最大 round_no + 1；无记录则为 1。
     轮次只前进不回退，保证跨轮可比。
@@ -10618,12 +10299,10 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                   shard_file: str = ""):
     """运行完整扫描流程，并让 A1/A2 并发启动；D2 走统一验证链路（trigger_spec → D1 重放 → I1 → D2 → I2）。
 
-    ``llm_overrides``（2026-09-20）：任务级 LLM 扫描强度覆盖（ctx / 思考模式 / 输出预算 /
     并发 / 流式 / 二次证明开关）。必须在**任何 LLM 调用之前**应用，故放在函数最开头。
     """
     start_time = time.time()
     phase_times = {}
-    # 2026-10-03（分片作用域）：shard_file 由 scan_task_runner 下发（--shard-file），缺省回落到
     # 环境变量 SAST_AI_SHARD_FILE（手动跑 scan_task_runner 时可直接 export）。两者都没有即全量扫描。
     if str(shard_file or "").strip():
         os.environ["SAST_AI_SHARD_FILE"] = str(shard_file).strip()
@@ -10635,8 +10314,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
         prompt_version = str(_applied_overrides.get("prompt_version") or prompt_version)
         print(f"[*] LLM overrides applied: {_applied_overrides}")
     progress_logger = ScanProgressLogger(output_dir)
-    # 全局心跳（2026-10-17 扩展覆盖）：原仅在闭环阶段起心跳线程，导致注册阶段
-    # （run 36346 min 无心跳被误杀）、报告后收尾阶段（run 36443 min 无心跳被误杀）
     # 等长尾阶段不写 scan_progress.json 时被 task_runner 看门狗（STUCK_HEARTBEAT_SECONDS
     # =2700s）强杀。现覆盖整个 run_benchmark 生命周期（daemon 线程每 30s 刷新 mtime，
     # 与闭环内的局部心跳并存无害），从源头消灭任何阶段的「无心跳误杀」。
@@ -10644,20 +10321,17 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
     # 产物分片保护：登记当前 task，使 _update_scan_progress_metadata 拒绝写回其它 task 目录。
     global _CURRENT_SCAN_TASK_ID
     _CURRENT_SCAN_TASK_ID = task_id
-    # P1-7（2026-09-19）：把当前 task_id 写入进程级环境变量，使所有分散在多线程里的
     # LLM 调用（A2/A4/D1 等，逐层透传 task_id 改动面过大）都能在 model_runs 落库时
     # 通过 ModelRunRepository.record 的环境变量回退拿到归属任务，无需逐层改签名。
     if task_id is not None:
         os.environ["SAST_AI_CURRENT_TASK_ID"] = str(int(task_id))
     else:
         os.environ.pop("SAST_AI_CURRENT_TASK_ID", None)
-    # 黑板/轮次体系（2026-09-07）：每轮开头写不可变 run 记录（含代码版本指纹），
     # 把轮次身份从「task.name 字符串 + 独立 txt」收进 DB，杜绝跨轮混合库与「旧 backend 跑旧代码」假阳性。
     _bb_run_id = None
     try:
         from src.core import blackboard as _blackboard
         # 复用模块级 Database（line 86），禁止 in-function import，否则会触发
-        # 2026-08-29 task-8 的 Database 局部阴影 UnboundLocalError。
         _bb_db = Database(os.environ.get("SAST_AI_DB_PATH", "data/app.db"))
         _bb_ws = _bb_db.execute(
             "SELECT workspace_id FROM scan_tasks WHERE id=?", (task_id,), fetchone=True
@@ -10684,8 +10358,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
         print("=" * 60)
         progress_logger.update_phase('phase1', 'running', '文件扫描中')
 
-        # 2026-10-03（分片作用域）：全集靶场（如 OWASP Benchmark v1.2 的 2740 用例）按片扫描时，
-        # SAST_AI_SHARD_FILE 指向 tools/owasp_shards.py 生成的分片清单。必须在这里（早于 Phase 0）加载：
+        # SAST_AI_SHARD_FILE 指向部署方提供的分片清单 JSON。必须在这里（早于 Phase 0）加载：
         # Phase 0 要用它收窄待扫文件、Phase 0.7 复用同一份做入口收窄。不配置该变量即保持旧行为（全量）。
         _shard = None
         _shard_file = str(os.environ.get("SAST_AI_SHARD_FILE") or "").strip()
@@ -10704,9 +10377,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
         scanner = FileScanner(str(prepared_scan_root))
         files = scanner.scan()
         files = _filter_framework_noise_files(files)
-        # 2026-10-03：只收窄入口是不够的——全集 2740 文件照样全量进 A0 遍历 / CodeQL 建库 / a1 file_count，
         # 单片扫描的成本≈全量，分片就白分了。故此处把待扫文件也收窄到本片。
-        # 真值表与目标树不匹配（如 workspace 指向 sample-200 却加载了全集分片）会导致 kept=0，
         # 此时不打「No files found to scan」这种看不出原因的错，而是把作用域来源打清楚。
         if _shard:
             _kept_files, _fst = filter_files(files, _shard)
@@ -10752,14 +10423,10 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
         results = {}
         a1_results = []
         a2_results = []
-        # 2026-10-26（20.3.3 埋点补漏）：A2 契约合规率必须在 return 的 stage_results.a2 里可见。
         # 此前只写进 scan_progress.json，而下方 return 自建 stage_results 会覆盖它 ⇒
-        # task_completed 载荷里 contract 恒为空（run 471 实测）。默认空字典保证无 A2 时也安全。
         _a2_contract_stats: Dict[str, Any] = {}
-        # 2026-10-26（P2.1 同型修复）：D2 探针轮询画像也必须随 return 走，
         # 否则会被下方自建的 stage_results.d2 覆盖（与 a2.contract 完全同一个坑）。
         _d2_poll_stats: Dict[str, Any] = {}
-        # 2026-10-26（同型修复）：I2 闭环载荷也要随 return 走，否则 task_completed 里为空。
         _i2_stage_payload: Dict[str, Any] = {}
         external_target = external_target or _resolve_external_target_from_session(task_id)
         if external_target:
@@ -10796,8 +10463,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
             print("[Phase 0.7] AI Entry Discovery")
             print("=" * 60)
             entry_discovery_result = EntryDiscoveryService().discover(str(prepared_scan_root))
-            # 2026-10-02（分片作用域）：全集靶场（如 OWASP Benchmark v1.2 的 2740 用例）按片扫描时，
-            # 由 SAST_AI_SHARD_FILE 指向 tools/owasp_shards.py 生成的分片清单，把入口收窄到本片。
+            # 由 SAST_AI_SHARD_FILE 指向部署方提供的分片清单，把入口收窄到本片。
             # 不配置该变量即保持旧行为（全量），零回归。
             # _shard 已在 Phase 0 之前的分片加载点解析（同一份复用），此处只做入口收窄。
             _shard_file = str(os.environ.get("SAST_AI_SHARD_FILE") or "").strip()
@@ -10822,9 +10488,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 {"stage_results": {"entry_discovery": {"status": entry_discovery_result.get("status", "completed"), "entry_count": entry_discovery_result.get("entry_count", 0), "rule_candidate_count": len(entry_discovery_result.get("rule_candidates", []) or [])}}},
             )
 
-        # D1 操作器 Asset Replay 已从此处移除（2026-09-26 物理移动）。
         # 原位置在 a1/a2 之前，此时 a2_poc 尚未登记任何 TriggerSpec、attack_plan 也未生成，
-        # D1 扫描必然是 0 candidate 的空跑（task-8 实锤 candidate/replay/finding 全 0），
         # 却抢先写入 stage_results.d1 污染 D1 节点展示。现移到 attack_plan 之后执行，
         # 详见下方 [Phase 1.5] D1 操作器 Asset Replay。
 
@@ -10878,7 +10542,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
             print(f"[Sequence] {' -> '.join(parallel_labels)}（A1 证据注入 A2 LLM）")
             print("=" * 60)
 
-        # #① 缓存确定性阶段（2026-09-26 落地）：回归轮且靶场代码/配置未变则复用 a1/a2 产物，
         # 跳过 A1(CodeQL) 与 A2(LLM 语义分析) 两段，只重跑动态 D1/D2。代码/配置变则自动 bust 全量重跑。
         _used_stage_cache = False
         _stage_cache_key = None
@@ -10891,8 +10554,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 _cc = compute_target_code_hash(files, str(prepared_scan_root))
                 _cfg = compute_config_hash()
                 _stage_cache_key = compute_stage_cache_key(_cc, _cfg, model_profile, prompt_version)
-                # 2026-10-31：调试 D 阶段的加速开关（`SAST_AI_REUSE_STAGES=1`）。
-                # stage_cache 的 key 含整个 src/ 树指纹（正确设计，防「复跑验的是修复前代码」），
+                # stage_cache 的 key 含整个 src/ 树指纹，
                 # 代价是改任何 .py 都 bust ⇒ 调一条 D2 判据也要等 35 分钟 A2 重跑。
                 # 实测本轮因三个断点连续改代码，白等约 70 分钟。
                 # 显式开启时直接复用本 workspace 最新一份 A1/A2 产物，**只该在确认
@@ -10970,7 +10632,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                     progress_logger.update_phase('phase2', 'running', 'A1 规则分析进行中')
                     phase_started['a1'] = time.time()
                     a1_results = executor.submit(run_a1_scan, files, str(prepared_scan_root)).result()
-                    # 2026-10-21（分片作用域修复，关键）：CodeQL 是「整项目建库 + analyze」，
                     # 不认 files 列表——即使分片只给 130 个文件，它照样返回全项目 4720 个用例的告警。
                     # 之前没在这里收窄，导致 mini 片实际登记了 2121 个用例 / 3978 条 spec，
                     # D1 要重放 3856 条（其中 95% 不属于本片），单片跑 4~20 小时，"mini" 完全不 mini。
@@ -10993,7 +10654,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                             logger.info("[shard] A1 结果按分片收窄：%s → %s 文件（CodeQL 全项目建库，需回到本片作用域）",
                                         _a1_total_files, len(_a1_kept))
                             a1_results = _a1_kept
-                    # 框架惯用 sink 补充登记（2026-10-31）：CodeQL 标准 Java 查询包不建模
                     # Spring @ResponseBody 返回 / 表达式引擎 / log4j2 / RMI / CORS 头反射等形态，
                     # 这些族的候选压根不会被登记。此处按「补充」语义取并集（CodeQL 成败都跑）。
                     try:
@@ -11002,7 +10662,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                             task_id=locals().get("task_id"))
                     except Exception as _fw_exc:  # noqa: BLE001
                         logger.warning("[fw-sinks] 补充登记失败（忽略，A1 结果保持原样）：%s", _fw_exc)
-                    # 属性族强证据门禁（仅影响登记候选，不动报告口径）：
+                    # 属性族强证据门禁：
                     # 弱哈希/弱加密/弱随机在 sink 语句里出现强算法/SecureRandom ⇒ 判假阳性，
                     # 否则会被 recover_late_arrival 的 value_hit 升级成 confirmed_exploitable
                     # （453 的 00022 就是这么来的：SHA-256 被确认成弱哈希）。
@@ -11040,14 +10700,12 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 a1_index = _build_a1_evidence_index(a1_results if enable_a1 else [])
                 a2_llm_client = None
                 # 兜底初始化：下方「TriggerSpec 登记」公共块会读这些变量，两条分支都必须赋值
-                # （命中分支若漏赋值会 UnboundLocalError 打挂整轮，round-17 实测）。
+                # 。
                 _a2_poc_total = 0
                 # 登记候选（A1-extra）：与 a1_results 分开保存，因为属性族强证据门禁会剔除
                 # 一部分 finding，而报告里的 A1 finding 数必须保持原口径不被这层过滤影响。
-                # 2026-10-26（run 471 实测 bug）：这里原来无条件写成 `a1_results`，
                 # 把上面 8533 行算好的**已过滤**结果整个覆盖掉 ⇒ 属性族门禁成了死代码，
                 # live 路径从未生效（469/452/458 的 FP 2→0 只是离线预演的结果）。
-                # 实测后果：BenchmarkTest00022（真值 hash/false，源码 SHA-256 强算法）
                 # 的 A1 finding 是 cross-site scripting，门禁本可经路线族 weak_hash 命中
                 # file-level-strong 剔除，却因被覆盖而漏网，最终确认为 confirmed_exploitable。
                 if "_a1_for_registration" not in locals():
@@ -11078,7 +10736,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                     phase_times['a2_poc'] = 0.0
                     # 下方「TriggerSpec 登记」公共块（a2_poc metadata）会引用 _a2_poc_total，
                     # 该变量原本只在完整分支里赋值；命中分支必须同样赋值，否则 UnboundLocalError
-                    # 直接打挂整轮（round-17 实测：命中缓存后 4 分钟即 failed）。
+                    # 直接打挂整轮。
                     _a2_poc_total = sum(len(getattr(r, "vulnerabilities", []) or []) for r in a2_results)
                     # 缓存产物若已含集成 spec（entry.resolved_by == 'llm'），a2_poc 不再二次调 LLM。
                     _a2_integrated_done = _a2_results_have_integrated_specs(a2_results)
@@ -11092,7 +10750,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                         reset_transport_stats()
                     except Exception:
                         pass
-                    # 2026-09-16（待请示 6 项 #5）：A2 长耗时（本轮 33.4 分钟）期间按文件数发真实心跳，
                     # 前端可见「已分析 M/N 文件」，不再把 running 误判为卡死。
                     _a2_total = len(files)
                     _emit_stage_progress(task_id, output_dir, "a2_progress",
@@ -11101,7 +10758,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                         task_id, output_dir, "a2_progress",
                         {"total": _t, "done": _d, "status": "scanning"},
                     )
-                    # 2026-10-25（plan §19.1 / 20.4.1）：从 replay_intents 读取待试/已试无效意图，
                     # 作为「历史探索摘要」注入 A2 prompt（状态外置）。默认关闭，仅统一重跑验证用。
                     _intent_hints = ""
                     if (str(os.environ.get("SAST_AI_A2_USE_INTENTS", "0")).strip().lower()
@@ -11136,13 +10792,11 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                         ).result()
                     _emit_stage_progress(task_id, output_dir, "a2_progress",
                                          {"total": _a2_total, "done": _a2_total, "status": "scanning_done"})
-                    # 2026-10-25（plan §20.3.3）：把 A2 契约合规率落到 stage_results.a2.contract，
                     # 统一重跑时直接能看「格式不合格率」（验收线 <5%），不必翻日志。
                     # 走 _update_scan_progress_metadata（深合并）⇒ 进 task_completed 载荷。
                     try:
                         from src.agents.a2_integrated_analyst import contract_stats as _cstats
                         _cst = dict(_cstats() or {})
-                        # 2026-11-07：把「本轮是否有文件因 LLM 不可用被跳过」写进闸门
                         # 可读的 stage_results.a2。file_failures.failed_files != 0 或
                         # transport.exhausted != 0 的轮次一律不作为有效基线。
                         _cst["file_failures"] = a2_analysis_error_stats()
@@ -11180,7 +10834,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                     # §统一链路：A2 假说规划与 TriggerSpec 登记与验证开关解耦——静态分析完成即执行，
                     # 保证 D1/D2 即便被关停，数据通路（trigger_specs）也始终完整可查。
                     a2_poc_start = time.time()
-                    # 2026-09-20：确定性代码片段回填（必须在 A1 证据合并之前 —— 证明义务的
                     # 证据文本包含 code_snippet，片段为空会让规则层拿不到任何代码依据）。
                     # 实测 历史轮次 连续八轮只有 3~6% 的 finding 带片段，根因是 A2 提示词
                     # 输出 schema 没有 code 字段，详见 _backfill_code_snippets 注释。
@@ -11262,7 +10915,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                             logger.info("[stage_cache] 已落盘 A1/A2 产物（key=%s）", _stage_cache_key[:16])
                     except Exception as _se:  # noqa: BLE001
                         logger.warning("[stage_cache] 落盘失败（不影响本轮）：%s", _se)
-                # 2026-10-29：**A2 侧跨族「无 sink 即捏造」门禁**（详见
                 # _drop_spurious_cross_family 注释）。放在这里 = 缓存命中/未命中**两条路径都覆盖**，
                 # 且在 TriggerSpec 登记与 D2 重放之前 ⇒ 捏造的跨族 finding 既不登记 spec、也不进重放。
                 # 幂等：已经剔除过的列表再跑一次不会重复计数。
@@ -11294,7 +10946,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 except Exception as _e:
                     logger.warning("[A2] 自动登记 TriggerSpec 失败（不影响静态结果）：%s", _e)
                 logger.info("[A2] PoC planning selected %s canonical findings, registered %s TriggerSpec, skipped %s", poc_selected, registered, skipped_specs)
-                # E-1 观测面（2026-09-28 批准）：skipped reasons 覆盖交叉核对 → missing_route_watch。
                 # 真漏报信号显式化（该用例无任何 spec 覆盖才计），重复已覆盖的丢弃。
                 _mr_watch = {}
                 try:
@@ -11309,9 +10960,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                         "stage_results": {
                             "a2_poc": {
                                 "status": "completed",
-                                # 2026-09-17（待请示 §4.6-2.1）：message 此前只有 finding 维度
                                 # （total/total），掩盖了 spec 维度漏斗。这里同时报 TriggerSpec
-                                # 登记数与跳过数（run 15 实测 finding 161、登记 94、跳过 71）。
                                 "message": (
                                     f"PoC 规划完成：finding {_a2_poc_total}/{_a2_poc_total}；"
                                     f"TriggerSpec 登记 {registered}，跳过 {skipped_specs}"
@@ -11343,7 +10992,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                         {"stage_results": {"attack_plan": {"status": "running", "message": "正在生成攻击计划（投影 TriggerSpec → 可读 POC 计划）"}}},
                     )
                     _ap_db = Database(os.environ.get("SAST_AI_DB_PATH", "data/app.db"))
-                    # A 第二步（2026-09-28 批准）：AP 阶段传入网关，低完备度 spec 由 RAG+LLM
                     # 补齐攻击计划（白名单校验+写回 spec），D1 重放与 AP 面板吃到。构造失败
                     # 降级 gateway=None（纯投影，不阻断）。
                     _ap_gateway = None
@@ -11373,12 +11021,9 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 except Exception as _e:
                     logger.warning("[attack_plan] 生成失败（不影响后续阶段）：%s", _e)
 
-        # —— [Phase 1.5] D1 操作器 Asset Replay（2026-09-26 由 Phase 0.8 物理移动至此）——
         # 移动理由：D1 必须排在 attack_plan 之后。原位置（a1/a2 之前）时 a2_poc 还没登记
         # TriggerSpec、attack_plan 也未生成，D1 扫描拿到的候选恒为 0 —— 这就是「冷启动空跑」
-        # （task-8 实锤：d1 的 candidate_count/replayed_count/finding_count 全 0）。移到此处后，
-        # a2_poc 已登记 TriggerSpec（task-8 为 182 条）、attack_plan 已生成，D1 才有真实资产可扫。
-        # 注意：真实 HTTP 重放仍由 verify()（d2）统一驱动，此处只做资产/操作器扫描
+        # 注意：真实 HTTP 重放仍由 verify（d2）统一驱动，此处只做资产/操作器扫描
         # （execute_http=False），两处职责不重叠，不存在「双入口」。
         if enable_idor and idor_app_id:
             phase_start = time.time()
@@ -11465,7 +11110,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 logger.warning("[D2] 清空旧 canary 事件失败（跳过，不影响重放）：%s", _e)
             _emit_stage_progress(task_id, output_dir, "d2_verify_progress", {"status": "running", "iteration": 0})
             d2_verifications = run_d2_verify(a1_results, a2_results, files, target_path, external_target, task_id=task_id, code_root=str(prepared_scan_root), discovered_routes=entry_discovery_result.get("entries") or [], output_dir=output_dir)
-            # 2026-10-31：终态行为 oracle 升级（详见 _apply_oracle_upgrade 注释）。
             # 放在 D2 之后、闭环回灌之前：此时 oracle 观测已全部落库，且升级结果会被
             # 后续的回灌/重验自然覆盖（若它们给出更强结论）。
             try:
@@ -11473,7 +11117,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                     Database(os.environ.get("SAST_AI_DB_PATH", "data/app.db")), int(task_id))
             except Exception as _ou:  # noqa: BLE001  fail-open：升级失败不影响主流程
                 logger.warning("[oracle-upgrade] 跳过（%s）", _ou)
-            # 2026-10-31：终态框架属性升级（详见 _apply_framework_property_upgrade 注释）。
             # CORS/CSRF/Cookie 标志位/JNDI/RMI 的危害是「代码与配置属性」，重放不产生新证据，
             # 静态高置信命中即终局。只动未确认态，绝不覆盖已确认结论。
             try:
@@ -11499,7 +11142,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
             # §P4：收集「全部」feedback_to_a2（不仅 rollback 子集）持久化进 stage_results.i2，供前端闭环
             # 面板展示与 rerun_a2_with_feedback 标准入口读取（A2 标准通道消费端）。
             # 采集反馈：同一条 verification 的 next_action 与 verification_decision 常携带同一份
-            # 反馈，两处都 extend 会造成约 2 倍重复（task-4 实测 60 条 → 26 个唯一假设），
+            # 反馈，两处都 extend 会造成约 2 倍重复，
             # 重复内容既吃掉回灌预算也污染 A2 prompt，故统一走 dedup_feedbacks 聚合。
             _raw_feedback: List[Any] = []
             _rollback_feedback: List[Any] = []
@@ -11521,7 +11164,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
             except Exception:
                 _all_feedback, _feedback_list = _raw_feedback, _rollback_feedback
 
-            # —— 闭环重构（2026-09-07）：反馈分流 + 真循环 + 重放侧调整 ——
             # 旧实现「固定回灌 A2 一次、绝不递归」，而回灌内容实测 60/60 全是
             # 「IAST 未观测到匹配 canary」——静态 A2 无法修复运行时观测失败，必然空转。
             # 新实现：①按 failure_class 分流，只有假说缺陷才回灌 A2；②运行时/探针类失败改走
@@ -11536,7 +11178,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                     for _v in (_verifs or []):
                         if not isinstance(_v, dict):
                             continue
-                        # 2026-10-02（#BVR）：把父级校验的**可观测事实**（状态码 / 响应摘要 /
                         # 是否到达 sink / 是否被确证有害 / iast_state）挂到每条反馈上，
                         # 供 i2_feedback.classify_runtime_evidence 做结构化分层判据。
                         # 不挂这些字段时分类器只能退回 reason 关键词 —— 那正是 blocked
@@ -11568,7 +11209,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                                         _out.append(_fb)
                     return _i2fb.dedup_feedbacks(_out)
 
-                # Q1 第五步（2026-09-14 落地）：差集驱动的结构化回灌。
                 # 「假说集 ⊖ 观测集」的差集 = state=open 的假说（既未证实也未证伪）。
                 # 旧实现只回灌 D2 裁决器产出的自然语言 reason，措辞一变分类就漂移；
                 # 这里改为先重算假说表，再把差集条目（带 vulnerability_hash_v2 / family /
@@ -11585,22 +11225,17 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                         logger.warning("[闭环] 差集回灌计算失败（不阻断）：%s", _e)
                         return []
 
-                # 2026-10-23：闭环轮次从硬编码 3 改为可配（env > config > 默认 3）。
                 # 背景：闭环第 2 轮会把 trigger_specs 全部重登记、清空确认态、整轮重放，
-                # 单轮成本翻倍（run 451 实测），且中途中断就丢整轮对账数据。
                 # 单遍验证跑（对账用）可置 SAST_AI_I2_MAX_ROUNDS=1 或 config agents.i2.max_rounds=1。
                 _i2_rounds = int(
                     os.environ.get("SAST_AI_I2_MAX_ROUNDS")
                     or config.get("agents.i2.max_rounds", 3) or 3
                 )
-                # 2026-10-26（P3.1 止损，run 471 实测）：LLM 闭环重跑耗时 4528.9s（29.1% 总耗时），
                 # 而 gain = 0（iterations=1、max_iterations=1、228 条 feedback、LLM 判因仅 4 次调用/
                 # 1 次重分类）。同一轮里确定性重试 retryable_no_evidence 只用 192.4s 就拿到 +9 确认，
                 # 效率差 23 倍。
-                # 2026-10-27 四次实证（471 4529s / 473 2238s / 474 775s / 475 1569s，gain 全为 0）
                 # 后改为**默认关闭**：闭环在此靶场上没有可观测收益，成本却恒定在千秒级
                 # （167 条重放调整 + 重跑后重验，预算预检只能拦住 a2_rerun 一部分）。
-                # 策略（2026-10-27 决议）：小型靶场（Benchmark mini/full）保持关闭；
                 # 复杂/真实项目先显式 SAST_AI_CLOSED_LOOP=1 开启并做 A/B 验证收益。
                 # 确定性重试始终保留（那是唯一被证明有效的闭环机制）。
                 _closed_loop_on = str(os.environ.get("SAST_AI_CLOSED_LOOP", "0")).strip().lower() \
@@ -11608,7 +11243,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 if not _closed_loop_on:
                     _i2_rounds = 0
                     logger.info("[闭环] SAST_AI_CLOSED_LOOP=0（默认）：跳过 A2 回灌重跑（保留确定性重试）")
-                # ── D10 定向闭环（2026-10-26）──────────────────────────────────
                 # 全量闭环 471 实测烧 4528.9s 而 gain=0：反馈里 95%+ 是
                 # runtime_observation（canary 未观测到），其中绝大多数属**结构性**
                 # （WAF 拦截 / 路由不可达 / 参数没到 sink / 探针未插桩 / 鉴权墙），
@@ -11634,13 +11268,11 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 # 这里显式置 0 才能让 while 循环整段跳过。
                 if _i2_rounds <= 0:
                     _loop.max_iterations = 0
-                # 防卡死（2026-09-29 落地）：闭环执行期间起后台心跳，持续刷新 scan_progress.json
                 # 的 mtime，避免单轮 a2_rerun（可长达 40+ 分钟）不写该文件时被 task_runner 看门狗
                 # 按 STUCK_HEARTBEAT_SECONDS（默认 45min）误判卡死强杀。闭环结束（含异常路径前的
                 # finally 见下方 try/except 外层）统一 stop。
                 _hb_stop = _start_progress_heartbeat(output_dir)
                 _baseline = int(d2_verifications.get('exploitable_count', 0) or 0)
-                # 2026-09-30 修复 原实现在此（闭环前）拍一次固定基线，导致 iter2 重登记
                 # 收缩产物时被首轮大基线稀释、B-1 守卫被绕过。现改为「每轮重登记前实拍」：
                 # 基线在循环体内、本次 a2_rerun 重登记之前动态捕获（见下方 标注处），
                 # 使硬闸对比的是「上一轮产物」而非首轮基线。此处仅保留占位，避免未定义引用。
@@ -11648,14 +11280,12 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 # B-3 gain 口径对齐：基线改用确认层去重 endpoint 用例数（与对账脚本 L2 同源），
                 # 不再用 D2 内部 exploitable_count（rerun 收缩产物时会把负增益误读成正增益）。
                 _baseline = _i2fb.confirmed_case_count(_loop_db, task_id)
-                # 2026-09-14 修正：gain 必须是「本轮增量」，不是「相对循环前的累计增量」。
                 # 旧写法用 _gain = 当前可利用数 - 固定 _baseline，第一轮抬升后 gain 恒定为正，
                 # should_continue 的 min_gain 收敛判据永久失效 → 必然跑满 3 轮并恒置 exhausted=true，
                 # 表面上「跑完 3 轮」，实际是判据根本不收敛。改为逐轮对比上一轮计数。
                 _prev_count = _baseline
                 _cur_a2 = a2_results
                 _pending_fb = _i2fb.dedup_feedbacks(list(_all_feedback) + _diff_fb())
-                # ── D10 定向闭环（2026-10-26）：只把「A2 重跑真能改善」的可救子集喂给闭环 ──
                 # 全量闭环 471 实测烧 4528.9s（占单轮 29.1%）而 gain=0：反馈里 95%+ 是
                 # runtime_observation（canary 未观测到），其中绝大多数属**结构性**
                 # （WAF 拦截 / 路由不可达 / 参数没到 sink / 探针未插桩 / 鉴权墙），
@@ -11689,13 +11319,10 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 _iteration = 0
                 while _iteration < _loop.max_iterations:
                     _iteration += 1
-                    # 2026-09-30 修复 每轮初始化一个干净的 _rerun_gate，杜绝「上一轮赋值
-                    # 因本轮回灌分支未执行而通过 locals() 残留」造成的 stale 历史快照。
+                    # 因本轮回灌分支未执行而通过 locals 残留」造成的 stale 历史快照。
                     _rerun_gate = {"checked": False, "ok": True,
                                    "reason": "a2_rerun_not_executed_this_iter"}
-                    # 2026-10-08：本轮 apply_replay_adjustments 真实落地条数（apply 返回值）。
                     # 此前闭环 history 只记 len(_adj)（计划数），「计划≠落地」完全不可观测——
-                    # run 245 计划 68、落地 0，被误读了两周。
                     _adj_applied = 0
                     # #确认保全闸：本轮 a2_rerun 前的确认态 vhash 快照（仅在 rerun 分支里实拍）。
                     _conf_vh_before = None
@@ -11707,7 +11334,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                         logger.warning("[闭环] i2_rerun 距上次进展 %.0fs 超阈值 %ds，判定重放/调用阻塞，强制停止",
                                        _loop.seconds_since_progress(), _loop.stall_timeout)
                         break
-                    # D10 预算闸（2026-10-26）：闭环总耗时超预算即停。
                     # 定向闭环的目标就是把「LLM 闭环」这一项的成本钉死，避免再次出现
                     # 471 那种 4528.9s / gain=0 的空转（默认预算 300s）。
                     if time.time() > _i2_deadline:
@@ -11716,7 +11342,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                         _loop.exhausted = True
                         break
                     _routed = _i2fb.route_feedbacks(_pending_fb)
-                    # ── LLM 二级判因（2026-10-24，Jev 理念第三阶段）──
                     # 规则分流里最模糊的一桶是 hypothesis_defect 兜底项（关键词没命中、
                     # 又不像运行时观测失败）。让 LLM 对它们做四态判因并重新分桶：
                     #   false_positive     → runtime_refutation（不进 A2 回灌，省空转）
@@ -11728,12 +11353,11 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                     try:
                         from src.agents import i2_judge as _i2j
                         _amb = list(_routed.get(_i2fb.HYPOTHESIS_DEFECT) or [])
-                        # 候选范围扩展（2026-10-25，run 468 实测修正）：
                         # 只挂 hypothesis_defect 桶时 LLM 判因事实上从不被调用——真实闭环里
                         # 95%+ 反馈是 runtime_observation（"canary 未观测到"），该桶常年为空，
                         # 闭环直接 no_action 退出（468 报告 i2 记录为空）。
                         # 真正值得判的是 runtime_observation 里「有弹但打不通」的那一小撮
-                        # （468 实测 148 条未确认中 23 条带 payload），判因要回答的正是
+                        # 判因要回答的正是
                         # 「是弹的问题还是打法的问题」。
                         _ro = list(_routed.get(_i2fb.RUNTIME_OBSERVATION) or [])
                         if _ro:
@@ -11777,7 +11401,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                                 int(_attached.get("attached") or 0))
                     except Exception as _lje:  # noqa: BLE001
                         logger.warning("[闭环] LLM 判因失败（保留规则分流，不阻断）：%s", _lje)
-                    # 2026-10-25（plan §19.1 / 20.4.1，探索图）：把 I2 判因结果落库为 replay_intents
                     # 意图记录（pending/abandoned）。默认关闭（SAST_AI_A2_USE_INTENTS=0），
                     # 仅用于统一重跑验证；失败不影响主闭环（已 try 隔离）。
                     if (str(os.environ.get("SAST_AI_A2_USE_INTENTS", "0")).strip().lower()
@@ -11792,7 +11415,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                             logger.warning("[闭环] 探索意图落库失败（忽略）：%s", _ibe)
                     _counts = {k: len(v) for k, v in _routed.items() if v}
                     _adj = _i2fb.plan_replay_adjustments(_routed)
-                    # 2026-10-02（最后一公里）：先算指令，再并回送 A2 的反馈项，
                     # 保证 A2 拿到的是"具体改进要求"而不是一句自然语言。
                     _routed = _i2fb.attach_directives(_routed, _adj)
                     # Q2：指令并入的匹配/失配统计必须落进闭环记录，否则「指令到底有没有
@@ -11817,12 +11439,9 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                         _loop_db = Database(os.environ.get("SAST_AI_DB_PATH", "data/app.db"))
                         _adj_applied = _i2fb.apply_replay_adjustments(_loop_db, task_id, _adj)
                         _action = "replay_adjust"
-                    # —— 止损预检（2026-09-28 落地）——
-                    # run 24 实测：57 条 hypothesis_defect 反馈触发 A2 重跑，烧 47 分钟，
                     # gain = -7。这些反馈的语义是「假说门禁悬置」而非「假说猜错」，
                     # A2 静态重跑产不出运行时证明，必然空转。预检不通过则只做重放侧调整。
                     _a2_ok, _a2_why = _i2fb.a2_rerun_actionable(_a2_fb) if _a2_fb else (False, "无 a2 反馈")
-                    # D10 预算预检（2026-10-26）：a2_rerun 是文件级 LLM 重跑（约 25s/文件），
                     # 一旦开跑无法在轮内打断（预算闸只在轮次间生效）。473 实测：51 条
                     # hypothesis_defect ⇒ 重跑数十文件 ⇒ 单轮 2237.8s / gain=0。
                     # 估计「文件数×单文件耗时」对照剩余预算，超了就只做重放侧调整。
@@ -11864,19 +11483,15 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                             code_root=str(prepared_scan_root),
                             on_progress=_mk_a2_progress(task_id, output_dir, _iteration),
                         )
-                        # 2026-09-18（§4.1 闭环降级修复）：D2 重验必须用「合并回全量」的 A2 结果集。
                         # run_d2_verify 的候选全集由传入的 a2_results 构造（for result in a1_results + a2_results），
                         # 若直接把收窄结果传进去，D2 只重验这几个文件，与闭环前的全量计数不可比：
-                        # 实测 run 17 baseline 65 → 闭环后 43，gain -22，且**降级后的 43 被写进最终报告**。
                         # 收窄只是「少跑 LLM」的优化，绝不能缩小 D2 的验证范围。
                         _cur_a2 = _merge_a2_results(a2_results, _rerun_a2)
-                        # 2026-09-28：登记输入同步改为**合并后的全量集**（原先只登记收窄的
                         # _rerun_a2）。原因是 trigger_spec_registry 的 second_pass 已改为
                         # 「先清本 task 全部 spec 再重登记」——若仍只登记收窄子集，未参与本次
                         # A2 重跑的那些漏洞的 spec 会被清掉且不再重建，D1 直接失去重放目标
                         # （召回掉一大截）。用全量集登记，spec 集合既无残留副本也不丢覆盖。
                         # 登记本身不调 LLM，全量走一遍的代价只是端点解析，远小于丢召回。
-                        # 2026-09-30 修复 在「重登记前」实拍本轮 spec 健康度基线。
                         # 这样 B-1 硬闸对比的是「上一轮产物」（或首轮前 D1/D2 产物），
                         # 而非 6560 处被废弃的首轮固定基线，iter2 收缩产物时守卫才会真正生效。
                         _spec_baseline = _i2fb.spec_health_snapshot(_loop_db, task_id)
@@ -11892,7 +11507,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                         _diff_and_record_spec_set(
                             task_id, _spec_before, _spec_key_snapshot(task_id), "a2_rerun_register",
                         )
-                        # 2026-10-08（重放智能化饿死修复）：second_pass「先清本 task 全部 spec 再重登记」
                         # 会把本轮 apply_replay_adjustments 刚写入的 replay_adjust 一并清掉。
                         # 跨任务实证：凡最后一轮带 a2_rerun 的任务（245/240/226），actions 落地恒 0，
                         # 重试环原样重放；幸存任务（244/242/239）只因最后一轮 skip_a2_rerun。
@@ -11905,9 +11519,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                                     _loop_db, task_id, _adj, bump_round=False)
                             except Exception as _rae:
                                 logger.warning("[闭环] 重登记后补写重放调整失败（不阻断）：%s", _rae)
-                        # —— B-1 硬闸（2026-09-28 批准）：rerun 产物 vs 原产物三项健康度对比 ——
                         # 任一退化超阈值（spec 总数 10% / 端点解析率 10% / 注入类 20%）即判定
-                        # 产物退化：回滚登记原产物、保留原 A2 结果、发告警。run 27 实证产物
                         # 294→179 召回 -19pt，闸门是把「rerun 负增益」挡在落库之后的最后防线。
                         _rerun_gate = {"checked": True, "ok": True, "reason": ""}
                         try:
@@ -11928,7 +11540,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                                 _diff_and_record_spec_set(
                                     task_id, _spec_rb_before, _spec_key_snapshot(task_id), "a2_rerun_rollback",
                                 )
-                                # 回滚重登记同样先清库——与上方 a2_rerun_register 同理补写（#重放智能化饿死修复）。
+                                # 回滚重登记同样先清库——与上方 a2_rerun_register 同理补写。
                                 if _adj:
                                     try:
                                         _adj_applied = _i2fb.apply_replay_adjustments(
@@ -11953,7 +11565,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                     _emit_stage_progress(task_id, output_dir, "d2_verify_progress",
                         {"status": "done", "iteration": _iteration,
                          "exploitable_count": int(d2_verifications.get('exploitable_count', 0) or 0)})
-                    # 2026-10-02（口径闭环）：把「判定不可绕过」的 spec 落成显式状态
                     # filtered_not_exploitable，让"过滤器有效"这个真阴性进对账，而不是混进
                     # unconfirmed / no_evidence（那会既丢结论又污染精确率）。
                     try:
@@ -11961,9 +11572,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                             Database(os.environ.get("SAST_AI_DB_PATH", "data/app.db")), task_id)
                     except Exception as _fe:
                         logger.warning("[闭环] 过滤器口径标记失败（不阻断）：%s", _fe)
-                    # —— #确认保全闸（2026-10-08，B-1 第四维）——
                     # rerun 产物可以健康度全达标（spec 数/端点率），却在重验后把上一轮已确认
-                    # 的漏洞大量丢成 unconfirmed/no_evidence（run 245 实证 confirmed 60→41、
                     # gain=-19 而 rerun_gate ok=True）。确认保全率低于阈值即回滚原产物并重验
                     # 一次，恢复上一轮确认态的判定基础。env SAST_AI_RERUN_CONFIRM_RETAIN_MIN
                     # 调阈值（默认 0.90）；确认快照为空（首轮无确认）时跳过。
@@ -12020,7 +11629,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                             _rerun_gate["confirm_rolled_back"] = True
                             _action = (_action or "a2_rerun") + "+confirm_rollback"
                     _cur_count = int(d2_verifications.get('exploitable_count', 0) or 0)
-                    # B-3 gain 口径对齐（2026-09-28 批准）：gain 用确认层去重 endpoint 用例数
                     # （与对账 L2 同源），不再用 D2 内部 exploitable_count；后者在 rerun 收缩
                     # 产物时会假性回升。exploitable_total 仍记录供过程观测。
                     _confirmed_cases = _i2fb.confirmed_case_count(_loop_db, task_id)
@@ -12041,7 +11649,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                     _pending_fb = _i2fb.dedup_feedbacks(_collect_fb(d2_verifications.get("verifications")) + _diff_fb())
                     if not _pending_fb:
                         break
-                # 2026-09-29 补 执行缺口：闭环收尾把「可重试 no_evidence」清单真正重放，
                 # 不再只留痕。plan_retryable_replay 判定该不该再放；execute_retryable_replay
                 # 消费清单去重跑 D1+D2，回写终态并落 retryable_no_evidence 事件（含 executed/cleared）。
                 try:
@@ -12063,18 +11670,13 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                             "executed_count": _retry_exec.get("executed", 0),
                             "cleared_count": _retry_exec.get("cleared", 0),
                             "failed_count": _retry_exec.get("failed", 0),
-                            # Q6 §二.5（2026-09-30）：重放增益（确认态 spec 数增量），无增益即梯子空转信号
                             "confirmed_gain": _retry_exec.get("confirmed_gain", 0),
-                            # C9（2026-10-26）：vhash 两端口径漂移的可观测化。
                             # 匹配率 = executed / retryable，此前的低值（0.082~0.176）
                             # 主要是「失配跳过」而非「不该重试」；这两个字段让下轮
                             # 能直接量化修复效果。
                             "vhash_miss": _retry_exec.get("vhash_miss", 0),
                             "vhash_secondary_hits": _retry_exec.get("vhash_secondary_hits", 0),
-                            # 批次 D（2026-10-01）：变体梯子点火数（escalate_variant 真触发的 spec 数）
                             "variant_escalated": _retry_exec.get("variant_escalated", 0),
-                            # 2026-10-08：重试环自身的开销画像。此前重试批数/耗时完全不可观测，
-                            # 只能从阶段时长反推（r65 run 245 反推出 65 批 × 180s ≈ 195min 占 D2 的 94%）。
                             # 落盘后可直接判断「重试是不是又在空转」，不必再反推。
                             "batches": _retry_exec.get("batches", 0),
                             "batch_size": _retry_exec.get("batch_size", 0),
@@ -12107,10 +11709,8 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 logger.info("[闭环] 闭环结束：%s", _loop_summary)
                 _hb_stop()
             except Exception as _e:
-                # 2026-09-28：提级为 error 并显式记 traceback。
                 # 此前是 warning：后端日志过滤项目 INFO，warning 混在大量进度里极易被漏看，
                 # 而 stage_results.i2.status 仍写 completed、message 写「闭环执行 0 轮」，
-                # 现象上表现为「只有一批 spec、跑得快」，run 25 因此被误读成优化生效。
                 # 闭环中断是功能性失败（第二轮 D2 重验与 spec 回灌全部丢失），必须可观测。
                 logger.error("[闭环] 闭环执行失败（保留当前 D2 结果，不影响报告）：%s", _e, exc_info=True)
                 _loop_summary = {
@@ -12120,12 +11720,11 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                     "iterations": 0,
                 }
                 _hb_stop()
-            # #4③：闭环重跑耗时单独记账，不再被误归入「D2 动态验证」（run 11 该段约 65 分钟）。
             phase_times['closed_loop_rerun'] = time.time() - _cl_start
             # §P4：持久化 feedback_to_a2 进 stage_results.i2（A2 标准通道消费端）。即便未触发二次回灌
             # 也记录，保证闭环反馈可追溯、可重放。
             # F-3：failure_class_counts 合并 defect 五类子分流
-            #（端点幻觉/参数缺失/族误判/链路不符/证据不足）；record() 将 detail 平铺进 history。
+            #（端点幻觉/参数缺失/族误判/链路不符/证据不足）；record 将 detail 平铺进 history。
             _fcc = dict(((_loop_summary.get("history") or [{}])[0].get("routed", {}) if _loop_summary else {}))
             _sub = ((_loop_summary.get("history") or [{}])[0].get("defect_subclass_counts") or {}) if _loop_summary else {}
             for _sc_key in ("endpoint_hallucination", "missing_parameter", "family_mislabel",
@@ -12134,13 +11733,11 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                     _fcc[_sc_key] = _sub["counts"][_sc_key]
             _sub_actions = _sub.get("bound_actions") or {}
             try:
-                # 2026-10-26（同型修复）：先建成变量，再同时喂给 scan_progress 与 return。
                 # 此前只写 scan_progress.json，而 run_benchmark 的 return 自建 stage_results
-                # 不含 i2 ⇒ task_completed 载荷里 stage_results.i2 恒为空（471 实测），
+                # 不含 i2 ⇒ task_completed 载荷里 stage_results.i2 恒为空，
                 # 闭环代价/收益、LLM 判因用量全部不可见。
                 _i2_stage_payload = {
                         # 闭环异常时 status 必须为 failed：写 completed 会让前端/报告把
-                        # 「闭环压根没跑」误读成「闭环跑完且无需动作」（run 25 事故）。
                         "status": "failed" if (_loop_summary or {}).get("error") else "completed",
                         "closed_loop_failed": bool((_loop_summary or {}).get("error")),
                         "feedback_to_a2_count": len(_all_feedback),
@@ -12152,7 +11749,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                         # 「60 条全是不可执行的运行时观测失败却仍在回灌 A2」的空转。
                         "failure_class_counts": _fcc,
                         "defect_bound_actions": _sub_actions,
-                        # E1（2026-10-10）：运行时证否黄金样本清单。这些是「静态侧声称漏洞、
                         # 运行时确证无害（数据到 sink 但被针对本族净化）」的 definitive 阴性，
                         # 供静态分析器（A1）消费以消减 over-claim，不进 A2 二次回灌。
                         "runtime_refutation": [
@@ -12188,7 +11784,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 )
             except Exception as _e:
                 logger.warning("[P4] 持久化 stage_results.i2 失败（不影响报告）：%s", _e)
-            # §统一链路：D1 已经并到 verify() 内执行（每个漏洞的 D1 重放 + I1 关联 + D2 核实
+            # §统一链路：D1 已经并到 verify 内执行（每个漏洞的 D1 重放 + I1 关联 + D2 核实
             # + I2 裁决），不再有独立的「IAST 模式」重放阶段（_run_iast_auto_replay 已删除，
             # 它与 verify 内 D1 是同一套编排器，分两处跑就是用户 reject 的「双入口」）。
             # 这里从统一 verify 结果聚合 D1 指标，回填 stage_results.d1，让流程图 D1 节点显示
@@ -12226,7 +11822,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
             try:
                 _d2_agg = _aggregate_d2_verdict(d2_verifications.get("verifications", []))
                 d2_verifications["aggregate"] = _d2_agg
-                # 2026-10-26（P2.1）：探针轮询代价画像。471 实测 D2 总时长 4442.8s、
                 # HTTP 仅 227s，怀疑 95% 是轮询空等；此处落真数（命中率/平均等待/超时占比），
                 # 供下一轮判断优化方向（自适应间隔 / 4xx 早退 / 批量轮询）。
                 try:
@@ -12288,7 +11883,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
             report_manager._funnel_task_id = task_id
         except Exception:
             pass
-        # 口径归一（2026-11-01）：把「A2 没弹可投 ⇒ D1 拒绝投假弹 ⇒ 没发请求」
         # 从 no-arrival（=打了没到）里分出来，记 payload_unavailable。
         # 不碰 verification_status，纯观测口径修正；判据见 src/core/spec_state_normalize.py。
         # 句柄在 try 之外先建好：两个口径归一函数都要用，放在 try 里会让后一个在
@@ -12299,7 +11893,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
             _norm_db = None
         try:
             from src.core.spec_state_normalize import normalize_payload_unavailable
-            # 2026-11-01 实杀：此处原本直接引用 `db`，而 run_benchmark 作用域里没有这个变量
             # （db 只在 d1_db/_ap_db/_loop_db 等局部别名上存在）⇒ NameError 被 fail-open 吞掉，
             # 口径归一 587 整轮静默未生效（payload_unavailable 28→0，全被记成 no-arrival）。
             # 教训：fail-open 必须配「成功也留痕」，否则失败与「无事可做」在日志上无法区分。
@@ -12322,7 +11915,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 })
             except Exception:
                 pass
-        # 口径一致性（2026-11-01）：sink-reached 状态必须有证据（有重放或有探针事件）。
         # 本轮实测 74 条 sink-reached 里 6 条既没重放、其文件/类在任何 iast_event 里
         # 也从未出现 ⇒ 状态凭空产生，会污染「到了 sink 判不出」的归因。只降状态不改判定。
         try:
@@ -12355,7 +11947,7 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
         # Q5：review 环节（A2PipelineService.review，local-heuristic 复审）已删除。
         # A2 的 AI 用法收敛为两部分——(1) POC 生成必须用 LLM（A2ContractPlanner 经 llm_client 调 LLM）；
         # (2) 把 A1 调用链证据在 LLM 调 prompt 前注入（_ai_deep_analysis）。误报/放行判定统一交由
-        # 末端 I2 LLM 裁决器（Q2）处理，不再有独立的规则式 review 阶段。
+        # 末端 I2 LLM 裁决器处理，不再有独立的规则式 review 阶段。
         ai_review_metrics = {
             "status": "removed",
             "message": "Q5 已删除 A2 review 环节（local-heuristic）；误报/放行由末端 I2 LLM 裁决器统一裁定",
@@ -12365,7 +11957,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
         }
         # enhanced_vulns 不再附加 ai_review 块（review 已删），直接进入报告。
         final_report['report']['vulnerabilities'] = enhanced_vulns
-        # P2-4（2026-09-13）：total_vulnerabilities 改 canonical 口径（不含 SCA）。
         # 此前 608 = SCA 349 + 应用层 canonical 259，与 by_severity 等已按 canonical
         # 口径的汇总自相矛盾。应用层与 SCA 分列：total_vulnerabilities 只计
         # source != 'sca'（不引入新列，用现有 source 判别）；SCA 单列 sca_count；
@@ -12381,7 +11972,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
         # vulnerabilities 列表（已含 SCA / IDOR）一致，否则 by_severity 漏掉
         # SCA 的 18 条 CRITICAL、total_vulnerabilities 与列表长度自相矛盾。
         # 以 enhanced_vulns（最终口径）重算 by_severity/by_type/总数，并据此
-        # 重新生成 Markdown/JSON，使交付物口径统一（与 task-6 回填口径一致）。
         from src.core.normalize import normalize_severity, normalize_type
         _final_by_severity = {'CRITICAL': 0, 'HIGH': 0, 'MEDIUM': 0, 'LOW': 0, 'INFO': 0, 'UNKNOWN': 0}
         _final_by_type = {}
@@ -12508,7 +12098,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
         progress_logger.update_stats({
             'total': sum(len(r.vulnerabilities) for r in a1_results + a2_results),
         })
-        # —— 黑板收口（2026-09-07）：本轮所有数据落库后，派生黑板 + 跑一致性自检 ——
         # 展示计数从此一律由黑板派生，禁止各处自存快照（消灭 那类事后对账补丁）。
         try:
             from src.core import blackboard as _blackboard2
@@ -12560,7 +12149,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
             'hitl': {
                 'approval_mode': config.get('agents.d2.hitl.approval_mode', 'off'),
                 'tool_allowlist': list(config.get('agents.d2.hitl.tool_allowlist', []) or []),
-            # 2026-09-24：闸门消费的是 act_allowlist（动作类别级），此前从未被写入也从未透传。
             'act_allowlist': list(config.get('agents.d2.hitl.act_allowlist', []) or []),
                 'pending_actions': list(d2_verifications.get('pending_actions', []) or []),
             },
@@ -12586,7 +12174,6 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                 },
                 'a2': {
                     'finding_count': sum(len(r.vulnerabilities) for r in a2_results),
-                    # 2026-10-26（20.3.3 埋点补漏）：契约合规率随 return 一起走，
                     # 避免被自建 stage_results 覆盖后从 task_completed 载荷里消失。
                     'contract': dict(_a2_contract_stats or {}),
                 },
@@ -12602,19 +12189,16 @@ def run_benchmark(target_path: str, enable_a1: bool = True, enable_a2: bool = Tr
                     'verified_poc_count': d2_verifications.get('verified_poc_count', 0),
                     'docker_used': d2_verifications.get('docker_used', False),
                     **(d2_verifications.get('aggregate') or {}),
-                    # run 38 落盘缺陷修复（2026-09-22）：scheduling 此前只经
                     # _update_scan_progress_metadata 写进 scan_progress.json（该文件是易变快照，
                     # 会被 progress_logger 覆写），而此处按固定键重建 stage_results.d2 →
                     # summary_json / task_result.json 里根本没有调度埋点，事后无法定位缺口。
                     # 现在一并带出；execution_trace 有上限截断，避免超大任务撑爆 summary_json。
                     'scheduling': _scheduling_payload(d2_verifications.get('scheduling')),
-                    # 2026-10-26（P2.1）：探针轮询画像随 return 走，避免被自建 stage_results 覆盖。
                     'poll_stats': dict(_d2_poll_stats or {}),
                 },
                 'reporting': {
                     'report_count': 1,
                 },
-                # 2026-10-26（同型修复）：闭环载荷随 return 走。
                 'i2': dict(_i2_stage_payload or {}),
             },
         }

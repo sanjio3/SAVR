@@ -1,9 +1,8 @@
-"""JNDI 注入的本地回连探针（2026-11-03）。
+"""JNDI 注入的本地回连探针。
 
 ## 为什么必须真监听
 
 `jndi_injection`（log4j `${jndi:ldap://...}`）**在响应里没有任何可判的痕迹**：
-jsc 的 `/log4j` 是 `logger.error(token); return token;` —— 无论 lookup 是否触发，
 返回给客户端的都是原始 token。所以「响应回显」这条路彻底不通。
 
 唯一确定性判据是：**目标真的发起了 LDAP/RMI 连接**。这里在本机起一个裸 TCP
@@ -19,7 +18,7 @@ jsc 的 `/log4j` 是 `logger.error(token); return token;` —— 无论 lookup �
 
 - 只绑 `127.0.0.1`，不对外暴露；只 accept 记录，不读不写业务数据。
 - 端口随机（bind :0），避免与靶场自带的 1389 冲突。
-- 单例：同一进程内多次取端口返回同一个监听器，`reset()` 清计数。
+- 单例：同一进程内多次取端口返回同一个监听器，`reset` 清计数。
 """
 from __future__ import annotations
 

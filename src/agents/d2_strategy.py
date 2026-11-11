@@ -158,7 +158,6 @@ def _attach_strategy_attack_plan(agent, result: Optional[VerificationResult], vu
             result.reason = str(result.verification_decision.get("judge_reason") or result.reason)
     # RAG+LLM 攻击计划升级：确定性模板只靠猜的字段（route/parameter/encoding 缺失）
     # 由 LLM 补齐；高完备度仍走纯模板。网关构造失败/离线一律降级模板（不阻断主链路）。
-    # A 第三步（2026-09-28 批准）：白名单校验——route 只能命中既有端点集合，parameter 只能来自 spec 参数集合。
     rag_plan = None
     if not getattr(result, "attack_plan", None) and hasattr(agent, "_ensure_attack_plan"):
         try:
@@ -626,12 +625,9 @@ def _approval_required_result(exploit_spec: Dict, tool_spec: Dict, approval_mode
             "matched_outcomes": [],
             "confidence": "low",
             "confirmed": False,
-            # 2026-09-24：批准链路接通的前提。闸门是「按动作类别」放行的
             # （act_allowlist 比对的正是这里的 category），而 failure_classification.category
             # 恒为字面量 "approval_required" —— 若下游只拿 failure_classification 当类别，
             # 写进白名单的就会是 "approval_required"，与闸门判定时算出的
-            # money_out/data_destroy 之类永远不等，批准后重跑依旧被拦。
-            # 故在此把闸门判定用的 act 原样带出，供 pending_action 与批准流程取用。
             "act": {
                 "irreversible": bool(act.get("irreversible")),
                 "category": act_cat,
@@ -659,7 +655,6 @@ def _flatten_text(value: object, _depth: int = 0) -> str:
 def _classify_act_risk(exploit_spec: Dict, strategy: Dict) -> Dict:
     """按**将要投放的动作**判定风险（取代旧的「按 tool_id risk_level 拦截」）。
 
-    2026-09-20 重设计。旧语义拦的是「验证器自己用的工具」，等于拦自己的扫描流程：
     粒度是工具、理由说不清危险在哪、一次点击只解一条，且会把流水线卡住。
     新语义只回答一个问题：这个动作**不可逆**吗？
 
@@ -705,7 +700,6 @@ def _classify_act_risk(exploit_spec: Dict, strategy: Dict) -> Dict:
 
 
 APPROVAL_MODES = ("off", "ask_on_risky_tools", "strict")
-# M14：破坏性闸门在后续扫描中**持续全批准**（2026-10-03 决议）。
 # 旧缺省是 ask_on_risky_tools —— hitl 键存在但没写 approval_mode 时闸门会默认打开，
 # 一条不可逆动作就能把整轮 D2 卡成 approval_required（真实库里历史累计 19 条）。
 # 现在缺省一律 off，未知值也当 off（fail-open 到放行）并留痕：宁可放行被记账，
@@ -727,7 +721,7 @@ def resolve_approval_mode(hitl: Optional[Dict], logger: Any = None) -> str:
 
 def decide_hitl_gate(project_context: Dict, method: Any, route: Any, payload_text: str = "",
                      category_override: Optional[str] = None) -> Dict[str, Any]:
-    """HITL 闸门决策（单一真相源，供活跃 D2 链路 D2Agent.verify() 调用）。
+    """HITL 闸门决策（单一真相源，供活跃 D2 链路 D2Agent.verify 调用）。
 
     复用 attack_context 的破坏性操作分类，按 project_context['hitl']['approval_mode']
     决定某条「将要投放的不可逆动作」是否需要人放行：
@@ -828,7 +822,6 @@ def try_deterministic_verification(agent, vulnerability: Dict, project_context: 
     # 动作级放行名单（可永久放行某个不可逆类别，如 data_destroy），与工具级 allowlist 并存。
     act_allowlist = set(str(item).strip() for item in (hitl.get("act_allowlist") or []) if str(item).strip())
 
-    # ── HITL 闸门（2026-09-20 重设计：按动作判风险，不按工具）────────────────
     # 旧语义按 tool_id 的 risk_level 拦 → 拦的是「验证器自己用的工具」，等于拦自己的扫描；
     # 粒度是工具（一次点击只解一条）、理由说不清危险在哪，且会把流水线卡住。
     # 新语义：
@@ -841,7 +834,7 @@ def try_deterministic_verification(agent, vulnerability: Dict, project_context: 
     act_cat = str(act.get("category") or "")
     act_allowed = act_cat in act_allowlist
     if not hitl:
-        # HITL 未配置 → 闸门不介入（保留旧行为，避免给未启用 HITL 的任务引入新拦截）
+        # HITL 未配置 → 闸门不介入
         gate = False
     elif approval_mode == "off":
         gate = False

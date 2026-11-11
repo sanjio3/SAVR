@@ -1,4 +1,4 @@
-"""拦截器/过滤器/切面的正向全局索引（Part2 定稿本轮 M8，2026-10-03 落地）。
+"""拦截器/过滤器/切面的正向全局索引。
 
 背景（为什么从「反向数据流」改成「正向全局索引」）：
     原先的净化器挖掘是**反向**的：沿着污点数据流回溯（source → sink），只在数据流经过的
@@ -231,8 +231,8 @@ def collect_interceptors(files: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]
 def _interceptor_registrations(jf: List[Dict[str, Any]]) -> Dict[str, List[str]]:
     """扫全库建 {拦截器类名: 注册路径列表}。
 
-    ``r.addInterceptor(new AuthInterceptor()).addPathPatterns("/admin/**")`` 与
-    ``r.addInterceptor(new AuthInterceptor())``（无 addPathPatterns = 全局）都要认。
+    ``r.addInterceptor(new AuthInterceptor).addPathPatterns("/admin/**")`` 与
+    ``r.addInterceptor(new AuthInterceptor)``（无 addPathPatterns = 全局）都要认。
     """
     out: Dict[str, List[str]] = {}
     for f in jf:
@@ -364,7 +364,6 @@ def applies_to_route(item: Dict[str, Any], route: str) -> bool:
 # 跨轮复用同一 workspace 源码时内容本来就不变）。
 _INDEX_CACHE: Dict[str, List[Dict[str, Any]]] = {}
 
-# 建索引时的文件上限：靶场源码动辄几千文件，全读进内存没必要——拦截器/过滤器/切面
 # 是少数派，且都集中在 web/config 层。这里按「先扫全量、超上限按修改时间取最近」处理，
 # 保证不会因为上限把 web 层排除在外（web 层通常是最近改动的）。
 _INDEX_MAX_FILES = 4000

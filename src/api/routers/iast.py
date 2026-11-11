@@ -41,7 +41,7 @@ def get_session(session_id: int):
 
 @router.post("/sessions/{session_id}/heartbeat")
 def session_heartbeat(session_id: int, x_iast_token: str = Header(default="")):
-    """§3.13/§3.14 探针心跳上报：写 last_heartbeat_at（X-Iast-Token 鉴权，与事件摄取同机制）。"""
+    """/ 探针心跳上报：写 last_heartbeat_at（X-Iast-Token 鉴权，与事件摄取同机制）。"""
     return container.iast_service.update_heartbeat(session_id, x_iast_token)
 
 
@@ -71,7 +71,7 @@ def ingest_events(payload: IastEventIngest, x_iast_token: str = Header(default="
 
 @router.get("/correlation")
 def correlation(workspace_id: Optional[int] = None, task_id: Optional[int] = None):
-    """§3.3 统一 Finding 清单：SAST 根 + IAST 运行时证据 + 统计（覆盖率/confirmed_runtime/按资产）。"""
+    """ 统一 Finding 清单：SAST 根 + IAST 运行时证据 + 统计（覆盖率/confirmed_runtime/按资产）。"""
     return container.iast_correlation_service.correlate(workspace_id=workspace_id, task_id=task_id)
 
 
@@ -94,7 +94,7 @@ def ingest_stats():
 
 @router.post("/correlation/report")
 def correlation_report(workspace_id: int, task_id: Optional[int] = None):
-    """§4.5 独立 iast-correlation 报告：生成 .md/.json，并在提供有效 task_id 时登记 reports 表。"""
+    """ 独立 iast-correlation 报告：生成 .md/.json，并在提供有效 task_id 时登记 reports 表。"""
     meta = container.iast_correlation_service.generate_report(workspace_id, task_id=task_id)
     # reports.task_id 有 FK 非空约束，仅当提供有效 task_id 时持久化（不碰 B1/B2 内核）。
     if task_id is not None:
@@ -107,7 +107,7 @@ def correlation_report(workspace_id: int, task_id: Optional[int] = None):
 
 @router.get("/adjudication")
 def adjudication(workspace_id: Optional[int] = None, task_id: Optional[int] = None):
-    """§4.7.1/§8.1 I2 覆盖率差集审计（只读，不落库反哺候选）。"""
+    """/ I2 覆盖率差集审计（只读，不落库反哺候选）。"""
     return container.i2_adjudicator.audit_coverage(workspace_id=workspace_id, task_id=task_id)
 
 
@@ -150,12 +150,12 @@ def list_trigger_specs(workspace_id: Optional[int] = None, task_id: Optional[int
 
 @router.get("/bola-race/status")
 def bola_race_status_endpoint():
-    """§2.2/§7.9 BOLA/RACE 占位状态：本期不交付，依赖 SAST 业务逻辑策略分析能力。"""
+    """/ BOLA/RACE 占位状态：本期不交付，依赖 SAST 业务逻辑策略分析能力。"""
     from src.iast.bola_race import bola_race_status
     return bola_race_status()
 
 
 @router.post("/adjudication/harvest")
 def adjudication_harvest(workspace_id: Optional[int] = None, task_id: Optional[int] = None):
-    """§4.6/§4.7.1 I2 反哺候选入库（净化器 + 新规则种子，走 RuleFeedback 人工 confirm 闸门）。"""
+    """/ I2 反哺候选入库（净化器 + 新规则种子，走 RuleFeedback 人工 confirm 闸门）。"""
     return container.i2_adjudicator.harvest_feedback(workspace_id=workspace_id, task_id=task_id)

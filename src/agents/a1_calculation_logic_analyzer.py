@@ -1,4 +1,4 @@
-"""计算与交易逻辑 静态分析（重构文档 §2.2 业务逻辑策略分析）。
+"""计算与交易逻辑 静态分析。
 
 核心本质：后端对关键数值（金额、数量、比例、运费）缺乏严格的边界校验和合理性检查。
 
@@ -69,7 +69,7 @@ _DISCOUNT_STACK_OP = re.compile(
     r"mergepromo|mergediscount|stackdiscount|couponstack|accumulatecoupon)"
 )
 # 服务端对门槛/总价做了重算或重校验 -> 不构成 4.2 假说。
-# 注意：has_token() 对「小写后的方法体」做大小写敏感的字串匹配，故此处 token 必须全小写。
+# 注意：has_token 对「小写后的方法体」做大小写敏感的字串匹配，故此处 token 必须全小写。
 _THRESHOLD_REVALIDATE: Tuple[str, ...] = (
     "recompute", "recalcu", "recount", "revalid", "recalculate", "recomputethreshold",
     "verifythreshold", "checkthreshold", "validatethreshold", "recounttotal", "recalculatetotal",
@@ -160,7 +160,6 @@ def analyze_file(path: str, content: str, lang: Optional[str] = None) -> List[Di
                 })
 
     # ---- 服务/其它层 4.1/4.2 通用判定 ----
-    # R24-E：原实现「凡方法体含 @XMapping 一律跳过」是过度抑制 —— 它把**路由补扫覆盖不到的
     # 控制器端点**（如 `/checkout`、`/api/order/checkout/coupons` 这类不匹配 _PAYMENT_ROUTE_RE
     # 的映射）也一并跳过，导致通用 4.1/4.2 分支对控制器层完全失效（test_41_generic_still_detected
     # 恒 0 命中）。改为**按方法名去重**：只有「路由补扫已经为该方法产出假说」时才跳过，

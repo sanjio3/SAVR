@@ -31,14 +31,12 @@ _LANG_BY_EXT = {
     ".js": "javascript", ".jsx": "javascript", ".ts": "javascript", ".tsx": "javascript",
     ".go": "go", ".php": "php", ".rb": "ruby", ".c": "cpp", ".cpp": "cpp", ".cc": "cpp", ".h": "cpp",
     ".xml": "mybatis-xml",
-    # 2026-09-18（A1 配置类检测通道）：Spring Boot 的 actuator 暴露写在 .properties 里，
     # 此前 _LANG_BY_EXT 没有该扩展名 → _detect_language 返回 None → analyze_content 首行
     # 直接 return []，导致 CWE-16 / CWE-1188 / CWE-522 整类在静态侧无任何 detector。
     ".properties": "properties",
 }
 
 # ── 第三方库 / 打包产物排除 ────────────────────────────────────────────────
-# 判据已上收到 `src/core/scan_scope.py`（2026-11-03）：文件收集阶段统一过滤，
 # A1 启发式 / 业务逻辑 / BOLA / A2 共用同一套，避免逐个通道打补丁漏掉。
 # 这里保留 `_is_vendor_asset` 这个别名（本模块内部与既有单测都在用）。
 from src.core.scan_scope import is_vendor_asset as _is_vendor_asset  # noqa: E402
@@ -59,13 +57,11 @@ _RULES: Dict[str, List[Tuple[re.Pattern, str, str, str, str]]] = {
         (re.compile(r"new\s+ProcessBuilder\s*\("), "Command Injection", "command-execution", "HIGH", "ProcessBuilder"),
         (re.compile(r"new\s+GroovyShell\s*\(\s*\)\s*\.\s*(evaluate|parse)"), "Code Injection", "code-injection", "HIGH", "GroovyShell"),
         (re.compile(r"ScriptEngine[^\n;]*\.?\s*eval\s*\("), "Code Injection", "code-injection", "HIGH", "ScriptEngine.eval"),
-        # 2026-09-17（文档《漏洞检测能力现状》§2.1 唯一真实漏检项）：上面那条要求
         # 「ScriptEngine」与「eval(」出现在同一行，而真实写法是先取引擎、隔几行再 eval
-        # （实测 Rce.java：L97 `ScriptEngine engine = new ScriptEngineManager().getEngineByName("js")`，
         # L100 才 `engine.eval(cmd, bindings)`），跨行即永不命中——Nashorn/ScriptEngine RCE
         # 因此静态与动态双双 0 命中。补两条覆盖真实形态：
         # ① 取引擎后 800 字符内出现 .eval( —— 跨行也能命中，行号落在取引擎那一行。
-        # 只保留这一条：另加「new ScriptEngineManager()」会在同一行重复出两条（去重键含
+        # 只保留这一条：另加「new ScriptEngineManager」会在同一行重复出两条（去重键含
         # sink 名，两者 sink 不同），一条漏洞报两份属噪声，故不另行登记。
         (re.compile(r"getEngineByName[\s\S]{0,800}?\.eval\s*\("), "Code Injection", "code-injection", "HIGH", "ScriptEngine.eval(remote)"),
         (re.compile(r"parseExpression\s*\("), "SpEL Injection", "expression-injection", "HIGH", "SpEL.parseExpression"),
@@ -73,12 +69,10 @@ _RULES: Dict[str, List[Tuple[re.Pattern, str, str, str, str]]] = {
         (re.compile(r"Ognl\.getValue|Ognl\.parseExpression"), "OGNL Injection", "expression-injection", "HIGH", "Ognl.getValue"),
         (re.compile(r"new\s+URL\s*\("), "SSRF", "ssrf", "MEDIUM", "new URL(...)"),
         (re.compile(r"new\s+FileInputStream\s*\(|Files\s*\.\s*readAllBytes\s*\(|readFile\s*\("), "Path Traversal", "path-traversal", "MEDIUM", "file read"),
-        # 2026-10-07（r63-verify 实测补强）：上一条只认「真正读文件」的动作，
         # 漏掉了 OWASP 里整整一类形态 —— `new File(路径)` 之后**不做任何 I/O**，
-        # 只做元数据探测/使用。实测 pathtraver-1 的 10 个静态漏检（00011/00061/00215/
         # 00359/00452/00697/00698/01156/01231/01232）**全部**是这个形态：
         #     java.io.File fileTarget = new java.io.File(bar);   // bar ← 用户输入
-        #     if (fileTarget.exists()) { ... }                   // 只探测存在性
+        #     if (fileTarget.exists) { ... }                   // 只探测存在性
         # 对照已检出的 00001/00002：它们走 FileInputStream/FileOutputStream，被上一条命中。
         # ⇒ 漏检根因是 **sink 侧覆盖缺口**（源侧 getParameter/getHeader/getCookies
         # 早已在 _SOURCE_RE 里，实测 6/10 用的是 getParameter），不是源侧缺规则。
@@ -99,16 +93,12 @@ _RULES: Dict[str, List[Tuple[re.Pattern, str, str, str, str]]] = {
         (re.compile(r"response\s*\.\s*sendRedirect\s*\("), "URL Redirect", "open-redirect", "LOW", "sendRedirect"),
         (re.compile(r"(Statement|PreparedStatement)\s*\.\s*(execute|executeQuery|executeUpdate)\s*\("), "SQL Injection", "sql-injection", "HIGH", "JDBC Statement"),
         (re.compile(r"createStatement\s*\(\s*\)"), "SQL Injection", "sql-injection", "HIGH", "JDBC createStatement"),
-        # ---- 静态检出覆盖补强（2026-10-01，针对 run 45 实测缺口）----
-        # 缺口实测：TP=106 中 23 条完全无 spec，按真值族分布 sqli 11 / pathtraver 3 /
         # hash 3 / ldapi 3(0%) / xpathi 3(0%)；且 A1 实走 heuristic-fallback
         # （last_scan_meta.engine=heuristic-fallback、codeql_status=build_failed_or_empty），
         # 故补规则即可直接增加检出。
         # SQL 拼接构造：SQL 关键字字符串字面量直接与变量拼接（sink 常委托给 helper，
         # 用例文件内没有 Statement.execute，旧规则命中不到）。高特异性，FP 风险低。
-        # 2026-10-05：补 JDBC 转义语法 `{call`。原白名单只有 SELECT/INSERT/UPDATE/DELETE，
         # 而存储过程调用写作 `String sql = "{call " + param + "}"`，关键字既不是这四个、
-        # 且 sink 常是 prepareCall(（规则表里同样没有），导致 OWASP Benchmark 上
         # 00008 / 01379 / 02170 三条真漏洞整类漏检（sqli 族召回卡在 70% 的三条之一）。
         # 仍要求「字面量 + 拼接号」的形态，故纯字面量的 `{call sp_reset_db}` 不会误报。
         (re.compile(r"\"\s*(?:SELECT\b|INSERT\s+INTO\b|UPDATE\s+\w+\s+SET\b|DELETE\s+FROM\b|\{call\s)[^\"]*\"\s*\+", re.IGNORECASE),
@@ -150,8 +140,6 @@ _RULES: Dict[str, List[Tuple[re.Pattern, str, str, str, str]]] = {
         (re.compile(r"(SAXReader|SAXBuilder|DocumentHelper)\s*[^\n;]*\.\s*(read|build|parseText)\s*\("),
          "XXE", "xxe", "HIGH", "dom4j/jdom XML 读取"),
         # XSS：响应直出（原完全缺失）
-        # 2026-10-19（r109 xss-2 实测）：**printf / format 暂不纳入**。
-        # 漏检的 BenchmarkTest02131/02403 形态是 `getWriter().printf(Locale.US, bar, obj)`。
         # 但全量 2740 用例实测：宽规则（含 printf/format）98 TP / **47 FP**；
         # 收紧到「格式串=污点变量」仍有 55 TP / **27 FP**（FP 是 safe 变体——运行时值为常量，
         # A1 静态看却是污点，而值级闸对「canary 出现在格式串」无法否决）。
@@ -160,12 +148,11 @@ _RULES: Dict[str, List[Tuple[re.Pattern, str, str, str, str]]] = {
         (re.compile(r"getWriter\s*\(\s*\)\s*\.\s*(print|println|write)\s*\("),
          "XSS", "xss", "MEDIUM", "response.getWriter 直出"),
         # XSS：@ResponseBody 处理函数把 String 形参原样 return（反射型直出）。
-        # 不写在规则表里而走 _direct_echo_hits()：规则表的报告行号取 m.start()，
+        # 不写在规则表里而走 _direct_echo_hits：规则表的报告行号取 m.start，
         # 而这里必须报在 `return x;` 那一行（真正的输出点），且需校验形参未经过滤——
         # 用正则做这两件事会把「注解在方法前」写死成 [\s\S]{0,400}，一旦注解落在类上
-        # 就会把整段类体吞进来（实测把 Log4j.java 的类注解也匹配上）。详见该函数注释。
+        # 就会把整段类体吞进来。详见该函数注释。
         # XXE：POI / OOXML（xlsx、docx）解析入口——原 XXE 规则只覆盖 XML 工厂与 dom4j，
-        # 漏掉 java-sec-code 的 ooxmlXXE.java（`new XSSFWorkbook(file.getInputStream())`，
         # README 独立条目，靠 poi-ooxml 自身版本决定是否解析外部实体）。
         (re.compile(r"new\s+(?:XSSFWorkbook|HSSFWorkbook|SXSSFWorkbook|XSSFReader|OPCPackage)\s*\(|OPCPackage\s*\.\s*open\s*\("),
          "XXE", "xxe", "HIGH", "POI/OOXML 解析"),
@@ -183,18 +170,14 @@ _RULES: Dict[str, List[Tuple[re.Pattern, str, str, str, str]]] = {
         (re.compile(r"new\s+(?:[\w.]+\s*\.\s*)?File\s*\(\s*[^)\"']*[+]"
                     r"|Paths\s*\.\s*get\s*\([^)]*\+"),
          "Path Traversal", "path-traversal", "MEDIUM", "文件路径拼接"),
-        # 路径穿越补充②（2026-09-24）：真实的文件读写 sink。
         # 上面的规则只认「拼接号出现在构造参数内」的 `new File(a+b)` / `Paths.get(a+b)`，
-        # 而 OWASP Benchmark 与大量真实代码的写法是先拼路径再传给文件流：
         #     fileName = Utils.TESTFILES_DIR + param;  new FileOutputStream(fileName);
-        # 这种形态 sink 是 FileOutputStream，旧规则一条都认不出（Benchmark pathtraver
         # 10 个真漏洞全漏，TPR=0%）。本规则补上文件读写构造，并走污点门控避免无差别报。
         (re.compile(r"new\s+(?:java\s*\.\s*io\s*\.\s*)?(?:FileOutputStream|FileInputStream"
                     r"|FileReader|FileWriter|RandomAccessFile|PrintWriter"
                     r"|BufferedWriter|BufferedReader)\s*\(|Files\s*\.\s*(?:newOutputStream"
                     r"|newInputStream|newBufferedWriter|newBufferedReader|write|readAllBytes)\s*\("),
          "Path Traversal", "path-traversal", "MEDIUM", "文件读写 sink"),
-        # ── 五个「能力空白」类别（2026-09-24，OWASP Benchmark 对账驱动）────────────
         # 这四类此前在规则库里完全没有对应族，占 Benchmark 样本的 41.5%，严格口径
         # TPR 恒为 0。它们不是注入类，而是安全编码规范类，但同样可静态判定。
         # 离线验证（205 用例）：crypto/weakrand/securecookie TPR 100% FPR 0%，
@@ -214,21 +197,17 @@ _RULES: Dict[str, List[Tuple[re.Pattern, str, str, str, str]]] = {
         # 否则 `setAttribute("userid", staticValue)` 之类会被无差别报。
         (re.compile(r"getSession\s*\(\s*\)\s*\.\s*(?:setAttribute|putValue)\s*\("),
          "信任边界违背", "trust-boundary", "MEDIUM", "session 写入外部可控数据"),
-        # （2026-09-20）：CVE-2022-22978 Spring Security regexMatchers 授权绕过。
         # `.regexMatchers("/black_path.*")` 未锚定且非 DOTALL，攻击者可借 `%0a`（换行）构造
         # "/black_path%0a/xx" 越过 denyAll 规则，达成鉴权绕过。确定性静态规则，family=auth_bypass、
         # has_http_entry=True 使下游合成 /black_path%0a/xx 路由、D1/D2 用 %0a 负载做 200-vs-403
         # 运行时证明（真实 PoC，非伪造），对账进 CVE 黄金项。
         (re.compile(r"\.\s*regexMatchers\s*\("),
          "CVE-2022-22978", "auth_bypass", "HIGH", "Spring regexMatchers 授权绕过(CVE-2022-22978)"),
-        # ①（2026-09-20）：状态变更端点缺 CSRF token 校验。Spring 显式 `csrf().disable()` 关闭了
         # 全局 CSRF 保护，所有状态变更端点（POST/PUT/DELETE）不再要求 CSRF token，可被跨站请求伪造。
         # 这是「真正检测 CSRF 弱点」的确定性静态规则（不依赖 LLM 猜测），family=csrf 与黄金 token 对齐。
         (re.compile(r"csrf\s*\(\s*\)\s*\.\s*disable\s*\("),
          "CSRF", "csrf", "HIGH", "Spring CSRF 保护被禁用"),
-        # ---- 2026-10-30（java-sec-code 实测补强）----
         # 该靶场 29 个 in_scope 漏洞点里有 3 条是 A1 完全没有规则导致的漏检。
-        # 这三类代码在 OWASP Benchmark 里不存在，补规则对已收口的 17 族零影响。
         #
         # ① RMI 暴露：createRegistry 把注册表绑到本机端口，配合 bind 即可被远程调用。
         (re.compile(r"LocateRegistry\s*\.\s*createRegistry\s*\("),
@@ -288,14 +267,12 @@ _RULES: Dict[str, List[Tuple[re.Pattern, str, str, str, str]]] = {
 }
 
 
-# ---- 配置类规则组（2026-09-18 新增：A1 配置类检测通道）--------------------
 # 背景：README 的 Actuators to RCE 条目指向 logback-online.xml 的 <jmxConfigurator/> 与
 # application.properties 的 management.security.enabled=false。这两类文件此前完全落在检测之外：
 # .properties 没有扩展名映射（analyze_content 首行直接 return []），.xml 被统一分派到 mybatis-xml
 # 组、又被 _is_mapper_xml 闸门拒掉。CWE-16（安全配置不当）/ CWE-1188（不安全默认配置）/
 # CWE-522（凭据保护不足）这一整类因此零 detector，与规则表有多少条无关。
 #
-# 口径（2026-09-18 决议）：先只做形态确定、误报低的两类（actuator 暴露、logback JMX），
 # 归 config-security（暴露 / 配置轴）——按平台既有约定仅做分类展示，不进 D1 重放、
 # 不进 D2 差分门禁、不计入召回口径。明文凭据单列，见下方 _CREDENTIAL_RULES。
 _CONFIG_RULES: List[Tuple[re.Pattern, str, str, str, str]] = [
@@ -316,7 +293,6 @@ _CONFIG_RULES: List[Tuple[re.Pattern, str, str, str, str]] = [
      "Security Misconfiguration", "config-security", "HIGH", "logback JMX 配置器"),
 ]
 
-# ---- 明文凭据规则（单列，2026-09-18 评审）-----------------------------
 # 口径：先只检出、不计入召回（归 information-disclosure 暴露轴，天然不进重放 / 差分 / 召回），
 # 观察一轮再决定是否纳入统计。设 _CREDENTIAL_RULES_ENABLED = False 可整体关闭。
 # 误报控制：占位符（${...} / your_password / changeme / xxx / <...> 等）一律不报——
@@ -356,13 +332,11 @@ def _credential_hits(content: str) -> List[Tuple[int, str]]:
     return hits
 
 
-# ── 配置取值的常量折叠（2026-10-05）──────────────────────────────────────────
 # 弱哈希 / 弱加密的算法名经常不写在代码里，而是从配置文件读：
 #     String algorithm = benchmarkprops.getProperty("hashAlg1", "SHA512");
 #     MessageDigest md = MessageDigest.getInstance(algorithm);
 # 而 _RULES 里的弱算法规则要求 getInstance("MD5") 这种**字符串字面量**形态，
 # 变量形态一条都认不出。实测 OWASP sample-200 的 benchmark.properties 里
-# hashAlg1=MD5（真弱哈希），BenchmarkTest00710 等 3 条因此整类漏检，
 # hash 族召回卡在 66.7%。规则注释里此前把这类判为「静态不可判定」，
 # 但 .properties 就在项目里、值是明文的，属于**可判定**——只要把值折叠进来。
 #
@@ -471,12 +445,11 @@ def _is_mapper_xml(content: str) -> bool:
     return bool(re.search(r"<mapper[\s>]", head)) or "mybatis-3-mapper.dtd" in head
 
 
-# ---- 跨文件 sink 包装传播（R25#11）---------------------------------------
 # 背景：SSRF / 命令注入等 sink 常被封装进项目内工具类（HttpFetcher.fetch / CmdUtil.run）。
 # 逐文件 sink 匹配只在「sink 本体所在文件」出条，而调用方（Controller）文件内不含任何
 # sink 文本 → 调用点漏报。真正可验证的恰恰是「有 HTTP 入口的调用点」，故需要传播一层。
 # 做法：先从全量文件学出「哪些方法体内直接含危险 sink」，再在任何「限定调用
-# （ClassName.method(）」位置回标同族。映射表由源码自动学习，不硬编码任何靶场类名。
+# （ClassName.method」位置回标同族。映射表由源码自动学习，不硬编码任何靶场类名。
 
 # 仅传播「调用即危险」的确定性族；XSS / open-redirect 等上下文相关族不传播，避免误伤。
 _PROPAGATABLE_FAMILIES = {
@@ -524,11 +497,9 @@ def _method_of(spans: List[Tuple[int, str]], pos: int) -> Optional[str]:
     return name
 
 
-# ── 位置感知的门控辅助（2026-10-04）────────────────────────────────────────
 # 背景：文件读写 sink 的成立要件是「**目标路径**由外部输入决定」，不是「调用点传了脏数据」。
-# OWASP Benchmark 的 Utils.printOSCommandResults(String cmdOut, int fileNum) 就是反例：
 # 路径由 `TESTFILES_DIR + "cmd" + fileNum` 在方法内拼出，调用方给的 `cmdOut` 只进文件**内容**。
-# 只看「调用点实参带不带污点」会把它整片误报成路径穿越（实测每个 cmdi 用例都中）。
+# 只看「调用点实参带不带污点」会把它整片误报成路径穿越。
 # 正确判据：看包装方法的 sink **用到了第几个形参**，只有那个位置上的实参带污点才算可达。
 
 def _split_top_level_args(text: str) -> List[str]:
@@ -637,9 +608,9 @@ def _direct_echo_hits(content: str) -> List[Tuple[int, str]]:
 
     为什么不写成 _RULES 里的一条正则：
     1. 报告行号必须是 `return x;` 所在行（真正的输出点，也是前端展示与 D2 定位用的行号），
-       而规则表统一用 m.start() 报行；若把 `@ResponseBody` 写进正则开头，行号会落到注解甚至类声明上。
+       而规则表统一用 m.start 报行；若把 `@ResponseBody` 写进正则开头，行号会落到注解甚至类声明上。
     2. 需要「返回的标识符必须是本方法的 String 形参」这一同名约束，跨方法窗口不可控。
-    3. 需要「方法紧前方出现请求处理注解」这一门控：XSS.java 的 reflect()/show() 是方法级注解，
+    3. 需要「方法紧前方出现请求处理注解」这一门控：XSS.java 的 reflect/show 是方法级注解，
        而只要求「前 400 字符内有注解」的写法会把整段类体吞进来（Log4j.java 的类级 @RestController
        会被误当成方法级），实测命中行号落到类声明上。
     故按方法逐段判定：方法头取形参集 → 方法体取裸 return → 求交集。
@@ -673,17 +644,13 @@ def _direct_echo_hits(content: str) -> List[Tuple[int, str]]:
     return hits
 
 
-# ── 污点门控（2026-09-24，OWASP Benchmark 对账驱动）────────────────────────
-# 背景：纯正则 `getWriter().print/println/write(` 不看污点来源，在 OWASP Benchmark
 # 205 用例样本上产生 463 条无差别命中（占全部 finding 的 91.5%），把宽松口径 FPR
 # 顶到 94.95%、TPR 虚高到 97.17%。真实代码里绝大多数 `println` 输出的是静态文案或
-# 服务端自造数据（java-sec-code 的 7 条命中经逐条源码核验 100% 是这类误报）。
 # 故对"输出型/文件型"sink 增加一道轻量的文件内污点判定：实参必须引用外部输入变量。
 #
 # 设计边界（刻意的取舍，勿随意放宽）：
 #   - 文件内、方法无关、不跨文件：A1 是离线兜底规则层，跨文件污点交给 A2/D2。
-#   - 只做一层容器中转：OWASP Benchmark 刻意用 HashMap/List 中转污点考验分析器，
-#     不做容器中转会漏掉全部 7 个此类 xss 真漏洞（实测 61.1% → 77.8%）。
+#     不做容器中转会漏掉全部 7 个此类 xss 真漏洞。
 #   - 遇净化器即终止：htmlEscape / encodeForHTML / ESAPI.encoder 等视为已净化。
 #   - fail-open 不适用于此处：本门控的目的就是降噪，宁可漏也不再无差别报。
 
@@ -719,11 +686,9 @@ _TAINT_CONT_GET_RE = re.compile(
 # 自定义参数包装器（如 scr.getTheParameter(...)）——跨方法的污点入口。
 # 必须以 `.get` 开头：早期版本写成 `\.\s*\w*(?:...|[Cc]ookie|...)`，会把
 # `new javax.servlet.http.Cookie(...)` 的 `.Cookie(` 当成污点源，实测导致
-# BenchmarkTest00178 的 rememberMe 被误判为污点、静态输出被误报。
 _TAINT_CUSTOM_GETTER_RE = re.compile(
     r"\.\s*get\w*(?:[Pp]arameter|[Pp]aram|[Ii]nput|[Hh]eader|[Cc]ookie|[Vv]alue)\s*\(")
 # 已确认的「假污点」getter：名字长得像取参，实际返回常量/字面量。
-# OWASP Benchmark 的 SeparateClassRequest 里三个方法同族，注释明写：
 #   // This method is a 'safe' source.
 #   public String getTheValue(String p) { return "bar"; }
 # 原先 _TAINT_CUSTOM_GETTER_RE 的 [Vv]alue 分支会把它判成外部输入 =>
@@ -735,7 +700,7 @@ _TAINT_SAFE_GETTER_NAMES = frozenset({
     "getthevalue",       # SeparateClassRequest.getTheValue -> "bar"
 })
 _TAINT_GETTER_NAME_RE = re.compile(r"\.\s*(get\w*(?:[Vv]alue))\s*\(")
-# 剥离字面量后残留的空实参括号 "getTheValue( )"
+# 剥离字面量后残留的空实参括号 "getTheValue"
 _EMPTY_ARGS_RE = re.compile(r"\(\s*\)")
 _TAINT_IDENT_RE = re.compile(r"\b([A-Za-z_$][\w$]*)\b")
 # 字符串字面量：其内部的词不是变量引用，判污点前必须先剥掉。
@@ -800,13 +765,11 @@ def _balanced_args(text: str, open_pos: int) -> Optional[str]:
 def _java_tainted_vars(content: str, max_rounds: int = 8, apply_html_sanitizers: bool = True) -> set:
     """求文件内的污点变量集合（含普通传播 + 一层容器中转，遇净化器剔除）。
 
-    容器中转是**键/索引敏感**的，不是容器级：OWASP Benchmark 刻意写出
         m.put("keyA", param);  bar = m.get("keyB");          // 取的是安全值
         list.add(param); list.add("safe"); bar = list.get(1); // 取的是安全值
-    若把容器整体判污，这两种假阳性都会被误报（实测 trustbound FPR 66.7%）。
+    若把容器整体判污，这两种假阳性都会被误报。
     故按 put 的键、add 的出现序号分别记录槽位是否污。
 
-    apply_html_sanitizers（2026-10-17）：``_TAINT_SANITIZER_RE`` 里的净化器全是 HTML/输出
     编码器（escapeHtml / encodeForHTML / ESAPI.encoder / Jsoup.clean ...），它们只中和「响应
     输出型」sink（XSS）。对「文件读写」「session 写入外部可控数据」这类与 HTML 编码无关的 sink，
     escapeHtml 不构成净化。默认 True 保持既有 XSS 行为；非 XSS 门控 sink 传 False，避免
@@ -967,11 +930,11 @@ def _wrapper_call_hits(
     """在 content 内查找对 sink 包装方法的「限定调用」。
 
     返回 [(行号, 调用文本, info, 匹配对象)]。多返回匹配对象是给门控用的：调用点要按位置
-    取实参（`_balanced_args(content, m.end() - 1)`），而 info 里的 sink 名是被装饰过的
+    取实参（`_balanced_args(content, m.end - 1)`），而 info 里的 sink 名是被装饰过的
     `Cls.method(...) → 真实 sink`，**不能**直接拿去比 `_TAINT_GATED_SINKS`（那是裸名）。
     门控一律用 info['gated_positions'] 判（None = 非门控族，维持原行为）。
 
-    只匹配 ClassName.method( 形式：不限定调用的裸方法名（如 fetch(）在不同类中语义
+    只匹配 ClassName.method( 形式：不限定调用的裸方法名（如 fetch在不同类中语义
     不同，直接匹配会大面积误伤，故不纳入。
     """
     hits: List[Tuple[int, str, Dict[str, str], "re.Match"]] = []
@@ -987,7 +950,7 @@ def _wrapper_call_hits(
 
 
 def _compile_registry_rules(lang: str) -> List[Tuple[re.Pattern, str, str, str, str]]:
-    """§4.3（2026-09-19）：把 rule_registry 中 **status=active** 的 Skill 规则表达式编译进
+    """把 rule_registry 中 **status=active** 的 Skill 规则表达式编译进
     A1 静态规则表，与内置 _RULES 同构（(regex, vtype, family, severity, sink)）。
 
     只消费 active（staging 候选不参与运行时，符合「禁占位/演示影响真实运行」）。
@@ -1032,7 +995,7 @@ def analyze_content(
 ) -> List[Vulnerability]:
     """单文件 sink 模式匹配，返回 Vulnerability 列表（按 file:line:type 去重）。
 
-    sink_wrappers 为 build_sink_wrappers() 学到的「项目内 sink 包装方法」表；传入后在
+    sink_wrappers 为 build_sink_wrappers 学到的「项目内 sink 包装方法」表；传入后在
     本文件的限定调用点追加同族条目（跨文件传播一层），不传则行为与历史完全一致。
 
     properties_map 为项目级 .properties 的 key→value 表（parse_properties_files 产出），
@@ -1053,14 +1016,12 @@ def analyze_content(
     # 是 pom.xml / applicationContext.xml 等配置，直接套 ${} 规则会把 Maven 属性占位符
     # （${spring-boot.version}）误报成 SQL 注入。故仅当内容确为 MyBatis Mapper 时才启用该规则组。
     #
-    # 2026-09-18（A1 配置类检测通道）：非 Mapper 的 xml 不再一律丢弃——logback-online.xml
     # 这类配置文件正是 CWE-16 的载体（<jmxConfigurator/>），改派到配置类规则组 config-xml。
     if lang == "mybatis-xml" and not _is_mapper_xml(content):
         lang = "config-xml"
     out: List[Vulnerability] = []
     seen = set()
-    # §4.3：内置规则 + active Skill 规则表达式（staging 不参与，无 active 时与历史完全一致）。
-    # §4.3（2026-09-20 修复）：registry_only=True 时只跑 active Skill 规则表达式
+    # 内置规则 + active Skill 规则表达式（staging 不参与，无 active 时与历史完全一致）。
     # （rule_expression 通道），不跑内置 _RULES 全量 sink 规则。用于 A1 强制互补通道——
     # 即便 CodeQL 主链路成功、整段跳过确定性 heuristic 兜底，curated skill（如 CVE-2022-22978）
     # 仍须被扫描，避免配置型/模式型漏洞被静默漏检。
@@ -1069,7 +1030,6 @@ def analyze_content(
     else:
         _rules_for_lang = list(_RULES[lang]) + _compile_registry_rules(lang)
     # 污点变量集：懒计算，只在真正遇到需要门控的 sink 时才做一次文件内污点分析。
-    # 两套缓存（2026-10-17）：XSS（响应输出型）用「HTML 净化器生效」版本；文件读写 / session
     # 写入这类与 HTML 编码无关的 sink 用「不把 HTML 净化器当净化」版本（见下方按 sink 选择）。
     taint_ctx: Optional[set] = None
     taint_ctx_no_html: Optional[set] = None
@@ -1080,13 +1040,10 @@ def analyze_content(
             if key in seen:
                 continue
             seen.add(key)
-            # 污点门控（2026-09-24）：输出型/文件型 sink 的实参必须引用外部输入。
             # 否则是输出静态文案或服务端自造数据——Benchmark 上这类命中占全部 finding
-            # 的 91.5%，java-sec-code 的 7 条命中经源码核验 100% 是误报。
             if sink in _TAINT_GATED_SINKS:
                 if lang != "java":
                     continue
-                # 按 sink 选污点集（2026-10-17）：_TAINT_SANITIZER_RE 里的净化器全是 HTML/输出
                 # 编码器（escapeHtml/encodeForHTML/ESAPI.encoder/Jsoup.clean...），只中和「响应
                 # 输出型」sink（XSS）。对「文件读写」「session 写入外部可控数据」这类与 HTML 编码
                 # 无关的 sink，escapeHtml 不构成净化——否则 trustbound 00098
@@ -1187,7 +1144,6 @@ def analyze_content(
             out[-1].detection_method = "rule"
             out[-1].rule_name = rule_hit_label("XSS", "xss", sink)
 
-    # 明文凭据（单列；2026-09-18 评审：先只检出、不计入召回，观察一轮再决定是否纳入统计）
     if lang in ("properties", "config-xml"):
         for line, sink in _credential_hits(content):
             vtype = "Sensitive Data Exposure"
@@ -1217,7 +1173,6 @@ def analyze_content(
     # 跨文件传播：本文件调用了项目内含 sink 的包装方法 → 调用点同样可达该 sink
     if sink_wrappers:
         for line, call, info, _wm in _wrapper_call_hits(content, sink_wrappers):
-            # 门控（2026-10-04）：门控族（文件读写 sink / 直出 / session 写入）在这里**原本
             # 完全没有门控** —— 实测 cmdi 每个用例都因 Utils.printOSCommandResults 被误报
             # 路径穿越。判据不是「调用点有没有脏数据」，而是「**包装方法的 sink 用到了第几个
             # 形参**」：只有那个位置上的实参带污点，路径才真能被外部控制。

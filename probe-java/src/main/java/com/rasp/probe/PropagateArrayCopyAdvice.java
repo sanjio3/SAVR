@@ -11,7 +11,7 @@ import net.bytebuddy.asm.Advice;
  * shape of "read the request body into a buffer, then trim it") arrives at the sink
  * completely clean.
  *
- * <p>Scope note: {@code System.arraycopy} and {@code array.clone()} are native/intrinsic and
+ * <p>Scope note: {@code System.arraycopy} and {@code array.clone} are native/intrinsic and
  * therefore NOT instrumentable — ByteBuddy cannot weave a native method. The
  * {@code Arrays.*} helpers are ordinary Java code and cover the overwhelming majority of
  * real reorganisations, because the JDK's own copy helpers funnel through them. Values that

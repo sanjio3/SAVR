@@ -15,7 +15,7 @@ import net.bytebuddy.asm.Advice;
  * collectionToDelimitedString} — the taint is read from its elements, so a List
  * of tainted Strings yields a tainted joined result.
  *
- * <p>Installed via {@code baseBuilder()} (UsingUnsafe injection) on application-
+ * <p>Installed via {@code baseBuilder} (UsingUnsafe injection) on application-
  * classloader types, so the advice is loaded into the target class loader and
  * shares the bootstrap {@link TaintStore} with every other hook.
  */

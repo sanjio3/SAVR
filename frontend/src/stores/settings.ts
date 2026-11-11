@@ -14,7 +14,6 @@ export interface DefaultScanOptions {
   prompt_version: string;
   sca_severity_threshold: string;
   idor_app_id: string;
-  // 2026-09-20：LLM 扫描强度默认档位（分级：普通用户看档位，开发者展开高级参数）。
   // 工作区提交任务时可以临时覆盖，覆盖只写进该任务的 options.llm_overrides。
   llm_preset: IntensityPreset;
   llm_advanced: LlmAdvanced;

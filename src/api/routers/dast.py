@@ -50,7 +50,7 @@ def results(app_id: str):
 
 @router.post("/replay")
 def replay(payload: Dict[str, Any]):
-    """§3.17 D1 重放契约的 HTTP 入口：接收 TriggerSpec + ExternalTarget，
+    """ D1 重放契约的 HTTP 入口：接收 TriggerSpec + ExternalTarget，
     调 D1Service.replay 打带 canary 的触发流量，返回 DastImpact（DAST 影响证据）。"""
     trigger_spec = payload.get("trigger_spec") or {}
     target = payload.get("target") or {}

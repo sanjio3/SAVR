@@ -19,7 +19,6 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 2026-09-16（待请示 6 项 #4）：sec-agent.log 按大小轮转的回归测试。
  *
  * <p>轮转是纯磁盘保护逻辑，正常运行时要等单文件涨到 64MB 才触发，靠跑全量扫描验证不现实
  * （新日志从 0 起步，几小时内到不了阈值）。故这里直接把单例的 {@code file} 指到临时目录、

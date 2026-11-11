@@ -80,7 +80,6 @@ const props = defineProps<{ open: boolean; initial?: TabKey }>();
 const emit = defineEmits<{ close: [] }>();
 
 // 分区直接复用既有页面组件本身，不另抄一份（路由页与本弹层渲染同一份代码）。
-// 2026-09-24 导航改造：删旧的「指标」重复入口（/metrics 已是一级导航），
 // 新增资产/运维类分区，把原占一级导航的 SCA 资产、越权扫描、运维看板、用量统计收进此处。
 const tabs: Tab[] = [
   { key: "review", label: "复核队列", short: "自治关闭策略与回滚", desc: "自治关闭策略、按 finding 试算与处置审计回滚。", component: AutonomyReviewPage },

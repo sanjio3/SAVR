@@ -1,15 +1,12 @@
-"""扫描分片作用域（2026-10-02 落地）：把「全集靶场」切成可逐片扫描的作用域。
+"""扫描分片作用域：把「全集靶场」切成可逐片扫描的作用域。
 
-背景：OWASP BenchmarkJava v1.2 全集 2740 个用例（11 族，1415 TP / 1325 FP），一次性全量
 扫描会让 CodeQL、本地 LLM（qwen3:8b）、D1 重放与探针三者同时爆掉，还会撞本机 Windows
-Commit 上限（40.6G）。全集源码与真值表都已在本地（BenchmarkJava-master + expectedresults-1.2.csv），
 缺的只是「按族分片、一片一跑、最后汇总」这一层。
 
 设计要点：
 - 分片单位**按族**（OWASP 自带 category 就是天然切片单位），族过大再按编号二次切。
-- 作用域同时约束两件事：①A1 静态扫描的文件列表；②入口/路由（重放与 spec 登记）。
+- 作用域同时约束两件事：①A1 静态扫描的文件列表；②入口/路由。
   只约束路由不约束文件的话，静态阶段仍会全量扫，成本没降下来。
-- 路由匹配用「用例名 token」（BenchmarkTest00001）做子串匹配，而不是猜路由前缀——
   OWASP 的 servlet 路径形态（/benchmark/<category>-<NN>/BenchmarkTestNNNNN）不同版本有别，
   匹配 token 恒稳，不随路由模板漂移。
 """
@@ -26,8 +23,7 @@ _CSV_TEST_KEY = "# test name"
 _CSV_CAT_KEY = " category"
 _CSV_VULN_KEY = " real vulnerability"
 
-# 入口项的「路由取值」候选键。2026-10-03 实测：EntryDiscoveryService 的产物 dict 是
-# entry_type/file/line/signature/confidence/entry_hash/request_params/... 这一套，**没有 route**。# 只按 route 取 → _entry_route 恒空 → 分片收窄把入口全丢光（实测 entry_count 2743 → 0），
+# entry_type/file/line/signature/confidence/entry_hash/request_params/... 这一套，**没有 route**。# 只按 route 取 → _entry_route 恒空 → 分片收窄把入口全丢光，
 # 后续任何依赖入口的链路都会空转。file 兜底后，OWASP 用例文件名全局唯一，命中语义依旧精确。
 _ENTRY_ROUTE_KEYS = ("route", "path", "endpoint", "url", "servlet_path", "servlet",
                      "file", "file_path", "signature", "name")
@@ -104,7 +100,7 @@ def map_cases_to_files(cases: Iterable[str], source_root: str) -> Dict[str, str]
 
 
 def load_shard(path: str) -> Optional[Dict[str, Any]]:
-    """加载分片清单 JSON（由 tools/owasp_shards.py 生成）。"""
+    """加载部署方提供的分片清单 JSON。"""
     try:
         with open(path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
@@ -146,8 +142,7 @@ def filter_entries(entries: Iterable[Any], shard: Optional[Dict[str, Any]]) -> T
     return kept, {"total": len(items), "kept": len(kept), "dropped": len(items) - len(kept)}
 
 
-# 待扫文件项的「路径键」候选：FileScanner.scan() 返回的是 **dict**（path/rel_path/name），
-# 早期版本假定是字符串列表，直接 str(item) 会把整个 dict 当路径 → 分片收窄恒空（2026-10-03 实测）。
+# 待扫文件项的「路径键」候选：FileScanner.scan 返回的是 **dict**（path/rel_path/name），
 _FILE_PATH_KEYS = ("path", "file_path", "filepath", "rel_path", "name")
 
 
@@ -161,9 +156,6 @@ def _path_of_file(item: Any) -> str:
     return str(item or "")
 
 
-# ── 第三方库 / 构建产物排除（2026-11-03）───────────────────────────────────
-# 实测若依 601：126 条 finding 里 51 条是 .js，其中 41 条 xss 全部落在
-# `ruoyi-admin/src/main/resources/static/ajax/libs/`（bootstrap-table、bootstrap-select、
 # fileinput 等打包库），另有若干 command_execution 来自压缩库里的 `eval(`/`new Function(`。
 # 602 把过滤只加在 A1 启发式后，仍剩 5 条漏在别的通道（`jquery-ui-1.10.4.min.js` 的 bola
 # 来自 A1 业务逻辑分析器、`jquery.tmpl.js` 的 xss 来自 A2）—— 说明**必须在文件收集阶段
@@ -173,7 +165,6 @@ def _path_of_file(item: Any) -> str:
 #   - 目录 token：libs / vendor / third-party / plugins / node_modules / bower_components /
 #     dist / build / webjars / assets/vendor
 #   - 压缩产物：*.min.js / *.min.css（行号无意义，无法定位）
-# 业务前端代码（如 `static/ruoyi/js/ry-ui.js`）**仍然扫**——DOM XSS 是真实风险，
 # 只是它拿不到 route，由下游按「无路由」正常归类，不在这里一刀切掉。
 # 需要恢复全量扫描时设 SAST_AI_SCAN_VENDOR=1。
 VENDOR_DIR_TOKENS = (
@@ -182,7 +173,6 @@ VENDOR_DIR_TOKENS = (
     "/dist/", "/build/", "/webjars/", "/assets/vendor/",
 )
 
-# 文件名前缀兜底：有些第三方库被直接摊在 `static/js/` 下（若依的 `jquery.tmpl.js`、
 # `jquery-ui-1.10.4.min.js`），目录 token 抓不到。只对 .js/.css 生效，且必须是
 # 「文件名的第一段」——`ry-ui.js`、`common.js` 这类业务文件不受影响。
 VENDOR_FILE_PREFIXES = (
@@ -237,20 +227,17 @@ def filter_files(files: Iterable[Any], shard: Optional[Dict[str, Any]]) -> Tuple
 
     入参既可以是路径字符串，也可以是 FileScanner 的 dict 项（取 path，其次 rel_path/name）。
 
-    ## 为什么必须有 `cases` 兜底（2026-11-02 实杀）
 
-    分片清单有两种写法：带 `files`（显式路径）和只带 `cases`（用例名，如 `BenchmarkTest00005`）。
     原实现只看 `files`，**`files` 为空就原样返回**，等于分片对文件范围完全无效：
 
         实测 neg-mini（198 用例，`files=[]`、`cases=198`）：
           [*] 分片作用域 neg-mini：文件 2843 → 保留 2843（丢弃 0）   ← 分片白做
           [*] 分片作用域 neg-mini：入口 5486 → 保留 396（丢弃 5090）  ← 入口是对的
 
-    后果是 A2 仍然要分析全部 2843 个文件（实测 2 小时只走完 737 个），分片「只跑 198 用例」
+    后果是 A2 仍然要分析全部 2843 个文件，分片「只跑 198 用例」
     的意义完全消失。而入口侧走的是 `filter_entries`（认 cases），所以问题只在文件侧、
     很隐蔽 —— 现象是「入口收窄了但还是很慢」。
 
-    `cases` 里的用例名与源码文件名一一对应（`BenchmarkTest00005` → `BenchmarkTest00005.java`），
     故按「文件名去扩展名后等于某个 case」匹配。
     """
     items = list(files or [])
@@ -258,15 +245,13 @@ def filter_files(files: Iterable[Any], shard: Optional[Dict[str, Any]]) -> Tuple
         return items, {"total": len(items), "kept": len(items), "dropped": 0}
     allowed_files = list(shard.get("files") or [])
     # 用例名两侧必须用同一套大小写归一规则：Windows 上 os.path.normcase 会转小写，
-    # POSIX 上是 no-op（路径大小写敏感）。此前这里单方面 .lower()，而匹配键来自
+    # POSIX 上是 no-op（路径大小写敏感）。此前这里单方面 .lower，而匹配键来自
     # os.path.basename(os.path.normcase(path)) —— 在 Linux 上 normcase 不转小写，
-    # 于是 stem 保持 "BenchmarkTest00005"、allowed_cases 却成了全小写，永远匹配不上，
     # 分片过滤在非 Windows 机器上直接失效（kept=0）。
     allowed_cases = {os.path.normcase(str(c).strip())
                      for c in (shard.get("cases") or []) if str(c).strip()}
     if not allowed_files and not allowed_cases:
         return items, {"total": len(items), "kept": len(items), "dropped": 0}
-    # 清单里的路径按「片段」而非整条绝对路径匹配：真值表映射出来的绝对路径与扫描根可能
     # 大小写/盘符写法不同，且 FileScanner 的路径来自 prepared_scan_root（可能是 prepared 副本），
     # 与清单原样比会全落空。故取文件名级别的键来比。
     # 两级匹配：先按绝对路径精确比；比不中再退回文件名比（此时若仍为空，就是真不匹配，

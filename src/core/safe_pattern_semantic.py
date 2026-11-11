@@ -36,7 +36,7 @@ _SW_CHAR = re.compile(r'char\s+(\w+)\s*=\s*(\w+)\.charAt\(\s*(\d+)\s*\)\s*;')
 
 
 def _eval_num(expr: str, variables: Dict[str, int]) -> Optional[float]:
-    """只对「数字 + 已知 int 变量 + +-*()」求值，其余一律放弃（fail-safe）。"""
+    """只对「数字 + 已知 int 变量 + +-*」求值，其余一律放弃（fail-safe）。"""
     e = expr
     for name, val in variables.items():
         e = re.sub(rf'\b{re.escape(name)}\b', str(val), e)
@@ -120,8 +120,6 @@ def safe_pattern_type(src: str) -> Optional[str]:
     return None
 
 
-# —— safe RNG：weak_random 族静态安全实现（2026-10-19 r111 weakrand 实测）——
-# 数据（weakrand-1/2 检测集合，r89 真值）：
 #   FP 94+86 中 73+66 = 139 个「源码只用 java.security.SecureRandom」；
 #   TP 112+106 **全部**「只用 java.util.Random / Math.random」——零交叉。
 # 与 P2（运行时 safe_impl）互补：random_source 路由没有运行时正证据
@@ -157,7 +155,7 @@ def safe_rng_static(src: str) -> Optional[str]:
 
 
 def weak_rng_static(src: str) -> Optional[str]:
-    """weak_random 族**正证据**（2026-10-27，E11 消融后续）：源码使用不安全随机源
+    """weak_random 族**正证据**：源码使用不安全随机源
     （且无 SecureRandom 混用）→ 返回首个命中的证据标记。
 
     与 safe_rng_static 互为镜像。为什么需要：474（blind 布局）实证，A2 无 case# 先验时

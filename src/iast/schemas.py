@@ -52,7 +52,6 @@ class IastEventItem(BaseModel):
     stackTrace: str = ""
     evidence: Dict[str, Any] = Field(default_factory=dict)
     # 注：原 request_observed 事件的 route/method/params 字段随 iast_request_params 表
-    # 于 2026-09-01 一并移除（探针从不发送该事件类型，整条观测请求面链路为零产出）。
 
 
 class IastEventIngest(BaseModel):

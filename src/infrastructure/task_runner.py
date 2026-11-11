@@ -25,7 +25,6 @@ if not os.path.exists(VENV_PY):
 # 单个扫描子进程的运行时上限（秒），0 表示不限。超时由 runner 主动终止并标记 failed，
 # 避免 worker 悬挂让任务永久停在 running。可用 SAST_AI_MAX_SCAN_RUNTIME 覆盖。
 #
-# 2026-10-07：默认 6h -> 12h。r62 的 hash 分片实测跑满 6h 被强杀
 # （"超过运行时上限 21600s"），产出是半成品：697 条 spec 的 D2 从未回写，
 # 整片读数报废，还得重跑一遍几小时。全集分片（2740 用例，静态 + D2 + 本地 ollama）
 # 在并发分摊下单片 6h 不够用，放宽到 12h；仍可用 SAST_AI_MAX_SCAN_RUNTIME 覆盖。
@@ -36,18 +35,15 @@ MAX_SCAN_RUNTIME_SECONDS = int(os.environ.get("SAST_AI_MAX_SCAN_RUNTIME", str(12
 # 所以一个扫描任务在系统里看到 **两个** python 进程；N 并发在 psutil 里就是 2N 个 pid。
 # 曾据此误判并发数，特此留痕。
 #
-# 2026-10-08：默认 2 → **4**。依据（历史实测）：
 #   - 耗时 96~98% 在 D2/D1，而 D2 是**I/O 等待型**（打 HTTP 到靶场 + 有界轮询等探针
 #     异步 flush，窗口 12×1.0s），CPU 实测 0% ⇒ 并发提高能直接把等待重叠起来，收益高。
-#   - 旧顾虑「4 并发抢 CPU + 单卡 ollama」本次不成立：r65 的 LLM 基本全命中缓存
 #     （cmdi 平均 36ms / sqli 141ms，两片 LLM 总耗时仅 0.1min 与 1.6min），ollama 不是瓶颈。
 # 若观察到资源争用（内存/CPU 打满或单片被拖慢），用 SAST_AI_TASK_MAX_WORKERS=2 即时回退，
 # **无需改代码**。
 _DEFAULT_TASK_MAX_WORKERS = int(os.environ.get("SAST_AI_TASK_MAX_WORKERS", "4"))
 
 # 心跳卡死阈值（秒），0 表示不启用。扫描子进程存活但 scan_progress.json 超过该时长无更新，
-# 判定卡死并强制终止（run 34 事故：D2 卡 66 分钟无终态、DB 仍 running，根因就是缺少心跳判死）。
-# 阈值需远大于任何合法长阶段内部增量心跳间隔（A2/a2_poc 实测约 33 分钟仍逐文件写进度），
+# 阈值需远大于任何合法长阶段内部增量心跳间隔，
 # 故默认 45 分钟是「真卡死」而非「慢」的下限。可用 SAST_AI_STUCK_HEARTBEAT 覆盖。
 STUCK_HEARTBEAT_SECONDS = int(os.environ.get("SAST_AI_STUCK_HEARTBEAT", str(45 * 60)))
 
@@ -61,9 +57,8 @@ _RUNNER_CREATIONFLAGS = (0x01000000 | 0x00000200 | 0x00000008, 0x00000008)
 # ---------------------------------------------------------------------------
 # 在跑任务登记表（半截状态根治的配套件）
 #
-# 事故（run 24，2026-09-28）：扫描子进程 01:01 正常退出、task_result.json（19.9MB）
 # 已落盘，但 scan_tasks 至今仍 running/d2、findings=0、reports=0。根因是
-# ThreadPoolExecutor.submit() 会把 _run_task 内的异常**静默吞进 future**，既无日志
+# ThreadPoolExecutor.submit 会把 _run_task 内的异常**静默吞进 future**，既无日志
 # 也无终态事件，任务就此永久卡在 running。
 # 因此：① 这里登记「本进程正在跑的 task_id」，周期性 reconcile 据此跳过在跑任务，
 # 不会与 watcher 抢写；② submit 挂 done_callback 把 future 里的异常显式打出来。
@@ -79,7 +74,6 @@ def in_flight_task_ids() -> Set[int]:
 
 
 # 每次进度事件都要落库的 SCA 明细字段：工具命令行与 stdout/stderr 体积最大（单轮可达数百 KB），
-# 但前端只用 stage 状态与计数展示。2026-09-14 实测：856 条 task_progress 事件 × 平均 0.34 MB
 # = 554 MB，是 app.db 存活数据的最大单项，根因就是每条事件把整份流水线快照（含 SCA 工具
 # stderr）完整存了一遍。此处只裁剪「体量大且无展示用途」的字段，保留 status/finding_count 等。
 _DROP_TOOL_RESULT_KEYS = ("stderr", "stdout", "command", "report_file", "output", "raw", "log")
@@ -101,7 +95,7 @@ def _slim_tool_result(node: Any) -> Any:
 
 
 def _slim_stage_map(stage_map: Any) -> Any:
-    """对 pipeline / stage_results 做两层瘦身（2026-09-14 SCA 层 + 2026-10-04 明细层）。
+    """对 pipeline / stage_results 做两层瘦身。
 
     第一层：sca.tool_result 只保留计数与状态（剥 stdout/stderr/command）。
     第二层：任何单字段序列化 > 4KB 就换成带 count/bytes 的占位（见下方 _MAX_FIELD_BYTES
@@ -128,8 +122,6 @@ def _slim_stage_map(stage_map: Any) -> Any:
     return slimmed
 
 
-# 单个字段序列化超过这个字节数就换成紧凑占位（2026-10-04 P0，事件表膨胀 9.02GB 的治本）。
-# 背景：`_slim_tool_result` 只解决了 SCA 工具结果（2026-09-14 那轮，载荷降 94.6%），
 # 而实测线上单条 progress 事件仍有 2.42MB，构成是明细数组：
 #   stage_results.d2.verifications_detail  341.3KB / 421 条
 #   stage_results.d2.scheduling            257.4KB（history 300 条）
@@ -188,11 +180,9 @@ class ScanTaskRunner:
         self.event_callback = event_callback
         self.result_callback = result_callback
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
-        # 2026-10-04（取消能力）：任务一旦进 ThreadPoolExecutor 的 work_queue，就与 DB 行脱钩。
         # REST DELETE / TaskRepository.delete 只删库里的行，线程池照样在轮到时把它拉起来跑，
-        # 于是出现「库里任务已消失、磁盘上却还在建 CodeQL 库」的僵尸扫描——实测 run 80 在被删
         # 之后仍空跑 30 分钟、占 97MB 并在抢CodeQL 槽位，真正要跑的下一任务却被饿着。
-        # 这里登记 future 与子进程，让 cancel() 能停掉排队中的和正在跑的两种任务。
+        # 这里登记 future 与子进程，让 cancel 能停掉排队中的和正在跑的两种任务。
         self._lock = threading.RLock()
         self._futures: Dict[int, "Future"] = {}
         self._procs: Dict[int, subprocess.Popen] = {}
@@ -212,7 +202,6 @@ class ScanTaskRunner:
 
         def _on_done(fut: "Future") -> None:
             # ② 异常不再被 ThreadPoolExecutor 静默吞：显式打日志，让「线程死了但任务还在 running」
-            # 这类事故第一次发生就能被看见（run 24 就是靠这条才定位到）。
             try:
                 exc = fut.exception()
             except Exception as _ce:  # 取异常本身失败也要留下痕迹
@@ -229,10 +218,10 @@ class ScanTaskRunner:
         future.add_done_callback(_on_done)
 
     def cancel(self, task_id: int) -> bool:
-        """真正取消一个任务（2026-10-04 补齐）。
+        """真正取消一个任务。
 
         覆盖两种情形：
-        1. 还在线程池 work_queue 里没轮到 —— 尝试 future.cancel()，取消成功即不会再拉起子进程；
+        1. 还在线程池 work_queue 里没轮到 —— 尝试 future.cancel，取消成功即不会再拉起子进程；
         2. 已经在跑 —— 终止扫描子进程树并回收，让槽位立刻腾给后面的任务。
 
         返回是否执行了取消动作（不保证子进程已死透，那由 _terminate_process 三段式负责）。
@@ -272,10 +261,9 @@ class ScanTaskRunner:
             return int(task_id) in self._cancelled
 
     def _recover_payload_from_artifacts(self, output_dir: Path, task) -> Optional[Dict[str, Any]]:
-        """假失败兜底（2026-10-22）：从磁盘产物重建 result payload。
+        """假失败兜底：从磁盘产物重建 result payload。
 
         触发条件：子进程已产出 final_report_*.json/.md（=全部阶段真的跑完），但
-        task_result.json 缺失且非超时终止。run 446 实测就是这种情况（19.7MB 报告齐全，
         仅 result 缺失）——被 returncode!=0 判 failed，污染对账。
 
         保守边界：①必须有 final_report 才算「跑完」；②超时终止不走本路径（那是真失败）；
@@ -334,7 +322,6 @@ class ScanTaskRunner:
     def _terminate_process(self, task_id: int, process: subprocess.Popen, reason: str) -> None:
         """确保扫描子进程被真正回收（孤儿 worker 根治）。
 
-        历史缺陷（task-8 事故）：失败分支直接写 task_failed，却从不终止子进程；runner 一旦
         被打断或后端重启，子进程继续写 scan_progress.json 并持续产生 IAST 事件——
         实测 14:00:25 已标记 failed，阶段却推进到深夜、iast_events 从 0 涨到 540。
 
@@ -368,8 +355,6 @@ class ScanTaskRunner:
     def _spawn_runner(self, command):
         """拉起扫描子进程，**尽量让它脱离后端所在的 Job**。
 
-        2026-10-04 实测三次「runner 无声消失」：run 100/102（20:46，连坐后端一起死）、
-        run 106（启动后 8 秒）、run 107（reporting 中途）。三次都**没有崩溃栈、没有
         `[runner] 终止扫描子进程` 日志**，锁文件 PID 与进程枚举都确认子进程真的没了，
         内存压力已排除（复现期系统空闲 11–12GB）⇒ 指向「进程仍在后端的 Job 里，
         宿主侧清理时被连带杀掉」。
@@ -392,7 +377,6 @@ class ScanTaskRunner:
 
     def _run_task(self, task: ScanTask, workspace: Workspace) -> None:
         tid = int(task.id)
-        # 2026-10-04：取消闸门一。任务还在队列里就被 cancel 掉时（删除/暂停），
         # 线程池 pop 出来后必须当场返回，绝不再起子进程。
         if self.is_cancelled(tid):
             logger.info("[runner] task=%s 开跑前已被取消，跳过", tid)
@@ -422,7 +406,6 @@ class ScanTaskRunner:
             str(task.options.get("approval_mode", "off")),
             "--tool-allowlist",
             ",".join(str(item) for item in (task.options.get("tool_allowlist") or [])),
-            # 2026-09-24：把「经批准的动作类别」透传给扫描子进程，供闸门放行判定。
             "--act-allowlist",
             ",".join(str(item) for item in (task.options.get("act_allowlist") or [])),
         ]
@@ -438,7 +421,6 @@ class ScanTaskRunner:
             command.append("--no-ai-review")
         if not task.options.get("enable_entry_discovery", True):
             command.append("--no-entry-discovery")
-        # 2026-10-03（分片作用域）：全集靶场按片扫描时，把分片清单路径下发给扫描子进程
         # （见 src/cli/benchmark_cli 的 SAST_AI_SHARD_FILE 消费点）。未配置则完全不影响原有命令。
         _shard_file = str(task.options.get("shard_file") or "").strip()
         if _shard_file:
@@ -499,7 +481,6 @@ class ScanTaskRunner:
                 self._terminate_process(tid, process, _terminate_reason)
                 break
             # 墙钟硬上限看门狗：超时主动终止并标记 failed，避免 worker 悬挂让任务永久停在 running
-            # （task-8 曾跑满 12 小时仍未收口）。0 表示不启用。
             if MAX_SCAN_RUNTIME_SECONDS > 0 and (now - _start_ts) > MAX_SCAN_RUNTIME_SECONDS:
                 _timed_out = True
                 _terminate_reason = f"超过运行时上限 {MAX_SCAN_RUNTIME_SECONDS}s"
@@ -529,7 +510,6 @@ class ScanTaskRunner:
                 if progress and progress != last_progress:
                     last_progress = progress
                     pipeline = self._build_pipeline(progress, task.options)
-                    # 2026-09-14 瘦身：去掉 progress 整份副本（前端只消费 pipeline / stage_results，
                     # 不消费 payload.progress），并裁掉 SCA 工具 stdout/stderr。事件体积因此
                     # 从平均 0.34 MB 降到数十 KB 量级，同时不影响前端契约（键名不变）。
                     self.event_callback(
@@ -549,11 +529,9 @@ class ScanTaskRunner:
 
         stdout_thread.join(timeout=2)
         # 孤儿根治：无论成功 / 失败 / 超时，走到此处扫描子进程都不应再存活。
-        # 缺失这一步时，runner 被打断后子进程会继续写进度并产生 IAST 事件（task-8 事故根因）。
         self._terminate_process(task.id, process, "流水线收尾")
 
         result_file = output_dir / "task_result.json"
-        # 半截状态根治（run 24 事故）：从「子进程结束」到「终态事件落库」这一段里任何一步
         # 抛异常（19.9MB task_result.json 解析 / findings 落库 / DB 锁 / MemoryError），都会让
         # 任务永久停在 running —— 子进程没了、结果在盘上、DB 里 findings=0，前端还显示跑着。
         # 这里把整段收进 try，捕获后仍强制写 task_failed，保证「非终态」不可能残留。
@@ -574,7 +552,6 @@ class ScanTaskRunner:
                         "prepared_runtime": payload.get("prepared_runtime", {}),
                         "stage_results": payload.get("stage_results", {}),
                         "hitl": payload.get("hitl", {}),
-                        # 2026-10-25（20.3.4 阶段耗时埋点）：把各阶段耗时透传给 service，
                         # 由 _merge_task_summary 落到 summary["phase_times"]。
                         # 此前 CLI 已算出 phase_times 但事件里没带 ⇒ 库中查不到任何阶段耗时。
                         "phase_times": payload.get("phase_times", {}),
@@ -582,9 +559,7 @@ class ScanTaskRunner:
                 )
                 return
 
-            # 2026-10-22（假失败兜底）：子进程已把 final_report 落盘（=全部阶段真的跑完了），
             # 但 task_result.json 因内存尖峰 / 被硬杀而缺失时，returncode 非 0 会被判 failed。
-            # run 446 实测：final_report 1.0MB + 19.7MB JSON 齐全、pipeline 全 completed，
             # 仅缺 task_result.json → 被标 failed，污染对账。这里从产物重建 payload 按已完成收口。
             if (not result_file.exists()) and (not _timed_out):
                 _recovered = self._recover_payload_from_artifacts(output_dir, task)
@@ -674,13 +649,11 @@ class ScanTaskRunner:
         phase1 = normalize(str((phases.get("phase1") or {}).get("status", "pending")))
         phase3 = "skipped" if not options.get("enable_a2", True) else normalize(str((phases.get("phase3") or {}).get("status", "pending")))
         preprocess_states = [phase1] + ([phase3] if phase3 != "skipped" else [])
-        # #5 (2026-09-13)：把 D1/D2 重放增量心跳并入 D2 阶段文案，使前端在重放期间显示
         # 「已重放 N/M」「当前端点」「confirmed/sink 计数」，不再把长时间 running 误判为卡死。
         _rp = progress.get("replay_progress") or {}
         _rp_msg = ""
         if _rp:
             _rp_status = str(_rp.get("status", ""))
-            # replay_reconciled（2026-09-16 新增）：迟到证据补捞升级后回写的纠正心跳。
             # 它覆盖了 scan_progress.json 里的 replay_done，若此处不认该状态，补捞后前端
             # 反而什么都不显示——必须和 replaying/replay_done 一并接受。
             if _rp_status in ("replaying", "replay_done", "replay_reconciled"):
@@ -695,9 +668,7 @@ class ScanTaskRunner:
         def _live_d1_status() -> str:
             """D1 阶段的**运行期**状态。
 
-            2026-09-22 走查实证的缺陷：D1 与 D2 已并入同一条 verify 链路，``stage_results.d1``
             只在 D1 收尾时才写；运行期该键不存在，于是 D1 恒为 ``pending``。连锁后果有两个，
-            都在 run 32 真实运行期被拍到：
               ① 前端「运行监控」在重放 189 条的同时把 D1 显示成「未开始」；
               ② 阶段依赖门禁见 D1 未完成，把**真的在跑**的 D2 改写成 ``blocked`` 并覆盖其文案为
                  「等待 d1 完成」——把「已重放 189/…（confirmed=…）」这条唯一的心跳抹掉，
@@ -722,7 +693,6 @@ class ScanTaskRunner:
             return "pending"
 
         _d1_status = _live_d1_status()
-        # 2026-09-16（待请示 6 项 #5）：A2 / a2_poc 长耗时阶段增量心跳并入阶段文案，
         # 使前端在 A2（本轮 33.4 分钟）/ a2_poc（33.9 分钟）期间能看到真实进度，不再误判卡死。
         _a2p = progress.get("a2_progress") or {}
         _a2_msg = ""
@@ -732,7 +702,6 @@ class ScanTaskRunner:
         _a2_poc_msg = ""
         if _a2pp:
             _a2_poc_msg = f"PoC 规划 {_a2pp.get('done', 0)}/{_a2pp.get('total', 0)}"
-        # 2026-09-16（#4② 待请示批准）：闭环重跑轮次 i2_rerun 折入 a2 阶段文案与 metrics，
         # 使前端在闭环期显示「闭环第 N 轮 / 重跑中」，闭合「运行状态须同步前端」铁律。
         _i2r = progress.get("i2_rerun") or {}
         _i2_msg = ""
@@ -742,7 +711,6 @@ class ScanTaskRunner:
                 _i2_msg = f"闭环第 {_i2r.get('iteration', 0)}/{_i2r.get('max_iterations', 0)} 轮"
                 if _i2_status == "running":
                     _i2_msg += " / 重跑中"
-        # 2026-09-16（#4② 待请示批准）：D2 验证迭代进度 d2_verify_progress 折入 d2 阶段文案与 metrics。
         _d2vp = progress.get("d2_verify_progress") or {}
         _d2vp_msg = ""
         if _d2vp:
@@ -789,7 +757,6 @@ class ScanTaskRunner:
         else:
             preprocess_status = "pending"
 
-        # 2026-09-17（待请示批准）：挂「阶段 -> 具体任务清单」并补齐 i1/i2 并发阶段，
         # 使前端能把空壳阶段卡片换成可展开的任务列表。
         return attach_stage_tasks({
             "preprocess": stage(preprocess_status, str((phases.get("phase3") or {}).get("details", "") or (phases.get("phase1") or {}).get("details", "")), stage_results.get("preprocess", {})),
@@ -810,7 +777,6 @@ class ScanTaskRunner:
                 stage_results.get("d1", {}),
             ),
             "d2": stage(normalize(str((phases.get("phase5") or {}).get("status", "pending"))) if options.get("enable_verification", True) else "skipped", _d2_full_msg, _d2_metrics),
-            # 2026-09-16（待请示 6 项 #5）：a2_poc 提升为前端可见阶段。原只在 stage_results 出现，
             # 不在 pipeline 阶段列表，前端在 33.9 分钟里只能显示「进行中」。读 stage_results.a2_poc.status，
             # 与 sca/ai_review 同模式（不进顺序门禁，失败不影响后续阶段）。
             "a2_poc": stage(str(stage_results.get("a2_poc", {}).get("status", "completed" if stage_results.get("a2_poc") else "pending")) if options.get("enable_a2", True) else "skipped", (_a2_poc_msg + ("；" if _a2_poc_msg and stage_results.get("a2_poc", {}).get("message") else "") + str(stage_results.get("a2_poc", {}).get("message", ""))).strip(), stage_results.get("a2_poc", {})),

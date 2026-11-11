@@ -1,6 +1,5 @@
 """benchmark Servlet 触发器适配器（Layer 2：finding → servlet 路由关联）。
 
-背景（诊断 2026-09-24）：OWASP Benchmark 的 205 个测试类全部用
 ``@WebServlet(value = "/sqli-00/BenchmarkTestNNNNN")`` 注册 HTTP 入口，而 A1 命中
 点锚在 sink/helper 文件（DatabaseHelper.java / ExpressionEvaluator.java / ...）。
 ``resolve_trigger_endpoint`` 的 Tier2 类级模糊匹配按「漏洞文件 basename == 路由文件
@@ -56,7 +55,6 @@ _TYPE_TO_CATEGORY: Dict[str, str] = {
 def benchmark_category_for_route(route: str) -> Optional[str]:
     """从 servlet 路由解析 benchmark 类别前缀（去 -00/-01 子版本号）。
 
-    例：/sqli-00/BenchmarkTest00008 → sqli；/xss-02/BenchmarkTest00153 → xss。
     非 benchmark 路由返回 None。
     """
     if not route or "BenchmarkTest" not in route:
@@ -91,12 +89,11 @@ def category_for_finding_type(vuln_type: str) -> Optional[str]:
 def extract_servlet_taint_param(java_file: Path, class_name: str) -> Tuple[str, str]:
     """从 servlet 源码抽取污点源参数名 + 位置。
 
-    2026-10-14 重写（r89 实测根因 A）：原实现把 ``getCookies()``（无参调用）的候选名强制
-    为类名——类名恒等于类名，于是**只要 servlet 含 getCookies() 样板就提前返回
+    为类名——类名恒等于类名，于是**只要 servlet 含 getCookies 样板就提前返回
     location=cookie**，永远走不到 getParameter。OWASP 的 rememberMe 样板 cookie 名是
     ``"rememberMe"+用例号``（从不是类名），故该判定 100% 是误判：实测全 2740 servlet 中，
     把 query 判成 cookie 86 个、把 cookie 判成 query 221 个（见 tools/_archive/_wb_loc_diag.py）。
-    重写后改为按「类名参数被哪种方式显式读取」判定，``getCookies()`` 不再充当类名命中。
+    重写后改为按「类名参数被哪种方式显式读取」判定，``getCookies`` 不再充当类名命中。
 
     返回 (param_name, location)，location ∈ {query, header, cookie}。
     """
@@ -108,7 +105,7 @@ def extract_servlet_taint_param(java_file: Path, class_name: str) -> Tuple[str, 
     if cn:
         _cn = re.escape(cn)
         # 类名参数被显式读取：query / header / cookie。
-        # cookie 判据用 getName().equals("CN") / "CN".equals(...) 形态，而非无参 getCookies()。
+        # cookie 判据用 getName.equals("CN") / "CN".equals(...) 形态，而非无参 getCookies。
         if re.search(r'getParameter(?:Values)?\s*\(\s*["\']' + _cn + r'["\']', content):
             return cn, "query"
         if re.search(r'getHeader\s*\(\s*["\']' + _cn + r'["\']', content):
@@ -117,7 +114,7 @@ def extract_servlet_taint_param(java_file: Path, class_name: str) -> Tuple[str, 
            re.search(r'equals\s*\(\s*["\']' + _cn + r'["\']', content) or \
            re.search(r'["\']' + _cn + r'["\']\s*\.equals', content):
             return cn, "cookie"
-    # 退化：首个被显式读取的参数（不再把 getCookies() 无参调用强制成类名）。
+    # 退化：首个被显式读取的参数（不再把 getCookies 无参调用强制成类名）。
     for pat, loc in (
         (re.compile(r'getHeader\s*\(\s*["\']([^"\']+)["\']'), "header"),
         (re.compile(r'getParameterValues\s*\(\s*["\']([^"\']+)["\']'), "query"),
@@ -134,7 +131,6 @@ def _route_from_signature(signature: str) -> str:
 
     entry_discovery 条目没有 route 字段（只有 signature），与 benchmark_cli
     _route_method_from_signature 同一解析规则：引号内第一个以 / 开头的串即路由。
-    例：@WebServlet(value = "/sqli-00/BenchmarkTest00008") → /sqli-00/BenchmarkTest00008
     """
     for cand in re.findall(r"['\"]([^'\"]*)['\"]", str(signature or "")):
         if cand.startswith("/"):
@@ -164,8 +160,6 @@ def _rep_params_with_case_name(
 ) -> List[Dict[str, str]]:
     """构造 representative_request_params：抽到的参数 + 用例名在全部候选位置。
 
-    2026-10-14 重写（r89 实测根因 A）：原实现只在 ``class_name != param_name`` 时追加用例名
-    的 query 候选。但位置推断错、且抽到的名字恰是类名时（如 BenchmarkTest00023 被误判
     cookie），该去重会**跳过 query 候选**，于是 canary 只投到 cookie、servlet 却从 query 读
     ⇒ 零命中。改为：用例名一律在 query / cookie / header 三个候选位置各注入一次，彻底消除
     对单点位置推断的依赖（canary 唯一，多位置注入互不干扰；servlet 只读它自己的那个位置）。
@@ -297,13 +291,10 @@ def build_benchmark_trigger_specs(
                 "vulnerability_hash_v2": vhash,
                 "family": cat,
                 "target_endpoint": route,
-                # 2026-10-15 修复（trustbound r95 实测 0 confirmed / 0 arrival 的真根因）：
-                # OWASP Benchmark 约定各族默认 GET 命中 doGet，但 trustbound 的真 sink
                 # （javax.servlet.http.HttpSession.setAttribute）位于 doPost（cookie/header/query
                 # 参数 → setAttribute 写入会话）。用 GET 重放只命中 doGet 里硬编码 "color" 的
                 # Cookie 假 sink，真 sink 永远不被触发 ⇒ 探针收不到 setAttribute 事件 ⇒ no-arrival。
                 # 故 trustbound 族重放方法改为 POST，使入站参数真正进入 doPost → setAttribute 真 sink。
-                # 其余族（xss/sqli/cmdi/pathtraver 等）的污点 sink 在 doGet 内（getParameter/getHeader），
                 # 维持 GET 不变，避免 double-fire 与误报。
                 "http_method": "POST" if cat == "trustbound" else "GET",
                 "param_name": param_name,
@@ -314,11 +305,10 @@ def build_benchmark_trigger_specs(
                 "taint_marker": canary,
                 "expected_sink_file": vuln.get("file") or vuln.get("file_path") or "",
                 "expected_sink_line": int(vuln.get("line") or 0 or 0),
-                # 2026-10-12 修复（r80 实测）：OWASP Benchmark 约定「反射参数名 == 用例类名」。
-                # extract_servlet_taint_param 常抽到错的非空名字（实测 'param' / 'name' / '' 等），
-                # 这类用例重放时 servlet 走「getQueryString() couldn't find expected parameter
+                # extract_servlet_taint_param 常抽到错的非空名字，
+                # 这类用例重放时 servlet 走「getQueryString couldn't find expected parameter
                 # '<用例名>'」的提前返回分支 ⇒ 不写响应体、不碰任何 sink ⇒ **零事件**
-                # （实测 00047/00048 完全零事件，改用用例名注入后立刻出 3 条事件含 CoyoteWriter.write）。
+                # 。
                 # 但 Referer 类用例是 header 注入且实测可用（00013/00144 走 Referer 正常反射），
                 # 若把 param_name 改回用例名反而会坏 ⇒ 只能**追加**不能替换：
                 # 保留抽到的参数，再追加用例名作为 query 候选，由 D1 的 multi-match

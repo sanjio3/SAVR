@@ -1,4 +1,4 @@
-"""业务逻辑漏洞 全类目路由（§2.2 / §7.9：SAST 策略分析 + D1 重放验证，六大类全覆盖）。
+"""业务逻辑漏洞 全类目路由。
 
 端点：
 - POST /api/business-logic/status       能力状态（六大类）
@@ -45,12 +45,11 @@ def verify(payload: Dict[str, Any] = Body(...)):
 
     携带 root 配置的 LLM gateway（在线时 D1 重放判定可叠加 AI 语义复核，best-effort）。
 
-    R23-2：透传真实 DB（SAST_AI_DB_PATH 优先，默认 data/app.db），使 replay_* 的
     victim_identifiers / accounts_json 回填落在真实库而非 D1Service 的临时库。
     """
     try:
         cfg = app_config.snapshot()
-        # resolve_llm_config：即便未来 snapshot() 变成局部投影，也能取到 llm 段而不静默降级离线
+        # resolve_llm_config：即便未来 snapshot 变成局部投影，也能取到 llm 段而不静默降级离线
         gateway = gateway_from_config(resolve_llm_config(cfg))
         db = Database(os.environ.get("SAST_AI_DB_PATH", "data/app.db"))
         return bl_module.verify(

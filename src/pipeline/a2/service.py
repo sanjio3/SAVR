@@ -16,7 +16,7 @@ from src.pipeline.stage_contract import StageService
 
 logger = logging.getLogger(__name__)
 
-# Supported scan modes (see G2 / §2.9). ``filter_first`` keeps the historical
+# Supported scan modes (see G2 / ). ``filter_first`` keeps the historical
 # behaviour (rule pre-filter then AI deep scan); ``pure_ai`` sends every file to
 # the AI without pre-filtering; ``hybrid`` always keeps files under key
 # directories (pure_ai treatment) and filters the remainder.
@@ -47,8 +47,6 @@ _SOURCE_PATTERN = re.compile(
 )
 
 # P1-1 附带修正：非源码文件不进入 A2 LLM 扫描清单（所有 scan_mode 一视同仁）。
-# 事故背景：pom.xml 被 LLM 输出 line="..."（区间文本）触发 int/str 比较崩溃并白耗一次
-# glm 调用。收窄排除策略（2026-09-13 实测 95 文件）：只排除「构建/依赖清单 + 文档 +
 # 二进制 + 工具链产物」，保留 .yml/.html 模板/.xml 映射/.properties —— docker-compose.yml
 # 实测产出 3 条「基础设施层-安全配置」finding，.html 是 SSTI 面，一刀切会造成漏检回归。
 A2_NON_SOURCE_EXTS = (
@@ -106,7 +104,6 @@ class A2PipelineService(StageService):
         from concurrent.futures import ThreadPoolExecutor as _A2TPE
         _a2_tls = _a2_threading.local()
         # §R4可观测性：收集各线程 agent 引用，扫描后汇总单文件失败数。
-        # 事故背景：prompt 模板里一个字面 {id} 让 60/60 文件全部抛 KeyError 并被
         # A2 内部 except 吞掉，任务照样 completed，A2 产出静默归零却无人发现。
         _a2_agents = []
         _a2_agents_lock = _a2_threading.Lock()
@@ -123,7 +120,7 @@ class A2PipelineService(StageService):
         def _scan_one(file_info):
             with _a2_sem:
                 # §路径归一修复：A1 证据索引的 key 是 A1 侧路径形态（绝对路径），
-                # 而这里拿到的是 A2 侧 rel_path（相对路径），直接 .get() 永远 miss，
+                # 而这里拿到的是 A2 侧 rel_path（相对路径），直接 .get 永远 miss，
                 # per-file 的 A1 入口/source/sink 证据实际上从未喂进 LLM，只用了 aggregate 兜底。
                 # match_path_key 先精确、再尾部匹配，抹平 绝对 vs 相对 的差异。
                 _ev = match_path_key(file_info.get("rel_path", ""), by_file, aggregate)
@@ -137,7 +134,6 @@ class A2PipelineService(StageService):
         if _n == 0:
             results = []
         else:
-            # 2026-09-16（待请示 6 项 #5）：改用 as_completed 收集，每完成一个文件调用
             # on_progress(done, total) 发心跳，使前端在 A2 长耗时（本轮 33.4 分钟）期间能看到
             # 真实文件级进度，不再把 running 误判为卡死。顺序由 canonicalize 重新对齐，结果稳定。
             # on_progress 默认 None（已有调用方不传），且调用一律吞异常，绝不因心跳失败中断扫描。
@@ -176,7 +172,7 @@ class A2PipelineService(StageService):
         # _build_exploit_spec 主路径即绑定真实管理路由（SAST ground truth），而非落到幻觉端点。
         return agent.canonicalize_scan_results(results, discovered_routes=discovered_routes)
 
-    # ---- §8.1 A2 吸收 A2.1（PoC 生成 / TriggerSpec 投影）；review 环节已删除（Q5），由 I2 LLM 裁决器接管 ----
+    # ----  A2 吸收 A2.1（PoC 生成 / TriggerSpec 投影）；review 环节已删除，由 I2 LLM 裁决器接管 ----
 
     @staticmethod
     def plan_pocs(results: List[ScanResult], llm_client=None, a1_evidence_index: Optional[Dict] = None, code_root: Optional[str] = None, code_index: Optional[Dict] = None, on_progress: Optional[Any] = None) -> List[ScanResult]:
@@ -184,7 +180,7 @@ class A2PipelineService(StageService):
 
         把 canonical finding 补全为可执行 exploit_spec（entry.route / parameter_name /
         payload / success_signal / expected_outcomes），并给出 a21_selected 筛选结果，
-        供 D2 校验器或 DAST 触发使用（§8.1 / §3.7 桥）。
+        供 D2 校验器或 DAST 触发使用。
 
         Q5：POC 生成必须使用 LLM——``llm_client`` 为 A2 语义分析共用的 LLM 客户端
         （与 A2SemanticAgent 同 provider），由调用方传入（run_benchmark 经 run_a2_scan

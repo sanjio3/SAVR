@@ -4,7 +4,6 @@
 ``src.iast.attack_context.register_guard_audit_sink`` 注入的闭包调用本模块的
 ``persist_guard_event`` 落库。本模块不依赖 service 容器，单独可被 CLI 轻量 import。
 
-决策口径（2026-09-20 重设计）：HITL 只拦**不可逆动作**；不论放行（allowed）还是
 拦截（gated）都写审计，让「人入环」体现在关键决策而非每一步。
 """
 

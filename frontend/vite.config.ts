@@ -12,7 +12,6 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
   resolve: {
-    // 2026-09-22：把 .ts/.tsx 排在 .js 之前。
     // Vite 默认 extensions 顺序是 [.mjs, .js, .mts, .ts, …] —— .js 在 .ts **之前**，
     // 于是无扩展名导入（如 import router from "./router"）会优先解析到 .js。
     // 本项目历史上在 src 下留过一批 `tsc` 产物（.js 与 .ts 同名并存），
@@ -31,7 +30,6 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       "/api": "http://127.0.0.1:8000",
-      // 2026-10-05：给 /ws 代理挂 error handler。后端 8000 一旦不可达（重启 / 回收），
       // 前端的重连就会在代理上不断留下 ECONNRESET，而 http-proxy 默认把它打到 stdout，
       // 实测把 stack-frontend.log 刷到 2.4 万行 / 1.7MB —— 日志被噪音淹没后，
       // 真正的前端报错反而看不见了。这里只做「静默 + 节流计数」，不改变任何转发行为。

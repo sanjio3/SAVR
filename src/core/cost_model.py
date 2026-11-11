@@ -1,4 +1,4 @@
-"""Annual cost model + scan-trigger planning (G9, 第四版 §2.12).
+"""Annual cost model + scan-trigger planning (G9, 第四版 ).
 
 Estimates annual SAST spend from average scan cost and predicted scan frequency,
 and recommends a model/timing split (cheap model for routine triggers, high-

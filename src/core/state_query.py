@@ -241,7 +241,7 @@ def _as_json_obj(data: Any) -> Optional[Any]:
 def extract_state_fields(data: Any, cfg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """从一次响应体里按 cfg 抠状态字段。抠不出（形状不符/无 paths）返回 None —— 不伪造。
 
-    入参既可是 resp.json() 的对象，也可是 resp.text（D1 实测走后者）。
+    入参既可是 resp.json 的对象，也可是 resp.text。
     """
     if not isinstance(cfg, dict):
         return None

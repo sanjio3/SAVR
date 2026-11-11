@@ -161,7 +161,6 @@ const store = useWorkspaceStore();
  *   - 评估（评估与指标 /metrics，答「扫得准不准」）；
  *   - 资产/运维/用量类页面（SCA 资产、越权扫描、运维看板、用量统计）
  *     不再占一级导航，收进设置弹层（共 7 个分区），深链 /sca /dast-idor /ops /usage 仍可达。
- * 2026-09-22 批次 3 曾把 /metrics 从设置弹层提级为一级入口；2026-09-24 导航改造完成上述整体重排。
  */
 const groups: { title: string; items: NavItem[] }[] = [
   {

@@ -39,7 +39,6 @@ a1_scanner:
     - call_chain_analysis
     - cross_file_analysis
   config:
-    # 2026-09-18（B3）：rules_dir 已移除。该键无任何消费者（get_agent_skills 只返回 skills
     # 列表；code_retriever 只读 a2_analyzer.config.enable_rag），且其指向的四份规则 yaml
     # 旧规则文件已移除，不在本仓库内。
     enable_concurrent: true

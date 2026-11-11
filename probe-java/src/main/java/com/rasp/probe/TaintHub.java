@@ -42,31 +42,28 @@ import java.util.regex.Pattern;
  * the WeakHashMap put, so they cannot trigger the very String/StringBuilder hooks
  * they ride on (recursion-safe, single-threaded).
  *
- * 并发安全（2026-09-13 生产事故修复）：
  * 上面的「recursion-safe」只在单线程下成立。探针自身对 {@code java.lang.String} / {@code java.io.File}
- * 等类的插桩，会在 WeakHashMap 计算 {@code key.hashCode()} 的过程中被**同步**触发，从而重入
+ * 等类的插桩，会在 WeakHashMap 计算 {@code key.hashCode} 的过程中被**同步**触发，从而重入
  * {@link #markFrom}/{@link #markHigh}。于是线程会在「已持有 map A 监视器」的状态下申请 map B 的监视器，
  * 而反方向路径持 B 求 A —— 两个 {@code Collections.synchronizedMap} 各自持锁，构成 ABBA 锁序反转。
  *
- * 实测（java-sec-code 靶场，run 27）：166 个 Tomcat 工作线程永久 BLOCKED 在
  * {@code TaintHub.markHigh} → {@code SynchronizedMap.put} 上，应用假死；连带 D1 bootstrap 登录
  * 读超时（10s），全部 TriggerSpec 降级 no-arrival/no_evidence。
  *
  * 修复（见 {@link #HUB_LOCK} / map* 系列辅助方法）：
  *  1) 所有污点容器共用唯一监视器 HUB_LOCK。Java 监视器对同一线程可重入，同线程自插桩重入
  *     只是再次获得同一把锁，「多把锁」这一 ABBA 必要条件被消除。
- *  2) 在**容器操作**这一粒度置位重入深度：WeakHashMap 计算 hashCode()/equals() 期间由被插桩类
+ *  2) 在**容器操作**这一粒度置位重入深度：WeakHashMap 计算 hashCode/equals 期间由被插桩类
  *     触发的回调一律短路。粒度必须细到单个 map 操作——markFrom 内部本来就要调 markHigh（合法组合），
  *     若在方法粒度一刀切会把正常污点推导一起砍掉。
  *  3) 容器字段改回裸 WeakHashMap，**只允许**经 mapGet/mapPut/mapContainsKey/mapRemove/
  *     mapComputeIfAbsent 访问（WeakHashMap 非线程安全，直连即数据竞争）。
  *
- * 2026-09-22 第二次死锁（单锁化之后的残余环，java-sec-code run 29 实测）：
  * 上面 1)~3) 只消除了「容器 ↔ 容器」。真正更难的是「容器锁 ↔ JVM 内部锁」：
  * <pre>
  *   exec-3: 持 HUB_LOCK，等 jimage(SharedImageReader) 锁
- *     TaintHub.mapContainsKey → WeakHashMap.containsKey → key.hashCode()
- *     → net.bytebuddy TypeDescription$Generic.hashCode()（惰性类型解析）
+ *     TaintHub.mapContainsKey → WeakHashMap.containsKey → key.hashCode
+ *     → net.bytebuddy TypeDescription$Generic.hashCode（惰性类型解析）
  *     → TypePool.doResolve → ClassFileLocator → ClassLoader.getResourceAsStream
  *     → jdk.internal.jimage.BasicImageReader.findLocation
  *   exec-5: 持 jimage 锁，等 HUB_LOCK
@@ -84,7 +81,7 @@ import java.util.regex.Pattern;
 public final class TaintHub {
     /**
      * 污点容器操作的重入深度。>0 表示当前线程正处于某个容器操作内部，此时由被插桩类触发的一切
-     * 回调都必须短路，否则会在 hashCode() 计算期间递归回探针（自插桩递归 → 锁序反转）。
+     * 回调都必须短路，否则会在 hashCode 计算期间递归回探针（自插桩递归 → 锁序反转）。
      */
     private static final ThreadLocal<Integer> HUB_DEPTH = ThreadLocal.withInitial(() -> 0);
 
@@ -92,11 +89,10 @@ public final class TaintHub {
     private static final Object HUB_LOCK = new Object();
 
     /**
-     * 「不可能是请求数据」的 key 包前缀（见类注释「2026-09-22 第二次死锁」）。
      *
-     * <p>这些对象一旦作为 key 进入 {@link WeakHashMap}，其 {@code hashCode()} 就可能触发
+     * <p>这些对象一旦作为 key 进入 {@link WeakHashMap}，其 {@code hashCode} 就可能触发
      * 类型解析 / 类加载 / 字符串构造，从而在**持有 HUB_LOCK 的同时**去申请 JVM 内部锁：
-     * 典型如 ByteBuddy 的惰性 {@code TypeDescription.hashCode()} → {@code TypePool} 惰性解析
+     * 典型如 ByteBuddy 的惰性 {@code TypeDescription.hashCode} → {@code TypePool} 惰性解析
      * → {@code ClassLoader.getResourceAsStream} → {@code jdk.internal.jimage.BasicImageReader}
      * 的 {@code SharedImageReader} 监视器。而反方向，持有 jimage 锁的线程会因
      * {@code new String(...)} 被插桩而回调进探针抢 HUB_LOCK —— 两个方向合起来就是循环等待。
@@ -115,7 +111,7 @@ public final class TaintHub {
     /**
      * 该对象是否禁止作为污点容器的 key。
      *
-     * <p>只看对象的**类**，绝不触碰对象本身（不调 hashCode()/equals()/toString()），
+     * <p>只看对象的**类**，绝不触碰对象本身（不调 hashCode/equals/toString），
      * 因此判定过程本身不会触发任何重入。数组按组件类型递归判断。
      */
     private static boolean isForeignTaintKey(Object key) {
@@ -197,7 +193,7 @@ public final class TaintHub {
     }
 
     /**
-     * 重入时返回**游离**对象（{@code fn} 的产物，不落入容器）：调用方仍可安全 size()/add()，
+     * 重入时返回**游离**对象（{@code fn} 的产物，不落入容器）：调用方仍可安全 size/add，
      * 但探针内部产生的字段边不会污染真实状态，也不会构造第二个 map 的锁请求。
      * 非污点 key 同理 —— 必须回游离对象，否则调用方 NPE。
      */
@@ -223,7 +219,6 @@ public final class TaintHub {
     /**
      * 调用方已持有 HUB_LOCK：只负责重入深度的置位与复位。
      *
-     * <p>2026-09-22 修正：原实现是 {@code set(1)} + {@code finally remove()}，深度不递增 ——
      * 内层容器操作结束时会把外层的标志一起清掉，外层剩余代码便在「闸门已开」的状态下运行。
      * 改为递增/递减。
      */
@@ -263,9 +258,9 @@ public final class TaintHub {
     private static final int MAX_SOURCE_CONTENTS = 64;
 
     // 类型边界内容影子 (F2 修复): 被污染 String 经 StringReader / ByteArrayInputStream /
-    // InputSource(Reader) 等载体类包裹后，载体的 toString()/getSystemId() 取不到原 String 内容
+    // InputSource(Reader) 等载体类包裹后，载体的 toString/getSystemId 取不到原 String 内容
     // (只剩 class@hash)，导致 sink 处的 canary 现场断言在 String->载体 边界丢失。
-    // 这里把原 String 内容按「载体对象身份」登记，sample() 在 extractContentIdentity 取空时兜底回收，
+    // 这里把原 String 内容按「载体对象身份」登记，sample 在 extractContentIdentity 取空时兜底回收，
     // 使 canary 仍能跨越边界到达 sink 实参被断言。Weak key：随载体 GC 自动过期。
     private static final Map<Object, String> CARRIER_CONTENT = new WeakHashMap<>();
     private static final int MAX_CARRIER_CONTENT = 4096;
@@ -310,7 +305,7 @@ public final class TaintHub {
         if (path.size() < MAX_TAINT_PATH) {
             path.add(role + "|" + origin);
         }
-        // 跨线程归集（方案 B 收尾核心修复）：把跳点同步写入按 requestId 归集的全局表，
+        // 跨线程归集：把跳点同步写入按 requestId 归集的全局表，
         // 使 sink 序列化线程（可能与记录 transform 的控制器线程不同）也能拼出完整路径，
         // 彻底解决「控制器线程记录的 Base64.decode 等 transform 跳点未带到 sink 序列化线程」的
         // 跨线程 ThreadLocal 丢失问题（此处直接以 requestId 表为权威）。
@@ -369,7 +364,6 @@ public final class TaintHub {
         if (rid != null) {
             List<String> shared = TAINT_PATH_BY_REQUEST.get(rid);
             if (shared != null) {
-                // 并发修复（2026-09-29 P1）：value 是 synchronizedList，迭代必须持集合自身监视器，
                 // 否则 recordTaintHop 写线程并发 append 时抛 CME（曾触发全局熔断降级 passthrough，
                 // 静默丢失整段证据窗口）。快照后迭代：持锁拷贝，锁外遍历。
                 List<String> snapshot;
@@ -431,7 +425,6 @@ public final class TaintHub {
     }
 
     /**
-     * 2026-10-15（P-A 同类加固）：taint_path 片段原为裸拼接，role/origin 未转义。若 origin 含
      * {@code " \ \r \t} 或其它控制字符，会产出非法 JSON 片段（后端若解析 taint_path 即失败）。
      * 此处按 RFC 8259 转义；与 {@code JsonCodec.quote} 同口径（TaintHub 常驻 bootstrap 类加载器，
      * 不依赖 JsonCodec，故内联一份）。
@@ -625,7 +618,6 @@ public final class TaintHub {
         REQUEST_ID.set(requestId);
         Set<String> shared = CONTENTS_BY_REQUEST.get(requestId);
         if (shared != null && !shared.isEmpty()) {
-            // 并发修复（2026-09-29 P1）：value 是 synchronizedSet，addAll 内部迭代其 backing
             // iterator 时必须持集合自身监视器，否则控制器线程并发 recordContent 会抛 CME。
             synchronized (shared) {
                 SOURCE_CONTENTS.get().addAll(shared);
@@ -715,7 +707,7 @@ public final class TaintHub {
     }
 
     /**
-     * 回收载体登记的源内容 (F2): 供 HookRuntime.sample() 在 extractContentIdentity 取空时兜底。
+     * 回收载体登记的源内容 (F2): 供 HookRuntime.sample 在 extractContentIdentity 取空时兜底。
      * 返回空串表示无登记内容。
      */
     public static String peekCarrierContent(Object o) {

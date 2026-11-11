@@ -13,7 +13,6 @@ router = APIRouter(prefix="/api/system", tags=["system"])
 async def ping():
     """轻量存活探针：**不碰 DB，且 async**。
 
-    2026-10-28（本轮/486/488 实测）：db 层用一把全局锁串行化所有操作，扫描期 runner
     大量写 iast_events/replay_attempts 时会长期持锁；同步端点都要占 anyio 线程池 worker，
     线程池被等锁请求占满后连本端点都排不到 worker。故本端点 (a) 不碰 DB、(b) 用 async
     直接跑在事件循环上，不占线程池 —— 无论后端多忙都能立即返回。
@@ -23,7 +22,6 @@ async def ping():
 
 @router.get("/health", response_model=SystemStatusResponse)
 def health():
-    # 2026-10-28 修（本轮/486 实测）：原实现 list_tasks() 走 SELECT * 全量加载，
     # 实测每行 options_json 平均 ~1.2MB、151 行≈185MB，一次 health 要几百 ms~数秒；
     # 叠加 db 层全局锁与高频心跳，会拖到 10s+ 超时，被 supervisor 误判「进程在但 HTTP 不响应」
     # 而强杀后端，进而打断正在跑的扫描任务。health 只需计数，改 COUNT（O(1)）。

@@ -1,4 +1,4 @@
-"""反序列化族的运行时链路确证（第三层，2026-09-28 落地）。
+"""反序列化族的运行时链路确证。
 
 背景：Java 原生反序列化 RCE 在平台上是「能报不能证」的三重断点——
 1. canary 是字符串，序列化 payload 是二进制，canary 进不了 readObject 的实参；
@@ -58,9 +58,7 @@ _DESERIAL_CLASS_TOKENS = (
 )
 
 # gadget 链的执行终点（探针已钩住 exec / start）。
-# 2026-09-28：原表只有 exec/ProcessBuilder 两条命令执行终点，覆盖不到
-# 「非命令执行型」gadget —— run 33 的 poc_chain sink 写的是
-# ``JdbcRowSetImpl.setUrl()``（JNDI 型，终点是 InitialContext.lookup → LDAP/RMI 远程加载），
+# ``JdbcRowSetImpl.setUrl``（JNDI 型，终点是 InitialContext.lookup → LDAP/RMI 远程加载），
 # TemplatesImpl 型终点是 newTransformer/getOutputProperties。这类链同样构成反序列化 RCE，
 # 却因终点不在表内而被判「链路未闭合」，第三层确证静默失效。
 # 故按 gadget 族补齐终点白名单（只加**语义明确的执行点**）：

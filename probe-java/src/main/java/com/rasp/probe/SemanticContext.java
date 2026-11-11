@@ -77,7 +77,7 @@ public final class SemanticContext {
     /**
      * Evaluate the BOLA precondition for this request and report a suspect event
      * when a domain object was accessed without any ownership-level authorization.
-     * Called once on request exit; the context is reused, so callers must clear().
+     * Called once on request exit; the context is reused, so callers must clear.
      */
     void evaluateAndReport() {
         // 诊断：暴露判定输入，便于定位「为什么没发射 BOLA_SUSPECT」。

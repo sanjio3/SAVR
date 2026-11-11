@@ -1,4 +1,4 @@
-"""A2 原语判别器（2026-10-24，Jev 理念落地第一阶段）。
+"""A2 原语判别器。
 
 ## 定位
 
@@ -116,7 +116,6 @@ class Primitives:
         return (not self.vuln) and self.vuln_prob >= EARLY_STOP_MIN_VP
 
 
-# 七段定长行。实测（2026-10-24）qwen3:8b 在 format=json 下会把整行判定当成 JSON 对象的键，
 # 且经常省略 LP/SP 概率段（如 {"L=45 V=1 VP=0.95 LOC=c S=n K=1.00":true}）。
 # 故正则设计为：L/V/VP 核心三段必需，LOC/LP、S/SP、K 各自成组可选，缺省按 unknown/0 处理。
 _LINE_RE = re.compile(
@@ -127,11 +126,11 @@ _LINE_RE = re.compile(
 
 
 def parse_primitives(text: str, expect: Optional[int] = None) -> List[Primitives]:
-    """定长解析。支持两种模型行为（2026-10-24 实测修正）：
+    """定长解析。支持两种模型行为：
 
     1. 纯文本多行（每行一条七段判定）；
     2. format=json 强制下的 JSON 包装——模型会把整行判定当成 JSON 对象的**键**
-       （实测输出 `{"L=45 V=1 VP=0.95 LOC=c S=n K=1.00":true, ...}`）。
+       。
 
     因此这里不做逐行 search，而是对全文做 finditer 提取所有七段行，JSON 包装、
     纯文本、多行混排都能解析。缺行/坏行按 expect 补 fallback（V=0 VP=0，不早停）。

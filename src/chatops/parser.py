@@ -4,7 +4,7 @@ Extracts SCA query intent from free text or a URL: component name, version, and
 advisory identifiers (CVE / GHSA / CNVD / CNNVD). Fully offline — URL parsing
 reads only the URL string itself (path/query), it does NOT fetch the URL, so
 tests need zero network access. Live fetching, if ever added, must be opt-in and
-proxy-aware per 第四版 §2.15.
+proxy-aware per 第四版 .
 """
 
 import re

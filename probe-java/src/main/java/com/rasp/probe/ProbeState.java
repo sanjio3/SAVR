@@ -88,7 +88,7 @@ public class ProbeState {
         }
         // ModSecurity 双向激活闭环(下行方向)— 读取服务端下发的"关注会话"列表,
         // 对这些会话进入全量采样。watchSessions 由 /api/agent/heartbeat 的
-        // AgentConfigResponse.watchSessions 承载,经 heartbeat() 的 data 解析至此。
+        // AgentConfigResponse.watchSessions 承载,经 heartbeat 的 data 解析至此。
         consumeWatchSessions(data.get("watchSessions"));
     }
 

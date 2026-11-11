@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * **包前缀**判定（见 FOREIGN_TAINT_KEY_PREFIXES），要验证「这类对象不得成为污点 key」就必须
  * 真的处在被过滤的包里。
  *
- * <p>行为要点：{@code hashCode()} 会计数并回调探针 —— 真实场景里字节码框架对象的 hashCode
+ * <p>行为要点：{@code hashCode} 会计数并回调探针 —— 真实场景里字节码框架对象的 hashCode
  * 会触发类型解析、读 JVM 模块镜像（jimage），从而在持有 HUB_LOCK 时去申请 JVM 内部锁。
  * 因此「hashCode 被调用过」就等于「这条死锁边成立」。
  */

@@ -11,13 +11,12 @@
         → param 恒为常量，注入类漏洞不成立
 
     ② 列表索引偏移
-        List<String> v = new ArrayList<>();
+        List<String> v = new ArrayList<>;
         v.add("safe"); v.add(param); v.add("moresafe");
         v.remove(0);
         String bar = v.get(1);                 // 实际取到 "moresafe"，不是 param
         → bar 恒为常量
 
-r60 之前这两条是用**具体类名**写死的（`\\.getTheValue\\(`、规则名 `bench_safe_list_index`），
 换个项目必然零命中。本模块把它们换成**机制**：
 
     ① → 解析接收者变量的类，到代码库里找到该类源码，检查被调用方法的
@@ -33,7 +32,6 @@ r60 之前这两条是用**具体类名**写死的（`\\.getTheValue\\(`、规�
 `weak_hash` / `weak_crypto` / `weak_random` / `secure_cookie` 这类族，
 漏洞只看「用了什么 API / 算法」—— 用 MD5 哈希一个常量仍然是漏洞。
 
-r60 实测：不区分族语义直接放开，会误杀 44 个 TP（TPR 降 3.11pp，超 3pp 门限）；
 按族语义收窄后掉 TP 归零，精确率反而从 58.59% 涨到 62.62%。
 
 族是否需要外部输入由 `corpus_profile` 的画像决定，未知族一律不启用（fail-open）。
@@ -128,7 +126,6 @@ def constant_returning_methods(src: str, profile: Optional[StackProfile] = None)
       3. 方法体里**没有**任何读外部输入的调用。
 
     第 2 条保证「返回值与入参无关」：`return request.getParameter(p);` 不是字面量，
-    所以透传外部输入的方法不会被误判成常量返回（这是 r60 之前必须靠
     `deny getTheParameter|getTheCookie` 白名单才能保住的语义，现在由机制本身保证）。
     """
     prof = profile or active_profile()
