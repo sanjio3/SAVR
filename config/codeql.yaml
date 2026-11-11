@@ -1,0 +1,38 @@
+#
+# 优先级：环境变量 > 本文件 > 代码默认值
+# 环境变量映射见 src/core/config_registry.py::codeql_config
+#
+# 为什么这些参数要配置化：它们是「运维需要调的参数」，之前硬编码在
+# a1_codeql_adapter.py 里，每次调整都要改代码 + 重启，且容易遗忘取值依据。
+# 不配置化的东西（算法常量、安全不变量）留在代码里，配置化反而会被误改。
+
+enabled: true            # 是否启用 CodeQL。等价环境变量：SAST_AI_DISABLE_CODEQL=1 可关闭
+
+# CodeQL CLI 位置。默认 auto，按下列顺序探测，找到即用：
+#   1. CODEQL_BIN 环境变量（显式指定，优先级最高）
+#   2. $SAST_AI_TOOLS_DIR/codeql/
+#   3. <仓库>/tools/codeql/   ← scripts/fetch_tools.py --only codeql 解包到这里
+#   4. PATH 上的 codeql
+# 要固定某个安装，把这里写成绝对路径即可。
+# bundle 含 Java 查询包约 1GB，因此不入库、按需下载，见 README 的 Requirements 一节。
+bin_path: "auto"
+
+memory:
+  #   - 3GB 时 CodeQL 拆分出的 Java heap 仅 1344MB，TaintedPath.ql（CWE-022）OOM；
+  #   - 4GB 时 heap 约 1800MB，TaintedPath 11.2s 成功，全量 4216 告警；
+  #   - 高于 4GB 会与靶场/前端抢内存（历史 6-16GB 导致 40 次 JVM OOM）。
+  # 注意：这是 --ram 预算，实际 JVM 占用约 5.6GB（heap + off-heap + native）。
+  # 等价环境变量：CODEQL_RAM_MB
+  ram_mb: 4096
+  # 线程数。编译分层也吃 CPU，与后端/Ollama 共存，固定小值。
+  # 等价环境变量：CODEQL_THREADS
+  threads: 2
+
+timeout_seconds:
+  version: 30            # codeql --version
+  finalize: 900          # database finalize（CLI 2.x create 不保证 finalize，需显式调用）
+  create: 1800           # database create（Java 需 mvn compile，代价高）
+  analyze: 3600          # database analyze（全量 127 查询约 4 分钟，留足余量）
+
+# 官方查询套件。自定义 .ql 由 analyze_extra 隔离执行（不混跑，避免整轮失败）
+suite: "java-security-extended"

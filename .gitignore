@@ -1,0 +1,157 @@
+# ---------------------------------------------------------------------------
+# Python, frontend and tool caches
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_tmp_*/
+# Regression suite is maintained outside this distribution.
+tests/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.python-version
+.venv/
+venv/
+env/
+
+logs/
+output/
+target/
+build/
+dist/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/src/**/*.js
+frontend/src/**/*.vue.js
+*.tsbuildinfo
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---------------------------------------------------------------------------
+# Generated artifacts and local run output
+# ---------------------------------------------------------------------------
+.a3-*/
+.a3-runtime/
+.tmp-a3-map/
+tmp/
+.docker-local/
+.codex-docker/
+_pytest_*.txt
+test_*.txt
+replay_pid*.log
+package-lock.json
+# The frontend lockfile is committed so CI and deployments install the same tree.
+!frontend/package-lock.json
+test-project/*.zip
+stack_status.json
+.resolve_version_marker
+stack-backend.log
+stack-frontend.log
+hs_err_pid*.log
+
+payload*.b64
+payload*.base64
+payload*.bin
+payload*.ser
+payload*.txt
+poc.b64
+poc.ser
+cmd_payload.txt
+
+# ---------------------------------------------------------------------------
+# Local configuration and secrets. Copy the .example files instead.
+# ---------------------------------------------------------------------------
+# Local agent/tooling scratch directories are never part of the release.
+.workbuddy-ai/
+.workbuddy/
+data/_reorg_backup_*/
+data/_old_dirs_*/
+.js-shadow-backup/
+
+.env
+.env.*
+!.env.example
+config.yaml
+config/config.yaml
+configs/config.yaml
+**/config.local.yaml
+**/config.*.local.yaml
+**/*.local.yaml
+**/secrets.yaml
+**/secrets.yml
+config/run_profiles.local.yaml
+.idea/
+.vscode/
+.DS_Store
+.serena/
+
+# ---------------------------------------------------------------------------
+# Third-party binaries, downloaded on demand with scripts/fetch_tools.py
+# ---------------------------------------------------------------------------
+src/pipeline/d2/resources/tools/*.exe
+src/pipeline/d2/resources/tools/*.jar
+src/pipeline/d2/resources/tools/java/*.jar
+tools/*.jar
+tools/*.exe
+lib/*.jar
+lib/*.exe
+tools/gadget_builder/lib/*.jar
+*.class
+*.sarif
+.codeql-db/
+.codeql-db-*/
+
+# ---------------------------------------------------------------------------
+# Local-only helper scripts. Only the whitelisted entry points are distributed.
+# ---------------------------------------------------------------------------
+frontend/vite.config.ts.timestamp-*.mjs
+scripts/_archive/
+tools/_archive/
+docs/
+
+scripts/*
+!scripts/fetch_tools.py
+!scripts/submit_scan_task.py
+!scripts/dev_all.ps1
+!scripts/dev_backend.ps1
+!scripts/dev_frontend.ps1
+!scripts/launch/
+scripts/launch/*
+!scripts/launch/launch_java_quote.py
+!scripts/launch/launch_stack.py
+
+tools/mvn_shim/*
+!tools/mvn_shim/mvn
+!tools/mvn_shim/mvn.cmd
+tools/*.cmd
+
+# Local-only helpers kept in the working tree, never distributed
+tools/_ollama_keeper.py
+tools/metric_layers.py
+tools/reconcile_task_*.py
+tools/watch_task_*.py
+tools/*shard*.py
+tools/register_full_target_session.py
+tools/spawn_detached.py
+tools/gadget_builder/verify_live.py
+
+# ---------------------------------------------------------------------------
+# Runtime data: SQLite database, workspaces, shards and scan output.
+# Truth files are supplied by the deployment via SAST_AI_TRUTH_FILES.
+# ---------------------------------------------------------------------------
+data/*
+
+# Local generated reports and CI scratch output
+overview.md
+output/ci/
+output/benchmark/
+*.junit.xml
+junit.xml
+
+# Local-only helper scripts and agent scratch files are never part of the release.
+tools/_wb_*
+**/SKILL.md

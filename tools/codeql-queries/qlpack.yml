@@ -1,0 +1,5 @@
+name: sastai/java-custom-queries
+version: 0.1.0
+description: SAVR 自定义 Java CodeQL 查询（补 CWE-328 弱哈希与 sink 特殊形态建模）
+libraryPathDependencies:
+  - codeql/java-all
