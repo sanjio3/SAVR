@@ -12,6 +12,7 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 [![Java](https://img.shields.io/badge/probe-JDK%2011%2B-orange.svg)](probe-java/)
+[![Release](https://img.shields.io/badge/release-v0.1.0-blue.svg)](https://github.com/sanjio3/SAVR/releases/latest)
 
 [Releases](https://github.com/sanjio3/SAVR/releases) · [Issues](https://github.com/sanjio3/SAVR/issues) ·
 [安全公告](https://github.com/sanjio3/SAVR/security/advisories)
@@ -61,6 +62,8 @@ flowchart LR
 
 主开发平台是 Windows。Linux 与 macOS 理论可用但未实测。
 
+控制台界面目前仅提供中文；本文档与后端自动生成的 API 文档为英文。
+
 ---
 
 ## 安装
@@ -82,6 +85,8 @@ uv run --env-file .env python -m src.cli.service_server
 `uv.lock` 锁定全部依赖，`pyproject.toml` 是权威声明。仓库根目录就是导入根，不需要安装成包。本文档里的命令统一用 `uv run`；把虚拟环境加进 `PATH` 后直接调 `python` 也可以。
 
 后端监听 `127.0.0.1:8000`。前端单独跑：`cd frontend && npm ci && npm run dev`，监听 `127.0.0.1:5173`。Windows 下 `scripts/dev_all.ps1` 一次起两端，`scripts/dev_backend.ps1` 与 `scripts/dev_frontend.ps1` 分别起单个服务。
+
+后端自带 API 文档：服务起来后，`http://127.0.0.1:8000/docs` 是可交互文档，`http://127.0.0.1:8000/openapi.json` 是机读 schema。
 
 ---
 
@@ -188,17 +193,27 @@ uv run python tools/probe_preflight.py --workspace-id <id> --http
 
 环境变量沿用项目早期名称的 `SAST_AI_` 前缀。这个前缀属于运行契约的一部分，刻意保持不变以维持向后兼容。
 
+### 数据存在哪
+
+SQLite 库路径由 `SAST_AI_DB_PATH` 决定，默认 `data/app.db`。首次启动自动建库，之后原地迁移，已应用的版本记录在 `schema_migrations` 表里。备份就是停掉后端后复制这一个文件。
+
 ---
 
 ## 仓库结构
 
 ```
 SAVR/
-├── src/                     # 后端：agents、流水线、IAST 桥接、CLI
+├── src/                     # 后端
+│   ├── api/                 # FastAPI 应用、HTTP 路由、鉴权
 │   ├── agents/              # A1 静态、A2 LLM 分析、D2 执行器
 │   ├── pipeline/            # a1 / a2 / d2 阶段契约
+│   ├── application/         # 用例层服务：重放、复测、告警流程
 │   ├── iast/                # 探针摄取、覆盖率、族级判据
-│   ├── core/                # 共享原语：配置、族映射、阶段缓存
+│   ├── core/                # 共享原语：配置、族映射、哈希、提示词
+│   ├── infrastructure/      # SQLite 仓储与 schema 迁移
+│   ├── benchmark/           # 评估、SARIF 导出、报告管理
+│   ├── prompts/             # 提示词模板与提示词注册表
+│   ├── config/              # 运行时加载的规则与数据集配置
 │   └── cli/                 # 服务端、扫描任务执行器、基准 CLI
 ├── probe-java/              # IAST/RASP 探针（Java + ByteBuddy）—— 构建产物，不包含在仓库内
 ├── frontend/                # Vue 3 + Vite 控制台
@@ -207,6 +222,15 @@ SAVR/
 ├── config/                  # 随仓库分发、不含凭据的配置
 └── .github/workflows/       # CI：static / test / frontend 三项必需检查
 ```
+
+### 从哪下手
+
+- 改「一个告警怎么算成立」：`src/application/d1_service.py`（重放）与 `src/agents/d2_facade.py`（证据仲裁）。
+- 改「让模型产出什么」：`src/prompts/registry.yaml` 与 `src/core/prompt_registry.py`。
+- 增删或改名一个漏洞族：`config/families.yaml` 与 `src/core/family_map.py`。
+- 接入新的探针事件源：摄取在 `src/iast/service.py`，Java agent 在 `probe-java/`。
+- 改静态分析：`src/agents/a1_codeql_adapter.py` 与 `tools/codeql-queries/` 下的查询。
+- 改 HTTP 接口：路由在 `src/api/routers/`，装配在 `src/api/app.py`。
 
 ---
 

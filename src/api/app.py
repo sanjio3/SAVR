@@ -75,7 +75,7 @@ def _cors_origins() -> list[str]:
 
 def create_app() -> FastAPI:
     configure_file_logging()
-    app = FastAPI(title="SAST AI Service", version="2.1.0")
+    app = FastAPI(title="SAVR", version="0.1.0")
     origins = _cors_origins()
     app.add_middleware(
         CORSMiddleware,

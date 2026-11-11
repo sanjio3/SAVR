@@ -4,11 +4,11 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <!-- 2026-09-14 自洽化：探针已并入本项目，不再依赖外部父 POM（原为 IAST_RASP 根
-         com.rasp:security-platform）。父 POM 提供的属性在此内联，构建命令不再需要外部仓库。 -->
+    <!-- The probe builds standalone: it has no external parent POM, and the
+         properties such a parent would have supplied are inlined below. -->
     <groupId>com.rasp</groupId>
     <artifactId>probe-java</artifactId>
-    <version>0.1.0-SNAPSHOT</version>
+    <version>0.1.0</version>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>

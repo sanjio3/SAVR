@@ -116,7 +116,6 @@ docs/
 
 scripts/*
 !scripts/fetch_tools.py
-!scripts/README.md
 !scripts/submit_scan_task.py
 !scripts/dev_all.ps1
 !scripts/dev_backend.ps1

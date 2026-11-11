@@ -14,6 +14,7 @@ is deterministic, replayable and auditable.
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
 [![Java](https://img.shields.io/badge/probe-JDK%2011%2B-orange.svg)](probe-java/)
+[![Release](https://img.shields.io/badge/release-v0.1.0-blue.svg)](https://github.com/sanjio3/SAVR/releases/latest)
 
 [Releases](https://github.com/sanjio3/SAVR/releases) · [Issues](https://github.com/sanjio3/SAVR/issues) ·
 [Security advisories](https://github.com/sanjio3/SAVR/security/advisories)
@@ -77,6 +78,9 @@ flowchart LR
 
 Windows is the primary development platform. Linux and macOS should work but are untested.
 
+The control panel UI is currently Chinese-only. This README and the generated API schema are
+in English.
+
 ---
 
 ## Install
@@ -105,6 +109,10 @@ The backend listens on `127.0.0.1:8000`. The frontend runs separately:
 `cd frontend && npm ci && npm run dev`, listening on `127.0.0.1:5173`.
 On Windows, `scripts/dev_all.ps1` starts both; `scripts/dev_backend.ps1` and
 `scripts/dev_frontend.ps1` start them individually.
+
+The backend serves its own API reference: while it is running, `http://127.0.0.1:8000/docs` is
+the interactive documentation and `http://127.0.0.1:8000/openapi.json` is the
+machine-readable schema.
 
 ---
 
@@ -230,17 +238,29 @@ To choose a model:
 Environment variables keep the `SAST_AI_` prefix from the project's earlier name. That prefix
 is part of the run contract and is kept for backwards compatibility.
 
+### Where the data lives
+
+The SQLite database is `SAST_AI_DB_PATH` (default `data/app.db`). The schema is created on
+first start and migrated in place afterwards, with applied versions recorded in the
+`schema_migrations` table. Stop the backend and copy that single file to back up a scan.
+
 ---
 
 ## Repository layout
 
 ```
 SAVR/
-├── src/                     # backend: agents, pipelines, IAST bridge, CLI
+├── src/                     # backend
+│   ├── api/                 # FastAPI app, HTTP routers, auth
 │   ├── agents/              # A1 static, A2 LLM analyst, D2 executor
 │   ├── pipeline/            # a1 / a2 / d2 stage contracts
+│   ├── application/         # use-case services: replay, retest, findings
 │   ├── iast/                # probe ingest, coverage, oracles
-│   ├── core/                # shared primitives: config, families, stage cache
+│   ├── core/                # shared primitives: config, families, hashes, prompts
+│   ├── infrastructure/      # SQLite repositories and schema migrations
+│   ├── benchmark/           # evaluation, SARIF export, report management
+│   ├── prompts/             # prompt templates and the prompt registry
+│   ├── config/              # rule and dataset configuration loaded at runtime
 │   └── cli/                 # service server, scan task runner, benchmark CLI
 ├── probe-java/              # the IAST/RASP agent (Java, ByteBuddy) — built, not shipped
 ├── frontend/                # Vue 3 + Vite control panel
@@ -249,6 +269,18 @@ SAVR/
 ├── config/                  # committed, credential-free configuration
 └── .github/workflows/       # CI: static / test / frontend required checks
 ```
+
+### Where to start
+
+- Change how a finding is confirmed: `src/application/d1_service.py` (replay) and
+  `src/agents/d2_facade.py` (evidence arbitration).
+- Change what the LLM is asked to produce: `src/prompts/registry.yaml` and
+  `src/core/prompt_registry.py`.
+- Add or rename a vulnerability family: `config/families.yaml` and `src/core/family_map.py`.
+- Add a probe event source: `src/iast/service.py` for ingest, `probe-java/` for the agent.
+- Change static analysis: `src/agents/a1_codeql_adapter.py` and the queries under
+  `tools/codeql-queries/`.
+- Change the HTTP surface: `src/api/routers/` for routes, `src/api/app.py` for wiring.
 
 ---
 
