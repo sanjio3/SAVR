@@ -1,0 +1,39 @@
+#
+# 这是 src/config/rules/ 下的规则文件「结构样板」，由 rule_registry 运行时加载。
+# 此前 A3 CVE-2022-22978 这类规则靠硬编码登记；以后就是加一个 yaml 即可，
+# 无需改代码。两路消费：
+#   - A1 静态通道读 payload.rule_expression（正则/关键词）做匹配；
+#   - A2 提示词通道读 payload.prompt_fragment，注入 audit_file 模板 {skill_hints}。
+#
+# 注意：本文件是「结构样板 / 文档模板」，**不是真实规则**，其表达式为永不命中的占位正则。
+# 真实规则请各自建独立文件（如 cve-2022-22978.yaml）。本文件里的 skill id 用 _example_template
+# 占位，避免与真实规则 id 撞名（rule_registry 按 id 去重、sorted(glob) 字母序、后加载者覆盖
+# 前者，撞名会导致提升 active 被回退）。
+# 样板里的 status: staging 表示**候选态、不参与运行时消费**——按铁律「禁占位/演示影响真实运行」，
+# 未在目标上做过 golden 回归的规则不得置为 active。提升流程：staging → 跑 golden 回归 +
+# D2 差分门禁 → 人工确认 → 改 status: active。只有 status=active 的 skill 才会被 A1
+# （rule_expression）与 A2（prompt_fragment）消费。
+
+skills:
+  - id: _example_template
+    version: 1
+    status: staging
+    family: example
+    languages: [java]
+    trigger:
+      # 满足任一即激活该 skill（此处按 family 全局激活；可改为 route_regex / 文件特征）
+      family: example
+    payload:
+      vuln_type: Placeholder
+      severity: MEDIUM
+      # 占位正则：匹配一个不存在的哨兵串，确保永远不产生真实命中。
+      rule_expression: '__(EXAMPLE_TEMPLATE_PLACEHOLDER_NEVER_MATCHES__)\s*\('
+      prompt_fragment: >-
+        【这是结构样板，不应被激活】此处填写需要模型重点留意的检测要点，
+        用于强化对所有模型（强/弱）识别特定漏洞形态的能力。
+    golden:
+      positive: ["占位样板，无正样本"]
+      negative: ["占位样板，无负样本"]
+    gate:
+      # 新版本 skill 不得劣化 golden set 的最小召回门槛（接 rule_feedback_service 回归门禁）
+      min_recall: 0.9

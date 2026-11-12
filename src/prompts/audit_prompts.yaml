@@ -1,0 +1,140 @@
+# AI 审计提示词模板
+
+prompts:
+  # 主审计提示词 - 分析单个文件
+  audit_file: |
+    你是一位专业的网络安全行业的静态代码分析工程师。请分析以下 Java 代码，找出所有可能的安全漏洞。
+
+    要求：
+    1. 只分析代码中的安全漏洞，不要做其他事情
+    2. 关注以下漏洞类型：
+       【注入类】SQL注入、命令注入、XXE、SSRF、路径穿越、XSS、反序列化、文件上传、URL重定向、OGNL注入、SpEL注入、LDAP注入、XPath注入、模板注入
+       - 务必额外检查三类易漏的高危形态：①代码执行引擎注入——ScriptEngineManager.getEngineByName("js")/Nashorn 之后 eval 用户可控输入（命令执行的隐藏入口，常被当成普通字符串处理而漏报）；②XStream 不安全反序列化——xstream.fromXML 且 addPermission(AnyTypePermission.ANY)/未设严格类型白名单（等于可反序列化任意类）；③JWT 硬编码或弱密钥——signWith/setSigningKey 使用硬编码字符串密钥或 HS256 短密钥（可被离线爆破）。这三类即使没有显式 sink 调用链也要报告。
+       【业务逻辑类】
+       - 垂直越权：普通用户访问管理员接口（弱JWT签名/alg:none降级、硬编码或弱密钥可被离线爆破、角色校验缺失、role参数篡改）
+       - 水平越权(IDOR)：仅凭id查询/操作他人数据（/order/{id}、/profile?id=他人id、/address/update?id=他人id）
+       - 批量赋值提权：BeanWrapper无字段白名单，可注入role/balance/isVip等敏感字段
+       - 越权改密/账号接管：不校验原密码/MFA即可修改密码，id参数可控
+       - 并发竞争：读-判断-写非原子（秒杀超卖、优惠券超发、提现重复消费、转账重复消费）
+       - 支付金额篡改：服务端直接采信客户端金额，不重算
+       - 优惠券叠加/金额为负：不校验互斥标记，无max(0,...)下限保护
+       - 状态机跳步：不校验前置状态即可发货/退款
+       - 回调签名伪造/重放：弱md5签名(盐硬编码泄露)，无nonce/timestamp
+       - 未授权接口泄露：无任何鉴权的敏感API（含明文口令、JWT密钥/支付盐泄露）
+    3. 对于每个漏洞，说明：
+       - 漏洞类型
+       - 严重程度 (HIGH/MEDIUM/LOW)
+       - 漏洞所在行号
+       - 漏洞原因
+       - 修复建议
+
+    4. 【HTTP 入口绑定·关键】漏洞必须能被 HTTP 请求触达才具备可利用性。请对每个漏洞补充：
+       - entry_method：触发该漏洞的 Controller 方法名（如 OrderController#detail）
+       - route：该方法对外暴露的 HTTP 路由（如 /order/{id}），含路径参数占位符
+       - params：攻击者可控的参数名及其位置（query/body/path/header）
+       路由必须来自本文件或同项目 Controller 上的 @GetMapping/@PostMapping/@RequestMapping/
+       @PutMapping/@DeleteMapping 注解值，或 A1 证据中给出的 HTTP 入口。
+       严禁编造路由：不确定时把 route 留空字符串，不要把类名、文件名或 "/" 当作路由。
+
+    5. 【基础设施层问题·降级标记】落在配置文件、过滤器、拦截器和 SQL 建表脚本上的问题
+       （如 SecurityConfig 的 antMatchers 配置、JwtAuthFilter 的过滤逻辑、schema.sql 的表定义），
+       通常无法直接对应到某个 HTTP 请求。这类问题：
+       - 仍然要报告（它们反映真实风险）
+       - 但必须把 route 留空，并把 type 加上"基础设施层"前缀（如"基础设施层-弱密码存储"）
+       这样下游不会浪费验证预算去尝试构造 HTTP 请求。
+
+    6. 【业务逻辑类·重点关注 Controller】以下漏洞的可利用性完全取决于 Controller 里的
+       处理逻辑，请优先在这些位置识别，并务必给出 route：
+       - 秒杀/抢购：先查库存再扣减、无锁或锁粒度错误的读-判断-写序列（超卖）
+       - 优惠券/积分：领取次数、互斥标记、金额下限（max(0,...)）校验缺失
+       - 钱包/余额：提现或转账的并发扣款、重复消费、负数金额
+       - 订单状态机：跳过前置状态直接发货/退款/完成
+       - 支付：直接采信客户端传入的金额/数量，服务端不重算
+       - 管理端接口：缺少角色校验的 /admin/** 路由
+
+    输出格式（JSON）：
+    ```json
+    {{
+      "file": "文件名",
+      "vulnerabilities": [
+        {{
+          "type": "漏洞类型",
+          "severity": "HIGH|MEDIUM|LOW",
+          "line": 行号,
+          "description": "漏洞原因",
+          "fix": "修复建议",
+          "entry_method": "Controller类名#方法名",
+          "route": "HTTP路由，无则空字符串",
+          "params": [{{"name": "参数名", "in": "query|body|path|header"}}]
+        }}
+      ]
+    }}
+    ```
+
+    如果没有发现漏洞，返回：
+    ```json
+    {{
+      "file": "文件名",
+      "vulnerabilities": []
+    }}
+    ```
+
+    {skill_hints}
+
+    代码如下：
+    ```java
+    {code}
+    ```
+
+  # 批量审计提示词
+  audit_batch: |
+    你是一位专业的网络安全行业的静态代码分析工程师。请分析以下多段 Java 代码，找出所有可能的安全漏洞。
+
+    要求：
+    1. 只分析代码中的安全漏洞
+    2. 关注：SQL注入、命令注入、XXE、SSRF、路径穿越、XSS、反序列化、文件上传、URL重定向、OGNL注入、SpEL注入、LDAP注入、XPath注入、模板注入
+    3. 对每个文件单独输出结果
+
+    输出格式（JSON数组）：
+    ```json
+    [
+      {
+        "file": "文件1",
+        "vulnerabilities": [...]
+      },
+      {
+        "file": "文件2",
+        "vulnerabilities": [...]
+      }
+    ]
+    ```
+
+    代码列表：
+    {code_list}
+
+  # 反思提示词 - 验证漏洞
+  validate_vulnerability: |
+    你是一位安全专家。请验证以下代码是否存在指定的安全漏洞。
+
+    漏洞信息：
+    - 类型: {vuln_type}
+    - 位置: 第 {line} 行
+    - 描述: {description}
+
+    代码上下文：
+    ```java
+    {code}
+    ```
+
+    请判断：
+    1. 这是否是一个真实漏洞？(true/false)
+    2. 如果是真实漏洞，提供更详细的分析
+    3. 如果是误报，说明原因
+
+    输出格式：
+    ```json
+    {
+      "is_true_positive": true/false,
+      "reason": "判断理由"
+    }
+    ```

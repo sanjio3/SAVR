@@ -1,0 +1,18 @@
+SAVR
+Copyright 2026 The SAVR Contributors
+
+Licensed under the Apache License, Version 2.0. See LICENSE for the full text.
+
+Third-party components
+
+This repository does not vendor third-party binaries. The following are external
+tools that a deployment supplies separately; their own licenses apply and are not
+relicensed by this project:
+
+- CodeQL CLI (GitHub) - used to build Java databases during static analysis.
+- Ollama / any OpenAI-compatible LLM endpoint - used by the A2 analyst.
+- Maven and JDK - used to build the IAST/RASP agent under probe-java/.
+- Your own scan targets - supplied by the deployment, never distributed here.
+
+The IAST/RASP agent source under probe-java/ is distributed under this project's
+Apache-2.0 license.

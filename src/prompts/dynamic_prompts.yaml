@@ -1,0 +1,80 @@
+# D2 动态测试提示词
+
+prompts:
+  # SQL 注入验证
+  sql_injection: |
+    你是一位安全专家。请验证以下代码是否存在 SQL 注入漏洞。
+
+    代码上下文：
+    ```java
+    {code}
+    ```
+
+    漏洞位置：第 {line} 行
+
+    请分析：
+    1. 该代码是否使用了参数化查询？
+    2. 用户输入是否直接拼接到 SQL 语句中？
+    3. 是否可以绕过？
+
+    输出 JSON：
+    ```json
+    {
+      "exploitable": true/false,
+      "confidence": "high/medium/low",
+      "reason": "分析理由",
+      "test_payloads": ["payload1", "payload2"]
+    }
+    ```
+
+  # 命令注入验证
+  command_injection: |
+    你是一位安全专家。请验证以下代码是否存在命令注入漏洞。
+
+    代码上下文：
+    ```java
+    {code}
+    ```
+
+    漏洞位置：第 {line} 行
+
+    请分析：
+    1. 用户输入是否直接用于命令执行？
+    2. 是否有输入过滤或验证？
+    3. 可以执行哪些命令？
+
+    输出 JSON：
+    ```json
+    {
+      "exploitable": true/false,
+      "confidence": "high/medium/low",
+      "reason": "分析理由",
+      "test_payloads": ["payload1", "payload2"]
+    }
+    ```
+
+  # SSRF 验证
+  ssrf: |
+    你是一位安全专家。请验证以下代码是否存在 SSRF 漏洞。
+
+    代码上下文：
+    ```java
+    {code}
+    ```
+
+    漏洞位置：第 {line} 行
+
+    请分析：
+    1. URL 是否由用户控制？
+    2. 是否有 URL 白名单验证？
+    3. 是否可以访问内网服务？
+
+    输出 JSON：
+    ```json
+    {
+      "exploitable": true/false,
+      "confidence": "high/medium/low",
+      "reason": "分析理由",
+      "test_payloads": ["payload1", "payload2"]
+    }
+    ```

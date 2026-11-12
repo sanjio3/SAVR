@@ -1,0 +1,3 @@
+# Single-maintainer project: no code owner is assigned on purpose.
+# A wildcard owner auto-requests review on every Dependabot PR, which produces
+# a notification email for each one. Add path-specific owners here if maintainers grow.

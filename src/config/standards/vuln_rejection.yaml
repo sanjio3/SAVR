@@ -1,0 +1,36 @@
+common:
+  reject:
+    - id: source_from_config_only
+      description: 污点仅来自配置中心、环境变量或部署配置，且低权限用户不可控。
+    - id: unreachable_sink
+      description: 危险函数不可由公开入口、RPC、MQ、任务调度或内部可信入口到达。
+    - id: test_or_dead_code
+      description: 仅存在于测试、样例、废弃或不可部署代码中。
+command-execution:
+  reject:
+    - id: constant_command_only
+      description: 命令和参数完全固定，用户输入不影响执行内容。
+ssrf:
+  reject:
+    - id: strict_url_allowlist
+      description: 存在不可绕过的严格 URL、host 或协议白名单。
+path-traversal:
+  reject:
+    - id: fixed_safe_suffix
+      description: 后缀、目录和文件名被固定到安全范围，无法操作敏感文件。
+idor:
+  reject:
+    - id: explicit_ownership_check
+      description: 资源返回或变更前存在明确 owner、tenant 或 permission 校验。
+sql-injection:
+  reject:
+    - id: parameterized_query
+      description: 使用参数化查询或 ORM 安全绑定，用户输入不参与 SQL 结构。
+xss:
+  reject:
+    - id: context_safe_encoding
+      description: 输出点存在上下文相关编码或模板默认安全转义。
+file-upload:
+  reject:
+    - id: strict_upload_policy
+      description: 扩展名、MIME、内容、保存路径和执行权限均有严格限制。

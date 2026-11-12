@@ -1,0 +1,9 @@
+current: terminal-first-v1
+versions:
+  terminal-first-v1:
+    description: 终点优先的漏洞分析提示词版本，要求输出验收标准、否决标准与缺失证据。
+    workflow:
+      - 先定位危险函数或高风险终点。
+      - 再定位用户可控来源与业务入口。
+      - 证明 source 到 sink 可达。
+      - 使用认定与否决标准给出结论。

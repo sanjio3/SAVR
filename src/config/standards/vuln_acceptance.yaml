@@ -1,0 +1,45 @@
+command-execution:
+  accept:
+    - id: user_controlled_to_command_sink
+      description: 用户可控输入能到达命令执行 sink。
+    - id: command_execution_observable
+      description: 可以通过 whoami、id 或等价命令观察执行结果。
+  dynamic_evidence:
+    - whoami
+    - id
+ssrf:
+  accept:
+    - id: user_controlled_url
+      description: URL、host 或 path 由用户可控输入影响。
+    - id: outbound_request_observable
+      description: 能向指定地址发起请求并观察响应或回连证据。
+path-traversal:
+  accept:
+    - id: user_controlled_path
+      description: 文件路径或文件名由用户输入控制。
+    - id: sensitive_file_readable
+      description: 能读取 /etc/passwd、Windows win.ini 或等价敏感目标。
+idor:
+  accept:
+    - id: cross_subject_resource_access
+      description: 一个账号能读取或修改其他账号、角色或租户边界外资源。
+    - id: missing_ownership_check
+      description: 资源操作前缺少 owner、tenant 或 permission 校验。
+sql-injection:
+  accept:
+    - id: user_input_in_query
+      description: 用户输入进入 SQL 拼接或动态查询表达式。
+    - id: injection_changes_result
+      description: 注入 payload 能改变查询结果、错误信息或延迟行为。
+xss:
+  accept:
+    - id: reflected_or_stored_payload
+      description: 用户输入在 HTML、JS、URL 或属性上下文中未安全编码输出。
+file-upload:
+  accept:
+    - id: dangerous_file_upload
+      description: 可上传可执行、可解析或可覆盖敏感路径的文件。
+deserialization:
+  accept:
+    - id: untrusted_deserialization
+      description: 不可信输入进入反序列化 sink，且存在可触发 gadget 或副作用。
